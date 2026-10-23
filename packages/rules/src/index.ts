@@ -1,0 +1,217 @@
+import {
+  ActionContractSchema, EffectSchema, TraitsSchema,
+  type ActionContract, type Effect, type OutcomeBand, type Resolution, type SessionState,
+} from '@rpg/contracts';
+
+export function outcomeForTotal(total: number): OutcomeBand {
+  if (!Number.isInteger(total)) throw new Error('A dice total must be an integer.');
+  return total >= 10 ? 'clean' : total >= 7 ? 'costly' : 'setback';
+}
+
+export function validateTraits(traits: unknown): boolean {
+  return TraitsSchema.safeParse(traits).success;
+}
+
+function orderedContracts(contracts: ActionContract[]): ActionContract[] {
+  const byId = new Map(contracts.map(contract => [contract.id, contract]));
+  if (byId.size !== contracts.length) throw new Error('Contract IDs must be unique.');
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const result: ActionContract[] = [];
+  const visit = (contract: ActionContract) => {
+    if (visiting.has(contract.id)) throw new Error('Contract dependency cycle.');
+    if (visited.has(contract.id)) return;
+    visiting.add(contract.id);
+    for (const prerequisite of contract.prerequisites) {
+      const parent = byId.get(prerequisite.contractId);
+      if (!parent) throw new Error('Unknown prerequisite contract.');
+      visit(parent);
+    }
+    visiting.delete(contract.id);
+    visited.add(contract.id);
+    result.push(contract);
+  };
+  [...contracts].sort((a, b) => a.id.localeCompare(b.id)).forEach(visit);
+  return result;
+}
+
+function uniqueEffects(effects: Effect[]): Effect[] {
+  const incidents = new Map<string, string>();
+  return effects.filter(effect => {
+    EffectSchema.parse(effect);
+    if (!effect.incidentId) return true;
+    const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
+    const key = `${effect.incidentId}:${effect.kind}:${target}`;
+    const signature = JSON.stringify(effect);
+    const previous = incidents.get(key);
+    if (previous && previous !== signature) throw new Error('Conflicting shared incident effects.');
+    if (previous) return false;
+    incidents.set(key, signature);
+    return true;
+  });
+}
+
+export function applyEffects(state: SessionState, effects: Effect[], sourceEventId = 'pending'): SessionState {
+  const next = structuredClone(state);
+  const trackDeltas = new Map<string, number>();
+  const strainDeltas = new Map<string, number>();
+  const inventoryOperations = new Set<string>();
+  for (const effect of uniqueEffects(effects)) {
+    if (effect.kind === 'track_delta') {
+      if (!next.tracks.some(track => track.id === effect.trackId)) throw new Error('Unknown track in effect.');
+      trackDeltas.set(effect.trackId, (trackDeltas.get(effect.trackId) ?? 0) + effect.delta);
+    } else if (effect.kind === 'fact_add') {
+      const existing = next.facts.find(fact => fact.id === effect.factId);
+      if (existing && (existing.text !== effect.text || existing.visibility !== effect.visibility)) throw new Error('Conflicting fact updates require a ruling.');
+      if (!existing) next.facts.push({ id: effect.factId, text: effect.text, visibility: effect.visibility, sourceEventId });
+    } else {
+      const character = next.characters.find(character => character.id === effect.characterId);
+      if (!character) throw new Error('Unknown character in effect.');
+      if (effect.kind === 'strain_delta') {
+        strainDeltas.set(effect.characterId, (strainDeltas.get(effect.characterId) ?? 0) + effect.delta);
+      } else {
+        const operation = `${effect.characterId}:${effect.item}`;
+        if (inventoryOperations.has(operation)) throw new Error('Conflicting inventory changes require a ruling.');
+        inventoryOperations.add(operation);
+        if (effect.kind === 'inventory_remove') {
+          const index = character.possessions.indexOf(effect.item);
+          if (index < 0) throw new Error('Cannot consume an item the character does not possess.');
+          character.possessions.splice(index, 1);
+        } else {
+          if (character.possessions.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');
+          if (character.possessions.length >= 20) throw new Error('Inventory capacity exceeded.');
+          character.possessions.push(effect.item);
+        }
+      }
+    }
+  }
+  next.tracks = next.tracks.map(track => ({ ...track, current: Math.max(0, Math.min(track.max, track.current + (trackDeltas.get(track.id) ?? 0))) }));
+  next.characters = next.characters.map(character => ({ ...character, strain: Math.max(0, Math.min(4, character.strain + (strainDeltas.get(character.id) ?? 0))) }));
+  return next;
+}
+
+export function validateContracts(contracts: ActionContract[], state: SessionState): void {
+  if (contracts.length > 6) throw new Error('At most six action contracts can be reviewed in one round.');
+  const ordered = orderedContracts(contracts.map(contract => ActionContractSchema.parse(contract)));
+  const spent = new Set<string>();
+  for (const contract of ordered) {
+    const actor = state.characters.find(character => character.id === contract.actorCharacterId);
+    if (!actor) throw new Error('Unknown action actor.');
+    if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
+    if (actor.strain >= 4 && contract.ruling === 'check') throw new Error('Character needs help at four strain before another risky action.');
+    if (contract.edge && !contract.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
+    if (contract.helperCharacterIds.length && contract.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');
+    for (const characterId of [contract.actorCharacterId, ...contract.helperCharacterIds]) {
+      if (!state.characters.some(character => character.id === characterId)) throw new Error('Unknown action helper.');
+      if (spent.has(characterId)) throw new Error('A character action cannot be spent as both helper and lead or twice in a round.');
+      spent.add(characterId);
+    }
+  }
+  const ancestors = new Map<string, Set<string>>();
+  const depths = new Map<string, number>();
+  const claims = new Map<string, Set<string>>();
+  for (const contract of ordered) {
+    const inherited = new Set<string>();
+    for (const prerequisite of contract.prerequisites) {
+      inherited.add(prerequisite.contractId);
+      for (const ancestor of ancestors.get(prerequisite.contractId)!) inherited.add(ancestor);
+    }
+    ancestors.set(contract.id, inherited);
+    depths.set(contract.id, contract.prerequisites.length ? 1 + Math.max(...contract.prerequisites.map(prerequisite => depths.get(prerequisite.contractId)!)) : 0);
+    for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band].effects) {
+      const key = effect.kind === 'fact_add' ? `fact:${effect.factId}`
+        : effect.kind === 'inventory_add' || effect.kind === 'inventory_remove' ? `item:${effect.characterId}:${effect.item}` : null;
+      if (!key) continue;
+      const owners = claims.get(key) ?? new Set<string>();
+      for (const owner of owners) {
+        if (owner !== contract.id && !inherited.has(owner)) throw new Error('Conflicting nonnumeric changes require a ruling before lock.');
+      }
+      owners.add(contract.id);
+      claims.set(key, owners);
+    }
+  }
+  validatePossibleEffects(ordered, depths, state);
+}
+
+function applicableBands(contract: ActionContract): OutcomeBand[] {
+  return contract.ruling === 'blocked' ? [] : contract.ruling === 'no_check' ? ['clean'] : ['clean', 'costly', 'setback'];
+}
+
+function validatePossibleEffects(contracts: ActionContract[], depths: Map<string, number>, state: SessionState): void {
+  const goals = new Map<string, boolean>();
+  const groups: Effect[][] = [];
+  const visit = (index: number) => {
+    if (index === contracts.length) {
+      const effectGroups = groups.filter(group => group?.length);
+      applyResolution(state, { rolls: [], outcomes: [], effects: effectGroups.flat(), effectGroups });
+      return;
+    }
+    const contract = contracts[index];
+    if (contract.ruling === 'blocked' || contract.prerequisites.some(prerequisite => !goals.get(prerequisite.contractId))) {
+      goals.set(contract.id, false);
+      visit(index + 1);
+    } else {
+      const depth = depths.get(contract.id)!;
+      const previous = groups[depth] ?? [];
+      for (const band of applicableBands(contract)) {
+        goals.set(contract.id, band !== 'setback');
+        groups[depth] = [...previous, ...contract.outcomes[band].effects];
+        visit(index + 1);
+      }
+      groups[depth] = previous;
+    }
+    goals.delete(contract.id);
+  };
+  visit(0);
+}
+
+export function resolveContracts(contracts: ActionContract[], state: SessionState, rollDie: () => number): Resolution {
+  validateContracts(contracts, state);
+  const result: Resolution = { rolls: [], effects: [], outcomes: [], effectGroups: [] };
+  const depths = new Map<string, number>();
+  for (const contract of orderedContracts(contracts)) {
+    const depth = contract.prerequisites.length ? 1 + Math.max(...contract.prerequisites.map(prerequisite => depths.get(prerequisite.contractId)!)) : 0;
+    depths.set(contract.id, depth);
+    const base = { contractId: contract.id, actorCharacterId: contract.actorCharacterId };
+    if (contract.prerequisites.some(prerequisite => !result.outcomes.find(outcome => outcome.contractId === prerequisite.contractId)?.goalAchieved)) {
+      result.outcomes.push({ ...base, status: 'held', band: null, goalAchieved: false, publicText: 'Holding position: the required opportunity did not arise.' });
+      continue;
+    }
+    if (contract.ruling === 'blocked') {
+      result.outcomes.push({ ...base, status: 'blocked', band: null, goalAchieved: false, publicText: contract.outcomes.setback.publicText });
+      continue;
+    }
+    let band: OutcomeBand = 'clean';
+    if (contract.ruling === 'check') {
+      const faces: [number, number] = [rollDie(), rollDie()];
+      if (faces.some(face => !Number.isInteger(face) || face < 1 || face > 6)) throw new Error('Dice must return integer faces between one and six.');
+      const actor = state.characters.find(character => character.id === contract.actorCharacterId)!;
+      const traitModifier = actor.traits[contract.trait];
+      const total = faces[0] + faces[1] + traitModifier + contract.edge;
+      band = outcomeForTotal(total);
+      result.rolls.push({ ...base, id: `${contract.id}:v${contract.version}`, contractVersion: contract.version, faces, trait: contract.trait, traitModifier, edge: contract.edge, total, band });
+    }
+    const branch = contract.outcomes[band];
+    result.effects.push(...structuredClone(branch.effects));
+    (result.effectGroups![depth] ??= []).push(...structuredClone(branch.effects));
+    result.outcomes.push({ ...base, status: 'resolved', band, goalAchieved: band !== 'setback', publicText: branch.publicText });
+  }
+  result.effects = uniqueEffects(result.effects);
+  result.effectGroups = result.effectGroups!.filter(Boolean);
+  applyResolution(state, result);
+  return result;
+}
+
+export function applyResolution(state: SessionState, resolution: Resolution, sourceEventId = 'pending'): SessionState {
+  if (!resolution.effectGroups) return applyEffects(state, resolution.effects, sourceEventId);
+  uniqueEffects(resolution.effects);
+  const seen = new Set<string>();
+  return resolution.effectGroups.reduce((current, group) => applyEffects(current, group.filter(effect => {
+    if (!effect.incidentId) return true;
+    const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
+    const key = `${effect.incidentId}:${effect.kind}:${target}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }), sourceEventId), state);
+}

@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: rpg
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:55432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rpg -d rpg']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://rpg:${POSTGRES_PASSWORD}@db:5432/rpg
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      ASSET_DIR: /app/.local/audio
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - audio:/app/.local/audio
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres:
+  audio:
