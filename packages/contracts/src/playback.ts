@@ -25,7 +25,7 @@ export const PlaybackSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1), sessionId: id, revision, sampleRevision: revision, serverTimeMs: time,
   playbackId: z.uuid().nullable(), status: z.enum(['idle', 'playing', 'paused', 'stopped', 'complete']),
   manifest: AudioManifestSchema.nullable(), segmentIndex: segmentIndex.nullable(), positionMs: position,
-  anchorTimeMs: time.nullable(), presenter: z.strictObject({ available: z.boolean(), leaseExpiresAtMs: time.nullable() }),
+  anchorTimeMs: time.nullable(), presenter: z.strictObject({ available: z.boolean(), leaseExpiresAtMs: time.nullable(), source: z.enum(['show_link', 'preview']).nullable().optional() }),
 });
 export type PlaybackSnapshot = z.infer<typeof PlaybackSnapshotSchema>;
 

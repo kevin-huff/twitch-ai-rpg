@@ -91,6 +91,7 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   await Promise.all([stage, otherStage].map(tab => tab.goto(`${path}/stage?identity=${identity}`)));
   await page.reload();
   await stage.getByTestId('present-audio').click();
+  await stage.getByTestId('confirm-present-audio').click();
   await expect(stage.getByTestId('release-audio')).toBeVisible();
   await expect(otherStage.getByTestId('present-audio')).toBeDisabled();
   await page.getByTestId('start-audio').click();
@@ -142,6 +143,7 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   await expect.poll(async () => (await api(page, `${path}/playback`)).status).toBe('paused');
   await expect.poll(async () => (await mediaState(stage)).every(item => item.paused)).toBe(true);
   await otherStage.getByTestId('present-audio').click();
+  await otherStage.getByTestId('confirm-present-audio').click();
   await expect(otherStage.getByTestId('release-audio')).toBeVisible();
   expect((await api(page, `${path}/playback`)).status).toBe('paused');
   expect((await mediaState(otherStage)).every(item => item.paused)).toBe(true);
@@ -162,6 +164,7 @@ test('one stage presents shared narration while listeners join, refresh, and fol
     const nativeStage = await nativeContext.newPage();
     await nativeStage.goto(`${path}/stage?identity=${identity}`);
     await nativeStage.getByTestId('present-audio').click();
+    await nativeStage.getByTestId('confirm-present-audio').click();
     await expect(nativeStage.getByTestId('release-audio')).toBeVisible();
     await page.getByTestId('replay-audio').click();
     await expect.poll(async () => (await mediaState(nativeStage)).find(item => !item.paused)?.time ?? 0).toBeGreaterThan(0.05);

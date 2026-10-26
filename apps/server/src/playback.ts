@@ -49,7 +49,10 @@ function snapshot(row: PlaybackRow, now: number): PlaybackSnapshot {
     schemaVersion: 1, sessionId: row.session_id, revision: row.revision, sampleRevision: row.sample_revision,
     serverTimeMs: now, playbackId: row.playback_id, status: row.status, manifest: row.manifest,
     segmentIndex: row.segment_index, positionMs: row.position_ms, anchorTimeMs: row.anchor_time_ms,
-    presenter: { available: row.presenter_lease_id !== null, leaseExpiresAtMs: row.presenter_expires_at_ms },
+    presenter: {
+      available: row.presenter_lease_id !== null, leaseExpiresAtMs: row.presenter_expires_at_ms,
+      source: row.presenter_lease_id === null ? null : row.presenter_actor_id?.startsWith('stream:') ? 'show_link' as const : 'preview' as const,
+    },
   };
 }
 async function save(client: PoolClient, row: PlaybackRow) {
@@ -130,6 +133,7 @@ async function control(client: PoolClient, row: PlaybackRow, actor: Actor, comma
 }
 function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, now: number) {
   if (actor.role !== 'host' && actor.role !== 'stage') throw new AppError(403, 'forbidden', 'Only the director or stage can present narration.');
+  if (actor.role === 'stage' && actor.can_present === false) throw new AppError(403, 'forbidden', 'This stream view can listen but cannot present the show audio.');
   if (command.type === 'claim') {
     checkRevision(row, command);
     if (row.presenter_lease_id) conflict('Another browser is already presenting narration.');

@@ -6,6 +6,7 @@ const props = defineProps<{ sessionId: string; beatId?: string; director: boolea
 const controller = createPlaybackController({ ...props });
 const state = controller.state;
 const ownershipPending = ref(false);
+const confirming = ref(false);
 const directorControls = computed(() => props.director && !props.stage);
 const activeSegment = computed(() => {
   const current = state.snapshot;
@@ -36,6 +37,13 @@ async function changePresenter(release = false) {
   finally { ownershipPending.value = false; }
 }
 
+async function confirmPresent() {
+  confirming.value = false;
+  await changePresenter();
+}
+
+watch(presenterAvailable, available => { if (available && !state.presenting) confirming.value = false; });
+
 watch(() => [props.sessionId, props.beatId, props.director, props.stage], () => controller.setContext({ ...props }));
 onUnmounted(() => controller.dispose());
 </script>
@@ -50,7 +58,7 @@ onUnmounted(() => controller.dispose());
 
     <template v-if="directorControls">
       <p class="audio-detail">{{ latestStatus }}</p>
-      <p v-if="!presenterAvailable" class="audio-detail">Open stage and choose Present audio to appoint the broadcast presenter.</p>
+      <p v-if="!presenterAvailable" class="audio-detail">No browser is playing broadcast audio yet. Load the main show link in OBS. You will find it in Cast & lobby, under Stage & OBS links.</p>
       <div class="actions">
         <button v-if="beatId && !latestReady" data-testid="prepare-audio" class="secondary" :disabled="state.preparing || state.audioStatus === 'preparing'" @click="controller.prepare()">{{ state.preparing ? 'Preparing…' : 'Prepare narration' }}</button>
         <button v-if="beatId && !currentIsLatest" data-testid="start-audio" class="secondary" :disabled="!canStart" @click="controller.command('start')">Play latest reviewed beat</button>
@@ -65,10 +73,17 @@ onUnmounted(() => controller.dispose());
     </template>
 
     <div v-if="stage" class="audio-presenter">
-      <p class="audio-detail">One browser is the broadcast presenter. {{ state.presenting ? 'This browser is presenting audio.' : presenterAvailable ? 'Another browser is presenting audio.' : 'Choose Present audio in this stage browser to present.' }}</p>
+      <p class="audio-detail">One browser is the broadcast presenter. {{ state.presenting ? 'This browser is presenting audio.' : presenterAvailable ? 'Another browser is presenting audio.' : 'The main show link in OBS supplies broadcast audio. Present audio here takes it over.' }}</p>
       <div class="actions">
         <button v-if="state.presenting" data-testid="release-audio" class="secondary" :disabled="ownershipPending || state.commandPending" @click="changePresenter(true)">Release audio</button>
-        <button v-else data-testid="present-audio" class="secondary" :disabled="!state.snapshot || presenterAvailable || ownershipPending || state.commandPending" @click="changePresenter()">Present audio</button>
+        <button v-else data-testid="present-audio" class="secondary" :disabled="!state.snapshot || presenterAvailable || ownershipPending || state.commandPending" @click="confirming = true">Present audio</button>
+      </div>
+      <div v-if="confirming && !state.presenting" class="audio-confirm" role="group" aria-label="Confirm taking the broadcast audio">
+        <p>Take the broadcast audio from OBS? Viewers will hear this browser instead.</p>
+        <div class="actions">
+          <button data-testid="confirm-present-audio" class="secondary" :disabled="ownershipPending || state.commandPending" @click="confirmPresent()">Present here</button>
+          <button class="quiet" @click="confirming = false">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -82,8 +97,8 @@ onUnmounted(() => controller.dispose());
       <span class="audio-volume-value" aria-hidden="true">{{ Math.round(state.volume * 100) }}%</span>
     </label>
     <p v-if="activeSegment" class="audio-caption" aria-live="polite"><strong>{{ activeSegment.speaker }}</strong> · {{ activeSegment.text }}</p>
-    <small v-if="stage">AI-generated voices. This stage is silent until you choose Present audio. Volume affects this browser.</small>
-    <small v-else>AI-generated voices. Audio starts only after you choose Listen. Volume and mute affect this browser.</small>
+    <small v-if="stage">AI-generated voices. The main show link in OBS plays the broadcast audio. Volume affects this browser.</small>
+    <small v-else>AI-generated voices. Audio starts only after you choose Listen in this browser. Volume and mute affect this browser.</small>
   </section>
 </template>
 
@@ -92,6 +107,8 @@ onUnmounted(() => controller.dispose());
 .audio-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-bottom: .8rem; }
 .audio-heading strong { font-size: .85rem; font-weight: 600; }
 .audio-heading small, .audio-panel > small, .audio-detail, .audio-volume { font-size: .75rem; }
+.audio-confirm { margin-top: .7rem; padding: .7rem .8rem; border: 1px solid var(--gold); border-radius: 6px; }
+.audio-confirm p { margin: 0 0 .6rem; font-size: .85rem; }
 .audio-detail { margin: .65rem 0; color: var(--muted); }
 .audio-transport, .audio-listening { margin-top: .65rem; }
 .audio-presenter { margin-top: .9rem; }

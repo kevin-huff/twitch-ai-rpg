@@ -1,5 +1,6 @@
-import { createApp } from 'vue';
-import App from './App.vue';
 import './style.css';
+import { boot } from './boot';
 
-createApp(App).mount('#app');
+const isStream = /^\/stream\/?$/.test(window.location.pathname);
+
+void boot(isStream ? () => import('./StreamView.vue') : () => import('./App.vue'));

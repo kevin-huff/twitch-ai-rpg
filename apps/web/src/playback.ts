@@ -269,13 +269,25 @@ export function createPlaybackController(initial: Context) {
     if (type === 'start' && !startBeatId) return;
     const current = state.snapshot;
     if (type !== 'start' && !current.playbackId) return;
-    const body = { type, commandId: crypto.randomUUID(), expectedRevision: current.revision,
-      ...(type === 'start' ? { beatId: startBeatId } : { playbackId: current.playbackId }) };
+    const build = (revision: number) => ({ type, commandId: crypto.randomUUID(), expectedRevision: revision,
+      ...(type === 'start' ? { beatId: startBeatId } : { playbackId: current.playbackId }) });
     const generation = contextGeneration, fence = ++responseGeneration;
+    const live = () => checkIdentity() && generation === contextGeneration && fence === responseGeneration;
     state.commandPending = true; state.error = ''; blockedKey = ''; halt();
     try {
-      const result = await request(`${endpoint()}/commands`, body);
-      if (!checkIdentity() || generation !== contextGeneration || fence !== responseGeneration) return;
+      let result;
+      try {
+        result = await request(`${endpoint()}/commands`, build(current.revision));
+      } catch (cause) {
+        if ((cause as { status?: number } | null)?.status !== 409 || !live()) throw cause;
+        const fresh = await request(endpoint());
+        if (!live()) return;
+        const taken = accept(PlaybackSnapshotSchema.parse(fresh.data), fresh.start, fresh.end);
+        const latest = state.snapshot;
+        if (!taken || !latest || latest.playbackId !== current.playbackId || latest.status !== current.status) throw cause;
+        result = await request(`${endpoint()}/commands`, build(latest.revision));
+      }
+      if (!live()) return;
       state.commandPending = false;
       accept(PlaybackResponseSchema.parse(result.data).snapshot, result.start, result.end);
     } catch (cause) { if (fence === responseGeneration) failed(cause, generation); }

@@ -78,6 +78,60 @@ describe('coordinated browser playback', () => {
     expect(JSON.parse(String(command?.[1]?.body))).toMatchObject({ type: 'start', beatId: 'beat-1' });
   });
 
+  describe('stale command retry', () => {
+    const posts = () => vi.mocked(fetch).mock.calls.filter(call => String(call[0]).endsWith('/commands'));
+    const stale = () => Object.assign(response({ message: 'Playback changed. Review the current playback state.' }, false), { status: 409 });
+
+    it('resends once with the fresh revision and a new command id', async () => {
+      const value = controller({ director: true }); await settle();
+      const updated = () => snapshot({ revision: 2, sampleRevision: 2, serverTimeMs: 100_500 });
+      vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (String(url).includes('/audio/')) return response({ status: 'ready', manifest });
+        if (String(url).endsWith('/commands')) return posts().length === 1 ? stale() : response({ snapshot: updated() });
+        return response(init?.method ? { snapshot: updated() } : updated());
+      });
+      await value.command('pause'); await settle();
+      const sent = posts().map(call => JSON.parse(String(call[1]?.body)));
+      expect(sent).toHaveLength(2);
+      expect(sent[0].expectedRevision).toBe(1);
+      expect(sent[1].expectedRevision).toBe(2);
+      expect(sent[1].commandId).not.toBe(sent[0].commandId);
+      expect(sent[1]).toMatchObject({ type: 'pause', playbackId });
+      expect(value.state.error).toBe('');
+      expect(value.state.commandPending).toBe(false);
+    });
+
+    it('does not resend when the fresh snapshot is a different playback', async () => {
+      const value = controller({ director: true }); await settle();
+      const other = '33333333-3333-4333-8333-333333333333';
+      const changed = () => snapshot({ revision: 2, sampleRevision: 2, serverTimeMs: 100_500, playbackId: other });
+      vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (String(url).includes('/audio/')) return response({ status: 'ready', manifest });
+        if (String(url).endsWith('/commands')) return stale();
+        return response(init?.method ? { snapshot: changed() } : changed());
+      });
+      await value.command('pause'); await settle();
+      expect(posts()).toHaveLength(1);
+      expect(value.state.error).toBe('Playback changed. Review the current playback state.');
+      expect(value.state.snapshot?.playbackId).toBe(other);
+      expect(value.state.commandPending).toBe(false);
+    });
+
+    it('retries only once when the second attempt is also stale', async () => {
+      const value = controller({ director: true }); await settle();
+      const updated = () => snapshot({ revision: 2, sampleRevision: 2, serverTimeMs: 100_500 });
+      vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (String(url).includes('/audio/')) return response({ status: 'ready', manifest });
+        if (String(url).endsWith('/commands')) return stale();
+        return response(init?.method ? { snapshot: updated() } : updated());
+      });
+      await value.command('pause'); await settle();
+      expect(posts()).toHaveLength(2);
+      expect(value.state.error).toBe('Playback changed. Review the current playback state.');
+      expect(value.state.commandPending).toBe(false);
+    });
+  });
+
   it('does not turn replay into a latest-beat start when no recording is pinned', async () => {
     routeFetch(() => snapshot({ playbackId: null, manifest: null, status: 'idle', segmentIndex: null }));
     const value = controller({ director: true }); await settle(); await value.replay();

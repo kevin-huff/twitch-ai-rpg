@@ -129,7 +129,13 @@ describe('coordinated reviewed audio panel', () => {
     const wrapper = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
     for (const id of ['listen-audio', 'prepare-audio', 'start-audio', 'pause-audio', 'skip-audio', 'stop-audio']) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
     expect(wrapper.text()).toMatch(/one.*presenter|one browser.*broadcast/i);
+    expect(wrapper.text()).toContain('The main show link in OBS supplies broadcast audio. Present audio here takes it over.');
+    expect(wrapper.text()).not.toContain('Choose Present audio in this stage browser');
     await click(wrapper, 'present-audio');
+    expect(wrapper.get('.audio-confirm').text()).toContain('Take the broadcast audio from OBS? Viewers will hear this browser instead.');
+    expect(requests('/presenter')).toHaveLength(0);
+    await click(wrapper, 'confirm-present-audio');
+    expect(wrapper.find('.audio-confirm').exists()).toBe(false);
     expect(wrapper.find('[data-testid="release-audio"]').exists()).toBe(true);
     expect(instances).toHaveLength(0);
     await click(wrapper, 'release-audio');
@@ -140,11 +146,45 @@ describe('coordinated reviewed audio panel', () => {
     expect(wrapper.get('[data-testid="present-audio"]').attributes('disabled')).toBeDefined();
   });
 
+  it('uses the show-link wording on the stage and names Listen in this browser elsewhere', async () => {
+    const stage = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    expect(stage.text()).toContain('AI-generated voices. The main show link in OBS plays the broadcast audio. Volume affects this browser.');
+    const director = panel(); await flushPromises();
+    expect(director.text()).toContain('AI-generated voices. Audio starts only after you choose Listen in this browser. Volume and mute affect this browser.');
+  });
+
+  it('closes the Present here confirm when another browser becomes the presenter', async () => {
+    const wrapper = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    await click(wrapper, 'present-audio');
+    expect(wrapper.find('.audio-confirm').exists()).toBe(true);
+    shared.presenter = { available: true, leaseExpiresAtMs: 110_000 };
+    shared.sampleRevision++;
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromises();
+    expect(wrapper.find('.audio-confirm').exists()).toBe(false);
+  });
+
+  it('does not claim the presenter lease when the confirm is cancelled, and claims it on Present here', async () => {
+    const wrapper = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    await click(wrapper, 'present-audio');
+    const cancel = wrapper.findAll('.audio-confirm button').find(b => b.text() === 'Cancel')!;
+    expect(cancel.classes()).toContain('quiet');
+    await cancel.trigger('click'); await flushPromises();
+    expect(wrapper.find('.audio-confirm').exists()).toBe(false);
+    expect(requests('/presenter')).toHaveLength(0);
+    expect(wrapper.find('[data-testid="release-audio"]').exists()).toBe(false);
+    await click(wrapper, 'present-audio');
+    await click(wrapper, 'confirm-present-audio');
+    expect(requests('/presenter')).toHaveLength(1);
+    expect(JSON.parse(String(requests('/presenter')[0][1]?.body))).toMatchObject({ type: 'claim' });
+  });
+
   it('gates director start on a ready latest manifest and presenter, and switches to deliberate replay after stop', async () => {
     const wrapper = panel(); await flushPromises();
     expect(wrapper.get('[data-testid="start-audio"]').attributes('disabled')).toBeDefined();
     const hostStage = panel({ director: true, stage: true, beatId: 'beat-1' }); await flushPromises();
     await click(hostStage, 'present-audio');
+    await click(hostStage, 'confirm-present-audio');
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.get('[data-testid="start-audio"]').attributes('disabled')).toBeUndefined();
     await click(wrapper, 'start-audio');
@@ -157,11 +197,12 @@ describe('coordinated reviewed audio panel', () => {
     expect(JSON.parse(String(requests('/commands').at(-1)?.[1]?.body))).toMatchObject({ type: 'start', beatId: 'beat-1' });
   });
 
-  it('keeps presenter ownership in the stage view and directs an ordinary director to Open stage', async () => {
+  it('keeps presenter ownership in the stage view and points an ordinary director to the main show link', async () => {
     const wrapper = panel(); await flushPromises();
     expect(wrapper.find('[data-testid="present-audio"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="release-audio"]').exists()).toBe(false);
-    expect(wrapper.text()).toMatch(/open stage/i);
+    expect(wrapper.text()).toContain('Load the main show link in OBS');
+    expect(wrapper.text()).not.toMatch(/choose Present audio/i);
     expect(wrapper.find('[data-testid="listen-audio"]').exists()).toBe(true);
     active({ sampleRevision: 2 });
     await vi.advanceTimersByTimeAsync(1000);
