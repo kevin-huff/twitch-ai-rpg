@@ -36,7 +36,7 @@ const requests = (suffix: string) => vi.mocked(fetch).mock.calls.filter(call => 
 function active(overrides: Partial<PlaybackSnapshot> = {}) {
   shared = { ...shared, playbackId, manifest, status: 'playing', segmentIndex: 0, positionMs: 3000, anchorTimeMs: 99_000, presenter: { available: true, leaseExpiresAtMs: 110_000 }, ...overrides };
 }
-function panel(props: { director: boolean; stage?: boolean; beatId?: string } = { director: true, beatId: 'beat-1' }) {
+function panel(props: { director: boolean; stage?: boolean; beatId?: string; compact?: boolean } = { director: true, beatId: 'beat-1' }) {
   const wrapper = mount(AudioPanel, { props: { sessionId: 'show', ...props } });
   wrappers.push(wrapper);
   return wrapper;
@@ -330,5 +330,41 @@ describe('coordinated reviewed audio panel', () => {
     expect(fetch).toHaveBeenCalledWith('/api/sessions/next-show/playback', expect.anything());
     expect(wrapper.get('[data-testid="present-audio"]').attributes('disabled')).toBeUndefined();
     expect(instances).toHaveLength(1);
+  });
+});
+
+describe('compact audio panel', () => {
+  it('renders only the listen control, volume and note', async () => {
+    active();
+    const wrapper = panel({ director: false, beatId: 'beat-1', compact: true }); await flushPromises();
+    const root = wrapper.get('section.audio-panel.compact');
+    expect(root.attributes('aria-label')).toBe('Narration');
+    expect(wrapper.get('[data-testid="listen-audio"]').text()).toBe('Hear the story here');
+    expect(wrapper.get('label.audio-volume').text()).toContain('Volume');
+    expect(wrapper.text()).toContain('AI-generated voices. Plays the narration in this browser, in step with the show.');
+    for (const id of ['playback-status', 'prepare-audio', 'start-audio', 'replay-audio', 'pause-audio', 'resume-audio', 'skip-audio', 'stop-audio', 'present-audio', 'release-audio']) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
+    expect(wrapper.find('.audio-heading').exists()).toBe(false);
+    expect(wrapper.find('.audio-caption').exists()).toBe(false);
+    expect(wrapper.find('[role="status"]').exists()).toBe(false);
+  });
+
+  it('listens, mutes and sets volume without any command request', async () => {
+    active();
+    const wrapper = panel({ director: false, beatId: 'beat-1', compact: true }); await flushPromises();
+    await click(wrapper, 'listen-audio');
+    expect(wrapper.get('[data-testid="mute-audio"]').text()).toBe('Mute');
+    await wrapper.get('[data-testid="audio-volume"]').setValue('0.35');
+    expect(instances[0].volume).toBe(.35);
+    await click(wrapper, 'mute-audio');
+    expect(wrapper.get('[data-testid="listen-audio"]').text()).toBe('Hear the story here');
+    expect(vi.mocked(fetch).mock.calls.some(call => (call[1] as RequestInit | undefined)?.method)).toBe(false);
+  });
+
+  it('still shows blocked playback as an alert', async () => {
+    active();
+    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); this.play.mockRejectedValue(new Error('NotAllowedError')); } });
+    const wrapper = panel({ director: false, beatId: 'beat-1', compact: true }); await flushPromises();
+    await click(wrapper, 'listen-audio');
+    expect(wrapper.get('[role="alert"]').text()).toBe('The sound could not play in this browser. Press Hear the story here to try again. The story still plays on the stream.');
   });
 });

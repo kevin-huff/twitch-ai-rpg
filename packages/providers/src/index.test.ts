@@ -60,6 +60,21 @@ describe('ClewdR native adapter', () => {
     if (task === 'render') expect(sent.fixedResults).toEqual(ctx.beat.resolution);
   });
 
+  it('asks only the planner for contract length limits', async () => {
+    const ctx = context();
+    const plan = { classification: 'ordinary', contracts: [], directorSummary: 'A question.' };
+    const planMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(plan));
+    await ai(planMock).plan(ctx);
+    const planBody = JSON.parse(String(planMock.mock.calls[0][1]?.body));
+    expect(planBody.system).toContain('at most 90 characters');
+    expect(planBody.system).toContain('at most 110 characters');
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderMock).render(ctx);
+    const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
+    expect(renderBody.system).not.toContain('at most 90 characters');
+    expect(renderBody.system).not.toContain('at most 110 characters');
+  });
+
   it('qualifies historical dialogue without teaching correction text to an uninformed NPC', async () => {
     const ctx = context();
     const npc = ctx.state.npcs[0];

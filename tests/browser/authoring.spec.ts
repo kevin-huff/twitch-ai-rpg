@@ -74,7 +74,7 @@ test('authors a versioned show, approves two characters, and publishes their fir
   const playerIdentity = new URL(player.url()).searchParams.get('identity');
   await player.goto(`/sessions/${sessionId}/play?identity=${playerIdentity}`);
   await player.getByTestId('speech-input').fill('Who activated the beacon?');
-  await player.getByRole('button', { name: 'Send to director', exact: true }).click();
+  await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
   await page.locator('.queue-item input[type=checkbox]').first().check();
   await page.getByTestId('plan').click();

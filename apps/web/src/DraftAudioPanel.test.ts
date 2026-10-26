@@ -27,7 +27,7 @@ const manifest = (): DraftAudioManifest => ({
 const response = (data: unknown, ok = true, status = ok ? 200 : 503) => ({ ok, status, json: async () => data }) as Response;
 const ready = () => response({ status: 'ready', manifest: manifest() });
 const wrappers: ReturnType<typeof mount>[] = [];
-function panel(overrides: Partial<typeof props> = {}) {
+function panel(overrides: Partial<typeof props> & { paused?: boolean } = {}) {
   const wrapper = mount(DraftAudioPanel, { props: { ...props, ...overrides } });
   wrappers.push(wrapper); return wrapper;
 }
@@ -84,6 +84,49 @@ describe('private recording review', () => {
     expect(instances[1]!.pause).toHaveBeenCalled();
     expect(wrapper.emitted('publish')).toEqual([[preparationId]]);
     expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method)).toBe(true);
+  });
+
+  it('disables publication while the table is paused and says why', async () => {
+    const wrapper = panel({ paused: true }); await flushPromises();
+    const button = wrapper.get(field('publish-draft-audio'));
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(wrapper.get('p.draft-audio-paused').text()).toBe('The table is paused. Resume it to publish.');
+    await button.trigger('click'); await flushPromises();
+    expect(wrapper.emitted('publish')).toBeUndefined();
+  });
+
+  it('shows no paused text when the table is running', async () => {
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.find('.draft-audio-paused').exists()).toBe(false);
+  });
+
+  it('makes publication gold only once a recording is ready', async () => {
+    vi.mocked(fetch).mockImplementation(async () => response({ status: 'missing' }));
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.get(field('publish-draft-audio')).classes()).toContain('secondary');
+    vi.mocked(fetch).mockImplementation(async () => response({ status: 'ready', manifest: { ...manifest(), generation: 4 } }));
+    await wrapper.setProps({ generation: 4 }); await flushPromises();
+    expect(wrapper.get(field('publish-draft-audio')).classes()).not.toContain('secondary');
+  });
+
+  it('keeps publication outlined while highlight is off, even with a ready recording', async () => {
+    vi.mocked(fetch).mockImplementation(async () => response({ status: 'ready', manifest: { ...manifest(), generation: 4 } }));
+    const wrapper = panel(); await flushPromises();
+    await wrapper.setProps({ generation: 4 }); await flushPromises();
+    expect(wrapper.get(field('publish-draft-audio')).classes()).not.toContain('secondary');
+    await wrapper.setProps({ highlight: false });
+    expect(wrapper.get(field('publish-draft-audio')).classes()).toContain('secondary');
+    await wrapper.setProps({ highlight: true });
+    expect(wrapper.get(field('publish-draft-audio')).classes()).not.toContain('secondary');
+  });
+
+  it('reports recording readiness immediately and on change', async () => {
+    vi.mocked(fetch).mockImplementation(async () => response({ status: 'missing' }));
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.emitted('recording-ready')).toEqual([[false]]);
+    vi.mocked(fetch).mockImplementation(async () => response({ status: 'ready', manifest: { ...manifest(), generation: 4 } }));
+    await wrapper.setProps({ generation: 4 }); await flushPromises();
+    expect(wrapper.emitted('recording-ready')).toEqual([[false], [true]]);
   });
 
   it('ignores completion and error callbacks from a clip after the next clip starts', async () => {

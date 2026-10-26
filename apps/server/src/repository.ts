@@ -62,7 +62,7 @@ export async function saveBeat(client: PoolClient, beat: Beat) {
   await client.query('INSERT INTO beats(id,session_id,kind,phase,input_revision,draft_revision,snapshot_hash,data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,phase=excluded.phase,input_revision=excluded.input_revision,draft_revision=excluded.draft_revision,snapshot_hash=excluded.snapshot_hash,data=excluded.data', [beat.id, beat.sessionId, beat.kind, beat.phase, beat.revision, beat.draftRevision, beat.inputSnapshotHash, beat]);
 }
 export async function submissions(client: PoolClient, sessionId: string): Promise<Submission[]> {
-  return (await client.query('SELECT data FROM submissions WHERE session_id=$1 ORDER BY id', [sessionId])).rows.map((row) => row.data);
+  return (await client.query(`SELECT s.data FROM submissions s LEFT JOIN (SELECT data->>'submissionId' AS submission_id, min(sequence) AS seq FROM audit_events WHERE session_id=$1 AND kind='save_submission' GROUP BY 1) e ON e.submission_id = s.id WHERE s.session_id=$1 ORDER BY e.seq ASC NULLS FIRST, s.id`, [sessionId])).rows.map((row) => row.data);
 }
 export async function saveSubmission(client: PoolClient, submission: Submission) {
   await client.query('INSERT INTO submissions(id,session_id,character_id,beat_id,revision,status,data) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET beat_id=excluded.beat_id,revision=excluded.revision,status=excluded.status,data=excluded.data', [submission.id, submission.sessionId, submission.characterId, submission.contextBeatId, submission.revision, submission.status, submission]);

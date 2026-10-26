@@ -37,10 +37,9 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   await page.getByTestId('open-action').click();
   await expect(page.getByRole('heading', { name: 'Collecting input', exact: true })).toBeVisible();
   await player.reload();
-  await player.getByRole('button', { name: 'Act', exact: true }).click();
-  await player.getByTestId('intent-input').fill('Find the archive entrance');
-  await player.getByTestId('approach-input').fill('Read the map on the club wall');
-  await player.getByRole('button', { name: 'Send to director', exact: true }).click();
+  await player.getByRole('button', { name: 'Do something', exact: true }).click();
+  await player.getByTestId('action-input').fill('Find the archive entrance by reading the map on the club wall');
+  await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(1);
   await page.locator('.queue-item input[type=checkbox]').check();
   await page.getByTestId('plan').click();
@@ -73,7 +72,7 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   const first = structuredClone(snapshot.history[0]);
   expect(first.rolls).toEqual(locked.resolution.rolls);
 
-  // Move the target outside the player and stage transcript windows.
+  // Move the target outside the stage transcript window.
   for (let index = 0; index < 3; index++) {
     await command({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
     expect(snapshot.activeBeat.steering).toBe('');
@@ -123,8 +122,14 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   expect(snapshot.submissions.find((input: { text: string }) => input.text === 'Pending words for the old facts.').status).toBe('cancelled');
   for (const audience of [player, stage]) {
     await audience.reload();
-    await expect(audience.getByTestId('published-correction')).toContainText('Correction to beat 1: the archive key is blue.');
-    await expect(audience.getByTestId('public-facts')).toContainText('Mara carries the blue archive key.');
+    if (audience === stage) {
+      await expect(audience.getByTestId('published-correction')).toContainText('Correction to beat 1: the archive key is blue.');
+      await expect(audience.getByTestId('public-facts')).toContainText('Mara carries the blue archive key.');
+    } else {
+      await expect(audience.getByTestId('submission-form')).toBeVisible();
+      await expect(audience.getByTestId('published-correction')).toHaveCount(0);
+      await expect(audience.getByTestId('public-facts')).toHaveCount(0);
+    }
     await expect(audience.locator('body')).not.toContainText('PRIVATE');
     const visible = await api(audience, `${path}${audience === stage ? '?view=stage' : ''}`);
     expect(JSON.stringify(visible)).not.toContain('PRIVATE');

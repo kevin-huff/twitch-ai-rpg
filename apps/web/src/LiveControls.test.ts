@@ -477,8 +477,11 @@ describe('published reveals in every audience', () => {
     window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
     const current = snapshot(); transport.snapshot.mockResolvedValue({ ...current, role, ...(role === 'player' ? { ownCharacter: null } : {}) });
     const wrapper = mount(App); await flushPromises();
-    expect(wrapper.get(field('public-facts')).text()).toContain('Mara knows the way.\nFollow her.');
-    expect(wrapper.get(field('public-facts')).text()).not.toContain('Private');
+    if (role === 'player') expect(wrapper.find(field('public-facts')).exists()).toBe(false);
+    else {
+      expect(wrapper.get(field('public-facts')).text()).toContain('Mara knows the way.\nFollow her.');
+      expect(wrapper.get(field('public-facts')).text()).not.toContain('Private');
+    }
     expect(wrapper.find(field('live-controls')).exists()).toBe(role === 'director');
     if (role !== 'director') { expect(wrapper.text()).not.toContain('Private secret'); expect(wrapper.text()).not.toContain('Private identity'); }
     wrapper.unmount();

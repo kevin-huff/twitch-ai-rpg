@@ -3,11 +3,11 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { DraftAudioResponseSchema, type DraftAudioManifest, type DraftAudioResponse, type PrepareDraftAudio } from '@rpg/contracts';
 import { getIdentity, identityHeaders, identityPath } from './identity';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessionId: string; beatId: string; beatRevision: number; draftRevision: number; generation: number;
-  dirty: boolean; busy: boolean; rendering: boolean;
-}>();
-const emit = defineEmits<{ publish: [preparationId: string] }>();
+  dirty: boolean; busy: boolean; rendering: boolean; paused?: boolean; highlight?: boolean;
+}>(), { paused: false, highlight: true });
+const emit = defineEmits<{ publish: [preparationId: string]; 'recording-ready': [ready: boolean] }>();
 const status = ref<DraftAudioResponse['status']>('missing');
 const manifest = ref<DraftAudioManifest | null>(null);
 const loading = ref(false);
@@ -162,11 +162,12 @@ function startPreview() {
   void playSegment(0, playbackGeneration, manifest.value);
 }
 function publish() {
-  if (!ready.value || !identityCurrent() || !manifest.value) return;
+  if (props.paused || !ready.value || !identityCurrent() || !manifest.value) return;
   const preparationId = manifest.value.preparationId;
   stopPreview(); publishing.value = true; emit('publish', preparationId);
 }
 
+watch(ready, value => emit('recording-ready', value), { immediate: true });
 watch(context, () => {
   invalidate(); error.value = '';
   if (!props.dirty && !props.rendering) void load();
@@ -190,8 +191,9 @@ onUnmounted(() => { disposed = true; clearInterval(interval); window.removeEvent
       <button v-if="status !== 'ready'" class="secondary" data-testid="prepare-draft-audio" :disabled="blocked || loading || preparing || status === 'preparing' || status === 'unavailable'" @click="load(true)">{{ preparing || status === 'preparing' ? 'Preparing narration…' : 'Prepare draft narration' }}</button>
       <button class="secondary" data-testid="preview-draft-audio" :disabled="!ready || preview === 'playing'" @click="startPreview">Preview narration</button>
       <button v-if="preview === 'playing'" class="secondary" data-testid="stop-draft-preview" @click="stopPreview">Stop preview</button>
-      <button data-testid="publish-draft-audio" :disabled="!ready" @click="publish">Publish with narration</button>
+      <button data-testid="publish-draft-audio" :class="{ secondary: !ready || !highlight }" :disabled="!ready || paused" @click="publish">Publish with narration</button>
     </div>
+    <p v-if="paused" class="draft-audio-paused draft-audio-detail">The table is paused. Resume it to publish.</p>
     <p v-if="activeSegment" class="draft-audio-caption"><strong>{{ activeSegment.speaker }}</strong> · {{ activeSegment.text }}</p>
     <small>AI-generated voices. Preview stays in this director browser. Publication shares this reviewed recording; broadcast playback starts separately.</small>
   </section>

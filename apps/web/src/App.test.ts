@@ -48,7 +48,7 @@ beforeEach(() => {
   for (const name of ['producerLink', 'createProducer', 'revokeProducer', 'producerSignIn', 'createStreamLink', 'streamLink', 'revokeStreamLink', 'streamAccess', 'inviteLink', 'reissueInvite', 'playback'] as const) transport[name].mockImplementation(unavailable);
   window.history.replaceState({}, '', '/sessions/show/stage');
 });
-afterEach(() => { document.body.innerHTML = ''; });
+afterEach(() => { document.body.innerHTML = ''; sessionStorage.clear(); });
 
 describe('public performance and player authority', () => {
   it.each(['director', 'player', 'stage'])('shows session operations only in the director workspace, including before a beat (%s)', async role => {
@@ -110,17 +110,18 @@ describe('public performance and player authority', () => {
   it.each(['director', 'player', 'stage'])('keeps session audio available before publication in the %s view', async role => {
     window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
     transport.snapshot.mockResolvedValue({ ...snapshot(role), history: [] });
-    const wrapper = mount(App, { global: { stubs: { AudioPanel: { name: 'AudioPanel', props: { sessionId: String, beatId: String, director: Boolean, stage: Boolean }, template: '<div />' } } } });
+    const wrapper = mount(App, { global: { stubs: { AudioPanel: { name: 'AudioPanel', props: { sessionId: String, beatId: String, director: Boolean, stage: Boolean, compact: Boolean }, template: '<div />' } } } });
     await flushPromises();
     const panel = wrapper.getComponent({ name: 'AudioPanel' });
     expect(panel.props('sessionId')).toBe('show');
     expect(panel.props('beatId')).toBeUndefined();
     expect(Boolean(panel.props('director'))).toBe(role === 'director');
     expect(Boolean(panel.props('stage'))).toBe(role === 'stage');
+    expect(Boolean(panel.props('compact'))).toBe(role === 'player');
     wrapper.unmount();
   });
 
-  it.each(['director', 'player', 'stage'])('shows older public correction notices in the %s view', async role => {
+  it.each(['director', 'stage'])('shows older public correction notices in the %s view', async role => {
     window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
     transport.snapshot.mockResolvedValue({ ...snapshot(role), corrections: [{ id: 'correction', publishedBeatId: 'older', beatNumber: 1, stateRevision: 4, recordedAt: '2026-10-22T00:00:00Z', publicText: 'The door was already open.' }] });
     const wrapper = mount(App); await flushPromises();
@@ -147,6 +148,55 @@ describe('public performance and player authority', () => {
     expect(transport.command).toHaveBeenLastCalledWith('show', command);
     expect(saved).toHaveBeenCalledOnce();
     wrapper.unmount();
+  });
+
+  it('shows the current step and a Go to beat button in the show bar that focuses the beat panel action', async () => {
+    window.history.replaceState({}, '', '/sessions/show/director');
+    transport.snapshot.mockResolvedValue(snapshot('director'));
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    const wrapper = mount(App, { attachTo: document.body });
+    try {
+      await flushPromises();
+      const bar = wrapper.get('section.show-bar');
+      expect(bar.get('.show-step').text()).toBe('Step: Open');
+      const go = bar.findAll('button').find(b => b.text() === 'Go to beat')!;
+      expect(go.classes()).toContain('secondary');
+      expect(wrapper.findAll('button').filter(b => b.text().includes('Open conversation'))).toHaveLength(1);
+      await go.trigger('click');
+      expect(scroll).toHaveBeenCalled();
+      expect(document.activeElement?.textContent).toContain('Open conversation');
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      wrapper.unmount();
+    }
+  });
+
+  it('keeps the beat panel clear of the show bar after Go to beat', async () => {
+    window.history.replaceState({}, '', '/sessions/show/director');
+    transport.snapshot.mockResolvedValue(snapshot('director'));
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    const originalRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.scrollIntoView = scroll;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const height = this.matches('section.show-bar') ? 150 : 0;
+      return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: height, width: 0, height, toJSON: () => ({}) } as DOMRect;
+    };
+    const wrapper = mount(App, { attachTo: document.body });
+    try {
+      await flushPromises();
+      const go = wrapper.get('section.show-bar').findAll('button').find(b => b.text() === 'Go to beat')!;
+      await go.trigger('click');
+      await flushPromises();
+      expect((wrapper.get('.beat-panel').element as HTMLElement).style.scrollMarginTop).toBe('162px');
+      expect(scroll).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      Element.prototype.getBoundingClientRect = originalRect;
+      wrapper.unmount();
+    }
   });
 
   it('opens the standalone character builder without requiring host or session access', async () => {
@@ -308,7 +358,7 @@ describe('public performance and player authority', () => {
     window.history.replaceState({}, '', '/sessions/show/play'); transport.snapshot.mockResolvedValue(snapshot('player'));
     const wrapper = mount(App); await flushPromises();
     expect(wrapper.find('[data-testid="field-generator-open"]').exists()).toBe(false);
-    await wrapper.findAll('button').find(button => button.text() === 'Act')!.trigger('click');
+    await wrapper.findAll('button').find(button => button.text() === 'Do something')!.trigger('click');
     expect(wrapper.find('[data-testid="field-generator-open"]').exists()).toBe(false);
     wrapper.unmount();
   });
@@ -332,9 +382,38 @@ describe('public performance and player authority', () => {
       expect(wrapper.find('[data-testid="open-conversation"]').exists()).toBe(false);
       expect(wrapper.find('[data-testid="submission-form"]').exists()).toBe(false);
       expect(wrapper.get('[data-testid="setup-lobby-link"]').attributes('href')).toBe('/sessions/show/lobby');
+      expect(wrapper.get('[data-testid="setup-lobby-link"]').text()).toBe(role === 'director' ? 'Open cast & lobby' : 'Open Cast & lobby');
+      expect(wrapper.get('h2').text()).toBe(role === 'director' ? 'Review your cast and boundaries.' : 'The show has not started yet.');
+      expect(wrapper.text().includes('Review your cast and boundaries.')).toBe(role === 'director');
       wrapper.unmount();
     }
   });
+  it('words the connection notice for players', async () => {
+    const lost = 'Connection lost. Your unsent words stay in this browser. The page reconnects by itself and never sends anything for you.';
+    const interrupted = 'Connection interrupted. Unsaved words stay in this browser. Reconnect refreshes the table; it never sends them.';
+    for (const role of ['player', 'director']) {
+      window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
+      transport.snapshot.mockResolvedValue(snapshot(role));
+      const wrapper = mount(App); await flushPromises();
+      expect(wrapper.text().includes(lost)).toBe(role === 'player');
+      expect(wrapper.text().includes(interrupted)).toBe(role === 'director');
+      wrapper.unmount();
+    }
+  });
+
+  it('leaves the paused notice to the seat banner', async () => {
+    const notice = 'The table is paused. Check in with the cast before continuing.';
+    for (const role of ['player', 'director']) {
+      window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
+      const base = snapshot(role);
+      transport.snapshot.mockResolvedValue({ ...base, session: { ...base.session, status: 'paused' } });
+      const wrapper = mount(App); await flushPromises();
+      expect(wrapper.text().includes(notice)).toBe(role === 'director');
+      if (role === 'player') expect(wrapper.text()).toContain('The show is paused');
+      wrapper.unmount();
+    }
+  });
+
   it('gives a player My stream view in Cast & lobby', async () => {
     window.history.replaceState({}, '', '/sessions/show/lobby');
     transport.snapshot.mockResolvedValue(snapshot('player'));
@@ -461,6 +540,30 @@ describe('public performance and player authority', () => {
     await wrapper.get('[data-testid="submission-form"]').trigger('submit');
     await flushPromises();
     expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ expectedInputEpoch: 0, text: 'Wait for my signal.' }));
+    wrapper.unmount();
+  });
+
+  it('renders only the form for players', async () => {
+    window.history.replaceState({}, '', '/sessions/show/play');
+    const base = snapshot('player');
+    const stake = { id: 'k1', version: 1, actorCharacterId: 'pc-1', helperCharacterIds: [], intent: 'Goal k1', approach: 'Carefully', ruling: 'check', trait: 'wits', edge: 0, edgeReason: null, risk: 'high', outcomes: { clean: 'Clean k1', costly: 'Costly k1', setback: 'Setback k1' } };
+    transport.snapshot.mockResolvedValue({
+      ...base,
+      activeBeat: { id: 'b9', kind: 'action', phase: 'stakes_review', revision: 1, locked: false, stakes: [stake] },
+      facts: [{ id: 'f1', text: 'The ledger is in the safe.' }],
+      characters: [
+        { id: 'pc-1', displayName: 'Skooty', approved: true, strain: 0, appearance: 'Quick hands.' },
+        { id: 'pc-2', displayName: 'Lark', approved: true, strain: 2, appearance: 'Always watching.' },
+      ],
+      history: [{ ...base.history[0], rolls: [{ id: 'r1', actorCharacterId: 'pc-1', faces: [3, 4], traitModifier: 1, edge: false, total: 8, band: 'costly' }] }],
+      corrections: [{ id: 'correction', publishedBeatId: 'older', beatNumber: 1, stateRevision: 4, recordedAt: '2026-10-22T00:00:00Z', publicText: 'The door was already open.' }],
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="submission-form"]').exists()).toBe(true);
+    for (const selector of ['.wager', '[data-testid="public-facts"]', '[aria-label="Published story"]', '[aria-label="Published corrections"]', '.roll']) expect(wrapper.find(selector).exists(), selector).toBe(false);
+    const text = wrapper.text();
+    for (const absent of ['Tell me why.', 'Goal k1', 'Clean k1', 'Lark', 'Strain', 'wits', 'The ledger is in the safe.', 'The door was already open.', 'Find the missing ledger.']) expect(text, absent).not.toContain(absent);
     wrapper.unmount();
   });
 
@@ -599,12 +702,12 @@ describe('field explanations', () => {
   it('explains each player mode with private questions and exact speech distinguished', async () => {
     window.history.replaceState({}, '', '/sessions/show/play'); transport.snapshot.mockResolvedValue(snapshot('player'));
     const wrapper = mount(App, options); await flushPromises(); checkHelp(wrapper);
-    expect(wrapper.get('label').element.firstChild?.textContent).toBe('Addressed to');
-    for (const tab of ['Act', 'Out of character', 'Say']) {
-      await wrapper.findAll('button').find(button => button.text() === tab)!.trigger('click'); checkHelp(wrapper);
-      const helpId = wrapper.get('[data-testid="speech-input"]').attributes('aria-describedby');
+    expect(wrapper.get('label').element.firstChild?.textContent).toBe('What Skooty says');
+    for (const [button, testid, phrase] of [['Do something', 'action-input', 'plain words'], ['Ask the director privately', 'note-input', 'Only the director sees this'], ['Say something', 'speech-input', 'exactly as you type them']]) {
+      await wrapper.findAll('button').find(item => item.text() === button)!.trigger('click'); await flushPromises(); checkHelp(wrapper);
+      const helpId = wrapper.get(`[data-testid="${testid}"]`).attributes('aria-describedby');
       const help = wrapper.findAll('[id]').find(node => node.attributes('id') === helpId)!.text();
-      expect(help).toContain(tab === 'Out of character' ? 'never published' : 'verbatim');
+      expect(help).toContain(phrase);
     }
     wrapper.unmount();
   });
@@ -628,6 +731,55 @@ describe('field explanations', () => {
     expect(wrapper.get('[data-testid="script-segment-0"]').attributes('aria-describedby')).toBe(survivingId); checkHelp(wrapper);
     await wrapper.findAll('button').find(button => button.text() === 'Add manual narration')!.trigger('click'); checkHelp(wrapper);
     await wrapper.findAll('button').find(button => button.text() === 'Add NPC dialogue')!.trigger('click'); checkHelp(wrapper);
+    wrapper.unmount();
+  });
+});
+
+describe('routes and header', () => {
+  it('renders the help page without any api calls', async () => {
+    window.history.replaceState({}, '', '/help');
+    const wrapper = mount(App); await flushPromises();
+    expect(wrapper.find('.help-page').exists()).toBe(true);
+    expect(wrapper.find('.app-header').exists()).toBe(true);
+    for (const name of Object.keys(transport) as (keyof typeof transport)[]) expect(transport[name]).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('shows the producer sign-in without loading sessions or a snapshot', async () => {
+    window.history.replaceState({}, '', '/producer#token=abc.def_ghi');
+    const wrapper = mount(App); await flushPromises();
+    expect(wrapper.findAll('button').some(button => button.text() === 'Sign in as producer')).toBe(true);
+    expect(window.location.hash).toBe('');
+    expect(transport.sessions).not.toHaveBeenCalled();
+    expect(transport.snapshot).not.toHaveBeenCalled();
+    expect(transport.me).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('asks for the producer link when none is present', async () => {
+    window.history.replaceState({}, '', '/producer');
+    const wrapper = mount(App); await flushPromises();
+    expect(wrapper.text()).toContain('Open the producer link your host sent you.');
+    expect(wrapper.findAll('button').some(button => button.text() === 'Sign in as producer')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('renders the stage before the snapshot resolves, never the app shell', async () => {
+    window.history.replaceState({}, '', '/sessions/show/stage');
+    transport.snapshot.mockReturnValue(new Promise(() => {}));
+    const wrapper = mount(App); await flushPromises();
+    expect(wrapper.find('.stage').exists()).toBe(true);
+    expect(wrapper.find('.app-header').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows the Help link and the producer name in the director header', async () => {
+    window.history.replaceState({}, '', '/sessions/show/director');
+    transport.snapshot.mockResolvedValue(scriptSnapshot());
+    transport.me.mockResolvedValue({ role: 'producer', sessionId: null, characterId: null, producer: { grantId: 'a'.repeat(32), label: 'Sam', expiresAt: '2026-11-22T00:00:00Z' }, streamLinkId: null, expiresAt: '2026-10-23T12:00:00Z' });
+    const wrapper = mount(App); await flushPromises();
+    expect(wrapper.get('.role-label').text()).toBe('Producer · Sam');
+    expect(wrapper.findAll('.header-meta a').some(link => link.text() === 'Help')).toBe(true);
     wrapper.unmount();
   });
 });

@@ -102,7 +102,7 @@ function start() {
       </section>
     </template>
     <StreamLinks v-if="player && own" mode="player" :session-id="snapshot.session.id" :characters="snapshot.characters" :own-character-id="own.id" />
-    <p class="muted">Keep your voice call open. Submit exact dialogue so the storyteller can respond. Anyone can request a pause; characters never lose speaking rights.</p>
+    <p class="muted">Keep your voice call open. Anyone can ask for a pause.</p>
     <a v-if="!setup || setup.started" class="button" :href="sessionPath(director ? 'director' : 'play')">Enter the scene</a>
     <p v-else class="muted">The director starts the session after the cast is approved and ready.</p>
   </section>

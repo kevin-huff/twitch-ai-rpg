@@ -334,12 +334,13 @@ export class ClewdrAiProvider implements AiProvider {
       'Only supplied participating NPC IDs can speak. NPCs know their own sourced knowledge and what these accepted submissions tell them, not unrelated world events.',
       'Current state and each NPC\'s current sourced knowledge take precedence over recentNpcDialogue, which preserves historical speech and may have been corrected. A retained belief is not a fact; an NPC may still hold it without making it true. Correction notices identify amended historical beats and confer no knowledge. Neither correction notices nor directorSteering are evidence for continuity.',
       'An ordinary question or refusal needs no check. A risky concession, resource transfer, contested secret, or consequential action needs action stakes before publication.',
+      task === 'plan' ? 'Viewers read every action contract on stream before the roll. Write each contract intent as one plain sentence of at most 90 characters, and each outcome publicText as one short sentence of at most 110 characters that tells the audience what happens. Save detail for the narration.' : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
       'Honor fixed results and declared outcomes. Costly success achieves its goal. Do not add effects, dice, inventory, facts, or consequences beyond approved results.',
       'Continuity updates must cite supplied submission IDs. Heard assertions are claims or beliefs, never newly proven facts. Only npc_knowledge continuity is supported. Do not propose world_fact updates; the server applies approved mechanical facts itself.',
       'For npc_knowledge, use category "fact" only when statement exactly matches a supplied facts[].text or an approved public fact_add text in fixedResults.effects. All other new statements, including questions or requests heard in this beat, must use category "claim" or "belief".',
       `Required JSON schema: ${JSON.stringify(schemaJson)}`,
-    ].join('\n');
+    ].filter(line => line !== '').join('\n');
     return this.post(system, selected, schema);
   }
 

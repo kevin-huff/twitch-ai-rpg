@@ -51,7 +51,7 @@ test('four players, two Mara exchanges, a reviewed dice action, stage and refres
       await player.reload();
       await expect(player.getByTestId('submission-form')).toBeVisible();
       await player.getByTestId('speech-input').fill(text);
-      await player.getByRole('button', { name: 'Send to director' }).click();
+      await player.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(player.getByRole('status')).toContainText('Saved');
     }
     await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
@@ -72,10 +72,9 @@ test('four players, two Mara exchanges, a reviewed dice action, stage and refres
     await Promise.all(players.map(async (player, index) => {
       await expect.poll(async () => (await snapshotFor(player, `/api/sessions/${sessionId}?view=player`)).json().then(data => data.activeBeat?.kind)).toBe('action');
       await player.reload();
-      await player.getByRole('button', { name: 'Act', exact: true }).click();
-      await player.getByTestId('intent-input').fill(['Lift a stuck service hatch', 'Pick the archive lock', 'Inspect the records', 'Distract Inspector Dax'][index]);
-      await player.getByTestId('approach-input').fill(['Use my gloves and a lever', 'Use my lockpick', 'Compare the signatures', 'Discuss procedure'][index]);
-      await player.getByRole('button', { name: 'Send to director' }).click();
+      await player.getByRole('button', { name: 'Do something', exact: true }).click();
+      await player.getByTestId('action-input').fill(['Lift the stuck service hatch with my gloves and a lever', 'Pick the archive lock with my lockpick', 'Inspect the records and compare the signatures', 'Distract Inspector Dax by discussing procedure'][index]);
+      await player.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(player.getByRole('status')).toContainText('Saved');
     }));
     await direct('action', ['Rook', 'Lark', 'Quill', 'Pip']);

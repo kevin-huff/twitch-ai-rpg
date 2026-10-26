@@ -56,7 +56,8 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await controls.getByTestId(`witness-${courier.id}`).check();
   await save('They have earned the clue.');
   for (const audience of [player, stage]) {
-    await expect(audience.getByTestId('public-facts')).toContainText('The Courier carries the archive key.');
+    if (audience === stage) await expect(audience.getByTestId('public-facts')).toContainText('The Courier carries the archive key.');
+    else await expect(audience.getByTestId('public-facts')).toHaveCount(0);
     await expect(audience.locator('body')).not.toContainText('PRIVATE:');
     await expect(audience.locator('body')).not.toContainText('They have earned the clue.');
   }
@@ -65,7 +66,7 @@ test('directs recurring characters and deliberate reveals across scenes without 
   expect(memory).toHaveLength(1);
 
   await player.getByTestId('speech-input').fill('A question for the old scene.');
-  await player.getByRole('button', { name: 'Send to director', exact: true }).click();
+  await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
   await controls.getByTestId('begin-scene').click();
   await controls.getByTestId('scene-title').fill('Midnight on the platform');
@@ -99,9 +100,9 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await page.getByTestId('open-conversation').click();
   await expect(page.getByRole('heading', { name: 'Collecting input', exact: true })).toBeVisible();
   await player.reload();
-  await player.getByLabel('Addressed to').selectOption(courier.id);
+  await player.getByLabel('Talking to').selectOption(courier.id);
   await player.getByTestId('speech-input').fill('Will you show us the key, Ren?');
-  await player.getByRole('button', { name: 'Send to director', exact: true }).click();
+  await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
   await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(1);
   await page.locator('.queue-item input[type=checkbox]').check();

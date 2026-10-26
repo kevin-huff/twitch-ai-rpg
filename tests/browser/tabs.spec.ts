@@ -35,7 +35,7 @@ test('one browser keeps the director, four invited characters, and stage indepen
     await expect(player.getByRole('heading', { name: names[index], exact: true })).toBeVisible();
     await expect(player.locator('.header-meta .status')).toHaveText('Connected');
     await player.getByTestId('speech-input').fill(`Independent words from ${names[index]}.`);
-    await player.getByRole('button', { name: 'Send to director' }).click();
+    await player.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(player.getByRole('status')).toContainText('Saved');
     const status = await player.evaluate(async () => (await fetch('/api/sessions', {
       headers: { 'X-RPG-Identity': new URL(location.href).searchParams.get('identity')! },

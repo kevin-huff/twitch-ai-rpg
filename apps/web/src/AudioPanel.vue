@@ -2,10 +2,12 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { createPlaybackController } from './playback';
 
-const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean }>();
+const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean; compact?: boolean }>();
 const controller = createPlaybackController({ ...props });
 const state = controller.state;
 const ownershipPending = ref(false);
+// The compact seat control only reports errors once the player has asked for sound.
+const asked = ref(false);
 const confirming = ref(false);
 const directorControls = computed(() => props.director && !props.stage);
 const activeSegment = computed(() => {
@@ -49,7 +51,20 @@ onUnmounted(() => controller.dispose());
 </script>
 
 <template>
-  <section class="audio-panel" data-testid="audio-panel" aria-label="Reviewed narration playback">
+  <section v-if="compact" class="audio-panel compact" data-testid="audio-panel" aria-label="Narration">
+    <p v-if="state.error && asked" class="notice error" role="alert">The sound could not play in this browser. Press Hear the story here to try again. The story still plays on the stream.</p>
+    <div v-if="!state.presenting" class="actions audio-listening">
+      <button v-if="!state.listening || state.muted" data-testid="listen-audio" class="secondary" :disabled="!state.snapshot || state.commandPending" @click="asked = true; controller.listen()">Hear the story here</button>
+      <button v-else data-testid="mute-audio" class="secondary" @click="controller.mute()">Mute</button>
+    </div>
+    <label class="audio-volume">
+      <span>Volume</span>
+      <input data-testid="audio-volume" type="range" min="0" max="1" step="0.05" :value="state.volume" :aria-valuetext="`${Math.round(state.volume * 100)}%`" @input="controller.setVolume(Number(($event.target as HTMLInputElement).value))">
+      <span class="audio-volume-value" aria-hidden="true">{{ Math.round(state.volume * 100) }}%</span>
+    </label>
+    <small>AI-generated voices. Plays the narration in this browser, in step with the show.</small>
+  </section>
+  <section v-else class="audio-panel" data-testid="audio-panel" aria-label="Reviewed narration playback">
     <div class="audio-heading">
       <strong>Reviewed narration</strong>
       <small data-testid="playback-status" aria-live="polite">{{ statusText }}</small>
@@ -116,5 +131,6 @@ onUnmounted(() => controller.dispose());
 .audio-volume input { width: 8rem; max-width: 100%; padding: 0; accent-color: var(--gold); }
 .audio-volume-value { min-width: 2.5rem; font-variant-numeric: tabular-nums; }
 .audio-panel > small { display: block; margin-top: .7rem; }
+.audio-panel.compact { margin-top: 0; }
 .audio-caption { font-size: 1rem; margin-top: .8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

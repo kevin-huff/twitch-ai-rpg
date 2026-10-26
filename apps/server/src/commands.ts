@@ -320,6 +320,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         revision: (previous?.revision ?? 0) + 1, kind: command.kind, text: command.text, intent: command.intent, approach: command.approach, recipientNpcIds: command.recipientNpcIds,
         stageDirection: command.stageDirection, alreadySpokenAloud: command.alreadySpokenAloud, status: 'queued' };
       await saveSubmission(client, submission);
+      eventData = { submissionId: submission.id };
       if (beat?.selectedSubmissionIds.includes(submission.id)) {
         beat.phase = 'collecting'; beat.stakesApproved = false; beat.contracts = []; beat.inputSnapshotHash = null; beat.draft = null; beat.generation++; beat.revision++;
         await saveBeat(client, beat);
