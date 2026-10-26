@@ -2,8 +2,6 @@
 
 The Story Table runs a live roleplay show on Twitch. Players speak and act for their own characters from a web page, an AI plays the world and its non-player characters, and a human director reviews every beat (one exchange of dialogue or one action round) before the audience sees it. The server owns the rules and the record: it rolls the dice and applies the outcomes the director approved. OBS (Open Broadcaster Software) puts the stage on stream with captions, dice, narration and pictures.
 
-The project is in active development and hasn't had its first live show yet. Nothing is deployed. [CODEX_START_HERE.md](CODEX_START_HERE.md) tracks the current state and the known limits.
-
 ## What it does
 
 - Players join with a private invitation, write their own character or take a saved card, and send dialogue or actions from a simple seat page. They follow the story on the stream.
