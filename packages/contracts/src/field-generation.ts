@@ -17,6 +17,7 @@ export const FIELD_GENERATION_FIELDS = {
   'scenario.premise': text('Premise', 4000, 'Expand the scenario premise into a playable situation with clear tension.'),
   'scenario.genre': text('Genre', 160, 'Describe the genre concisely.'),
   'scenario.tone': text('Tone', 500, 'Describe the intended atmosphere and tone.'),
+  'scenario.pictureStyle': text('Picture style', 300, 'Describe one consistent look for every picture in this show in a short phrase: art medium, color palette and lighting. Do not name characters or places.'),
   'scenario.directorNotes': text('Director notes', 12000, 'Expand private preparation notes for the director.'),
   'scenario.boundaries': lines('Boundaries', 30, 500, 'Clarify only the supplied content boundaries. Preserve every restriction; do not relax them or introduce new permissions.'),
   'scenario.playerHooks': lines('Player hooks', 20, 1000, 'Offer hooks that invite participation without deciding player choices.'),

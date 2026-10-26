@@ -345,3 +345,90 @@ describe('stream links and producer access', () => {
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ commandId: expect.any(String) });
   });
 });
+
+describe('picture calls', () => {
+  const imageId = '6f1c2b7e-9a3d-4e5f-8b21-0c4d5e6f7a8b';
+  const details = { appearance: 'A tall ranger with a green cloak', role: 'Scout', pronouns: 'they/them', name: 'Avery' };
+  const ok = (body: unknown) => { const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => body }); vi.stubGlobal('fetch', fetch); return fetch; };
+
+  it('creates a seat portrait at its URL, posting the body and reading the picture id', async () => {
+    const fetch = ok({ imageId });
+    expect(await api.createSeatPortrait('show/1', { expectedCharacterRevision: 4, details })).toEqual({ imageId });
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/character/portrait');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ expectedCharacterRevision: 4, details });
+  });
+
+  it('creates a builder portrait at its URL', async () => {
+    const fetch = ok({ imageId });
+    expect(await api.createBuilderPortrait({ expectedRevision: 2, details })).toEqual({ imageId });
+    expect(fetch.mock.calls[0][0]).toBe('/api/character-builder/portrait');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ expectedRevision: 2, details });
+  });
+
+  it('creates a library portrait at its URL, keeping the picture style', async () => {
+    const fetch = ok({ imageId });
+    expect(await api.createLibraryPortrait({ subject: 'npc', subjectKey: 'npc-1', details, pictureStyle: 'Ink sketch' })).toEqual({ imageId });
+    expect(fetch.mock.calls[0][0]).toBe('/api/library/portraits');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ subject: 'npc', subjectKey: 'npc-1', details, pictureStyle: 'Ink sketch' });
+  });
+
+  it('rejects a portrait body with an extra key before fetching', async () => {
+    const fetch = ok({ imageId });
+    await expect(api.createSeatPortrait('show-1', { expectedCharacterRevision: 4, details, extra: true } as never)).rejects.toThrow();
+    await expect(api.createBuilderPortrait({ expectedRevision: 2, details, extra: true } as never)).rejects.toThrow();
+    await expect(api.createLibraryPortrait({ subject: 'card', subjectKey: 'card-1', details, extra: true } as never)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed picture reply', async () => {
+    ok({ imageId: 'not-a-uuid' });
+    await expect(api.createBuilderPortrait({ expectedRevision: 2, details })).rejects.toThrow();
+  });
+
+  it('draws a beat picture at its URL with an empty body and reads the picture id', async () => {
+    const fetch = ok({ imageId });
+    expect(await api.drawBeatPicture('show/1')).toEqual({ imageId });
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/beat-picture');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({});
+  });
+
+  it('saves picture settings at their URL and reads the effective settings back', async () => {
+    const settings = { style: 'Ink sketch', model: 'flux-3-klein' };
+    const fetch = ok(settings);
+    expect(await api.savePictureSettings('show/1', settings)).toEqual(settings);
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/picture-settings');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(settings);
+  });
+
+  it('rejects picture settings with an extra key or a malformed reply before fetching', async () => {
+    const fetch = ok({ style: '', model: 'krea-2-turbo' });
+    await expect(api.savePictureSettings('show-1', { style: '', model: 'krea-2-turbo', extra: true } as never)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    ok({ style: '', model: 'Not A Model!' });
+    await expect(api.savePictureSettings('show-1', { style: '', model: 'krea-2-turbo' })).rejects.toThrow();
+  });
+
+  it('posts the scene and NPC picture actions with an empty body and encoded ids', async () => {
+    const cases: Array<[() => Promise<unknown>, string]> = [
+      [() => api.newScenePicture('show/1'), '/api/sessions/show%2F1/scene-picture'],
+      [() => api.hideScenePicture('show/1'), '/api/sessions/show%2F1/scene-picture/hide'],
+      [() => api.showScenePicture('show/1'), '/api/sessions/show%2F1/scene-picture/show'],
+      [() => api.createNpcPortrait('show/1', 'npc 1'), '/api/sessions/show%2F1/npcs/npc%201/portrait'],
+      [() => api.removeNpcPortrait('show/1', 'npc 1'), '/api/sessions/show%2F1/npcs/npc%201/portrait/remove'],
+    ];
+    for (const [run, url] of cases) {
+      const fetch = ok({ ok: true });
+      expect(await run()).toEqual({ ok: true });
+      expect(fetch.mock.calls[0][0]).toBe(url);
+      expect(fetch.mock.calls[0][1].method).toBe('POST');
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({});
+      vi.unstubAllGlobals();
+    }
+  });
+});

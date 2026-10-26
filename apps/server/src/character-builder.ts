@@ -6,7 +6,7 @@ import {
   CharacterBuilderDraftSchema, CharacterBuilderSnapshotSchema, CharacterBuilderSummarySchema,
   BuilderCardGenerationRequestSchema, CardGenerationInputSchema,
   CharacterBuilderFieldGenerationRequestSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES,
-  CreateCharacterBuilderSchema, IdSchema, SaveCharacterBuilderSchema, SubmitCharacterBuilderSchema,
+  CreateCharacterBuilderSchema, IdSchema, ImageIdSchema, SaveCharacterBuilderSchema, SubmitCharacterBuilderSchema,
   type AiProvider, type CharacterBuilderDraft,
 } from '@rpg/contracts';
 import { transaction } from './database';
@@ -23,6 +23,7 @@ interface BuilderOptions {
   origin: string;
   provider: AiProvider;
   timeoutMs?: number;
+  picturesEnabled?: boolean;
 }
 export interface BuilderRow {
   id: string;
@@ -45,9 +46,10 @@ const summary = (row: BuilderRow) => CharacterBuilderSummarySchema.parse({
   expiresAt: row.expires_at.toISOString(), revokedAt: row.revoked_at?.toISOString() ?? null,
   submittedAt: row.submitted_at?.toISOString() ?? null, submittedTemplate: submittedTemplate(row),
 });
-const snapshot = (row: BuilderRow) => CharacterBuilderSnapshotSchema.parse({
+const snapshot = (row: BuilderRow, picturesEnabled = false) => CharacterBuilderSnapshotSchema.parse({
   id: row.id, label: row.label, instructions: row.instructions, revision: row.draft_revision, draft: row.draft,
   expiresAt: row.expires_at.toISOString(), submittedTemplate: submittedTemplate(row),
+  ...(picturesEnabled ? { picturesEnabled: true } : {}),
 });
 const blankDraft = () => CharacterBuilderDraftSchema.parse({
   schemaVersion: 1, displayName: '', pronouns: '', appearance: '', personality: '', backstory: '',
@@ -92,6 +94,15 @@ export const requireEditable = (row: BuilderRow, expectedRevision: number) => {
   if (row.submitted_at !== null) conflict('This character has already been submitted. It is now read-only.');
   if (row.draft_revision !== expectedRevision) conflict('This draft changed. Reload it before generating.');
 };
+// A portrait id may stay as saved or come from a ready picture made for this link; anything else is another card's.
+async function requireOwnPortrait(client: PoolClient, row: BuilderRow, draft: CharacterBuilderDraft) {
+  const portraitId = draft.portraitId;
+  if (portraitId === undefined || portraitId === row.draft.portraitId) return;
+  if (!ImageIdSchema.safeParse(portraitId).success || portraitId !== portraitId.toLowerCase()) conflict('That portrait is not available for this card. Create a new one.');
+  const ready = await client.query("SELECT 1 FROM images WHERE id=$1 AND builder_id=$2 AND status='ready'", [portraitId, row.id]);
+  if (!ready.rowCount) conflict('That portrait is not available for this card. Create a new one.');
+}
+
 
 export function registerCharacterBuilders(app: FastifyInstance, options: BuilderOptions) {
   const tokenFor = (id: string) => createHmac('sha256', options.hostToken).update(JSON.stringify(['rpg-character-builder-v1', id])).digest('base64url');
@@ -168,7 +179,7 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
       path: '/', httpOnly: true, sameSite: 'strict', secure: options.origin.startsWith('https:'),
       maxAge: Math.max(0, Math.min(30 * 86400, Math.floor((result.row.expires_at.getTime() - Date.now()) / 1000))),
     });
-    return { identityId, builder: snapshot(result.row) };
+    return { identityId, builder: snapshot(result.row, options.picturesEnabled) };
   });
   app.get('/api/character-builder', async (request) => transaction(options.pool, async (client) => snapshot((await builderSession(client, request)).row, options.picturesEnabled)));
   app.post('/api/character-builder/generate-field', { bodyLimit: MAX_FIELD_GENERATION_REQUEST_BYTES }, async (request) => {
@@ -218,6 +229,7 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
         if (previous) return previous;
         if (row.submitted_at !== null) conflict('This character has already been submitted. It is now read-only.');
         if (row.draft_revision !== command.expectedRevision) conflict('This draft changed. Reload it before saving.');
+        await requireOwnPortrait(client, row, command.draft);
         let updated: BuilderRow;
         if (operation === 'submit') {
           const templateId = randomUUID();
@@ -227,7 +239,7 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
         } else {
           updated = (await client.query<BuilderRow>('UPDATE character_builders SET draft=$2,draft_revision=draft_revision+1 WHERE id=$1 RETURNING *', [row.id, command.draft])).rows[0]!;
         }
-        const response = snapshot(updated);
+        const response = snapshot(updated, options.picturesEnabled);
         await saveReceipt(client, actorId, command.commandId, requestHash, response);
         return response;
       });

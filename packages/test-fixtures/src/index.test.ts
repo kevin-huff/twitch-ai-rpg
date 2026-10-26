@@ -2,7 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { SessionStateSchema } from '@rpg/contracts';
 import { createLedgerState } from './index';
 
+const agePresentation = /^An? (?:[\w-]+ ){0,3}?(?:woman|man|girl|boy|person)\b.*?\b(?:in (?:her|his|their) (?:early |late |mid-)?(?:teens|twenties|thirties|forties|fifties|sixties|seventies|eighties|nineties)|(?:young|old|elderly|middle-aged|teenage))\b/i;
+
 describe('The Ledger Job rehearsal seed', () => {
+  it('opens every starter person appearance with apparent age and gender', () => {
+    let sequence = 0;
+    const seed = SessionStateSchema.parse(createLedgerState('session', () => `opaque-${++sequence}`));
+    const people = seed.npcs.filter(npc => npc.displayName !== 'Biscuit');
+    expect(people.map(npc => npc.displayName)).toEqual(['Mara Vale', 'Inspector Dax']);
+    for (const npc of people) expect(npc.appearance).toMatch(agePresentation);
+    expect(agePresentation.test('A tall stranger with a cane.')).toBe(false);
+    expect(agePresentation.test('A woman with an unhurried gaze.')).toBe(false);
+  });
+
   it('creates a valid four-person cast, distinct specialties, and two available recurring speakers', () => {
     let sequence = 0;
     const seed = SessionStateSchema.parse(createLedgerState('session', () => `opaque-${++sequence}`));

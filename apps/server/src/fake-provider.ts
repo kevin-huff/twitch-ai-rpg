@@ -4,7 +4,10 @@ import {
   type CardDraft, type CardGenerationInput, type ScenarioDraft, type ScenarioGenerationRequest, type FieldGenerationField, validateFieldGenerationText,
   type AiProvider, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
   type FieldGenerationRequest, type FieldGenerationResponse, type FieldGenerationCharacterContext,
+  PictureDescriptionRequestSchema, type PictureDescriptionRequest,
 } from '@rpg/contracts';
+
+export const FAKE_PICTURE_DESCRIPTION = 'Everyone in the beat gathers at the center of the scene under warm lamplight, caught in the middle of the moment.';
 
 function characterInspiration(context: FieldGenerationCharacterContext, field: string): string {
   const publicField = ['npc.displayName', 'npc.role', 'npc.appearance', 'character.displayName', 'character.appearance'].includes(field);
@@ -24,6 +27,14 @@ function characterInspiration(context: FieldGenerationCharacterContext, field: s
 }
 
 export class FakeAiProvider implements AiProvider {
+  readonly pictureRequests: PictureDescriptionRequest[] = [];
+
+  async describePicture(input: PictureDescriptionRequest): Promise<string> {
+    const request = PictureDescriptionRequestSchema.parse(input);
+    this.pictureRequests.push(request);
+    return FAKE_PICTURE_DESCRIPTION;
+  }
+
   async generateField(input: FieldGenerationRequest): Promise<FieldGenerationResponse> {
     const { field, seed, premise, instructions, characterContext } = FieldGenerationRequestSchema.parse(input);
     const definition = FIELD_GENERATION_FIELDS[field];

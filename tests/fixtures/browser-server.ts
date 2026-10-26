@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { buildApp } from '../../apps/server/src/app';
 import { FakeAiProvider } from '../../apps/server/src/fake-provider';
+import { FakeImageProvider } from '../../apps/server/src/fake-images';
 import type { ProviderContext } from '@rpg/contracts';
 
 // Inject deterministic media only in the isolated browser harness.
@@ -25,6 +26,7 @@ class BrowserAiProvider extends FakeAiProvider {
 const app = await buildApp({
   databaseUrl, hostToken: 'browser-test-host-credential-not-for-deployment', origin: 'http://127.0.0.1:3100',
   provider: new BrowserAiProvider(),
+  images: process.env.BROWSER_PICTURES === 'off' ? undefined : new FakeImageProvider({ delayMs: 1000 }),
   speech: { synthesize: async ({ text }) => { if (text.startsWith(marker)) await pause(); return { bytes, contentType: 'audio/mpeg' }; } },
   speechModel: 'browser-synthetic', speechVoiceId: 'browser-synthetic', assetDir: 'test-results/audio',
 });

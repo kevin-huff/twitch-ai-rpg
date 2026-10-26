@@ -4,6 +4,7 @@ import { CharacterBuilderDraftSchema, CharacterCardDefinitionSchema } from '@rpg
 import type { CharacterBuilderDraft, CharacterBuilderSnapshot, FieldGenerationCharacterContext, FieldGenerationRequest, PortraitDetails } from '@rpg/contracts';
 import { api } from './api';
 import { selectIdentity } from './identity';
+import { pictureUrl } from './pictures';
 import CharacterForm from './CharacterForm.vue';
 import ErrorNotice from './ErrorNotice.vue';
 
@@ -79,6 +80,18 @@ async function generateCard(input: { prompt: string; keepFilled: boolean; curren
     throw reason;
   }
 }
+async function generatePortrait(details: PortraitDetails) {
+  if (!snapshot.value || busy.value || submitted.value || conflict.value) throw new Error('This character draft is unavailable for generation.');
+  const { id, revision } = snapshot.value;
+  try {
+    return await api.createBuilderPortrait({ expectedRevision: revision, details });
+  } catch (reason) {
+    if (snapshot.value?.id === id && snapshot.value.revision === revision && !submitted.value
+      && typeof reason === 'object' && reason !== null && 'status' in reason && reason.status === 409) report(reason);
+    throw reason;
+  }
+}
+const portraitUrl = (imageId: string) => pictureUrl({ kind: 'builder' }, imageId);
 async function save(submit: boolean) {
   if (!form.value || !snapshot.value || busy.value || submitted.value || conflict.value) return;
   error.value = ''; status.value = '';

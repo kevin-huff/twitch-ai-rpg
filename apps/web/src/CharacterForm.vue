@@ -2,6 +2,7 @@
 import { computed, ref, useId, watch } from 'vue';
 import type { CardGenerationResponse, CharacterCardDefinition, FieldGenerationCharacterContext, FieldGenerationRequest, FieldGenerationResponse, PictureIdResponse, PortraitDetails } from '@rpg/contracts';
 import CardGenerator from './CardGenerator.vue';
+import PortraitGenerator from './PortraitGenerator.vue';
 import FieldGenerator from './FieldGenerator.vue';
 import { characterFieldContext } from './field-context';
 const card = defineModel<CharacterCardDefinition>({ required: true });
@@ -19,6 +20,12 @@ function undoGeneratedCard(previous: CharacterCardDefinition) {
   suggestedPronouns = null;
   pronounsPending.value = false;
   card.value = { ...previous, portraitId: card.value.portraitId };
+}
+function usePortrait(imageId: string) {
+  card.value.portraitId = imageId;
+}
+function removePortrait() {
+  delete card.value.portraitId;
 }
 function keepSuggestedPronouns() {
   suggestedPronouns = null;
@@ -45,6 +52,7 @@ const details = [
 <template>
   <fieldset :disabled="disabled" class="character-form">
     <CardGenerator v-if="generationEnabled && generateCard" :card="card" :context-key="generationContext" :disabled="disabled" :context-note="cardGenerationNote" :generate="generateWholeCard" @apply="applyGeneratedCard" @undo="undoGeneratedCard" />
+    <PortraitGenerator v-if="picturesEnabled && generatePortrait && portraitUrl" :name="card.displayName" :portrait-id="card.portraitId" :details="{ appearance: card.appearance, role: card.specialty, pronouns: card.pronouns, name: card.displayName }" :context-key="generationContext" :disabled="disabled" :image-url="portraitUrl" :generate="generatePortrait" @use="usePortrait" @remove="removePortrait" />
     <div class="field-grid"><div class="generated-field"><label><span :class="{ 'field-label': generationEnabled }">Character name</span><input :aria-describedby="helpId('name')" v-model="card.displayName" data-testid="card-name" maxlength="80" required></label><p :id="helpId('name')" class="field-help">The name used on the approved public card, player seat, and dialogue captions.</p><FieldGenerator :generate="generate" :instructions="instructions" :character-context="characterContext" v-if="generationEnabled" :premise="premise" :premise-label="premiseLabel" class="field-ai" field="character.displayName" v-model="card.displayName" :context-key="generationContext" :disabled="disabled" /></div><div class="generated-field"><label><span :class="{ 'field-label': generationEnabled }">Pronouns</span><input :aria-describedby="helpId('pronouns')" v-model="card.pronouns" maxlength="80"></label><p :id="helpId('pronouns')" class="field-help">Optional pronouns that guide how the AI refers to this character.</p><div v-if="pronounsPending" class="pronouns-suggested"><p data-testid="suggested-pronouns-notice" role="status">The AI suggested these pronouns. Keep them or change them.</p><button type="button" class="secondary" data-testid="keep-suggested-pronouns" @click="keepSuggestedPronouns">Keep these pronouns</button></div><FieldGenerator :generate="generate" :instructions="instructions" :character-context="characterContext" v-if="generationEnabled" :premise="premise" :premise-label="premiseLabel" class="field-ai" field="character.pronouns" v-model="card.pronouns" :context-key="generationContext" :disabled="disabled" /></div></div>
     <div v-for="detail in details" :key="detail.key" class="generated-field"><label><span :class="{ 'field-label': generationEnabled }">{{ detail.label }}</span><textarea :aria-describedby="helpId(detail.key)" v-model="card[detail.key]" :data-testid="`card-${detail.key}`" rows="2" /></label><p :id="helpId(detail.key)" class="field-help">{{ detail.help }}</p><FieldGenerator :generate="generate" :instructions="instructions" :character-context="characterContext" v-if="generationEnabled" :premise="premise" :premise-label="premiseLabel" class="field-ai" :field="`character.${detail.key}`" v-model="card[detail.key]" :context-key="generationContext" :disabled="disabled" /></div>
     <p :id="helpId('allocation')" class="muted">Assign +2, +1, +1, and +0 across the four traits.</p>

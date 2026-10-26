@@ -40,6 +40,14 @@ suite('private reusable character builders', () => {
     expect(response.statusCode, response.body).toBe(200);
     return { ...response.json(), cookie: String(response.headers['set-cookie']) };
   }
+  async function insertImage(builderId: string | null, status = 'ready') {
+    const id = randomUUID();
+    await pool.query(
+      "INSERT INTO images(id,owner_id,builder_id,purpose,subject_id,limit_key,status,prompt,width,height,provider,model,requested_by,file_hash,content_type,byte_length) VALUES($1,$2,$3,'card','card',$4,$5,'A portrait',512,512,'fake','fake-image',$2,$6,'image/png',10)",
+      [id, hash(hostToken), builderId, `builder:${builderId ?? 'none'}`, status, 'a'.repeat(64)],
+    );
+    return id;
+  }
   beforeEach(async () => {
     hostToken = `builder-test-host-${randomUUID()}`;
     jar = new Map();
@@ -347,5 +355,52 @@ suite('private reusable character builders', () => {
     expect((await request('/api/character-builder/access', { token: link.token, role: 'host' })).statusCode).toBe(400);
     expect((await request('/api/character-builder/access', { token: 'missing' })).statusCode).toBe(401);
     expect((await request(`/api/character-builders/${link.builder.id}/revoke`, { commandId: randomUUID(), owner: hash(hostToken) })).statusCode).toBe(400);
+  });
+
+  it('keeps pictures out of snapshots while pictures are off', async () => {
+    const link = await create();
+    const opened = await access(link.token);
+    expect(opened.builder).not.toHaveProperty('picturesEnabled');
+    const identity = opened.identityId;
+    expect(await request('/api/character-builder', undefined, identity).then(response => response.json())).not.toHaveProperty('picturesEnabled');
+    const saved = await request('/api/character-builder/save', { commandId: randomUUID(), expectedRevision: 0, draft: validDraft() }, identity);
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json()).not.toHaveProperty('picturesEnabled');
+  });
+
+  it('refuses portraits that are not this link\'s ready pictures on save and submit, and carries a valid one into the library', async () => {
+    const link = await create();
+    const other = await create('Another player');
+    const identity = (await access(link.token)).identityId;
+    const conflictMessage = 'That portrait is not available for this card. Create a new one.';
+    const draftWith = (portraitId: string) => ({ ...validDraft(), portraitId });
+    const foreign = await insertImage(other.builder.id);
+    const unfinished = await insertImage(link.builder.id, 'making');
+    const unowned = await insertImage(null);
+    for (const portraitId of [foreign, unfinished, unowned, randomUUID(), 'not-a-uuid']) {
+      for (const operation of ['save', 'submit']) {
+        const refused = await request(`/api/character-builder/${operation}`, { commandId: randomUUID(), expectedRevision: 0, draft: draftWith(portraitId) }, identity);
+        expect(refused.statusCode, refused.body).toBe(409);
+        expect(refused.json()).toMatchObject({ code: 'conflict', message: conflictMessage });
+      }
+    }
+    expect((await request('/api/character-builder', undefined, identity)).json()).toMatchObject({ revision: 0, draft: blankDraft() });
+    expect((await request('/api/library')).json().characters).toEqual([]);
+
+    const own = await insertImage(link.builder.id);
+    const saved = await request('/api/character-builder/save', { commandId: randomUUID(), expectedRevision: 0, draft: draftWith(own) }, identity);
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().draft.portraitId).toBe(own);
+    // The saved id stays valid even if its picture row is no longer ready.
+    await pool.query("UPDATE images SET status='failed' WHERE id=$1", [own]);
+    const resaved = await request('/api/character-builder/save', { commandId: randomUUID(), expectedRevision: 1, draft: { ...draftWith(own), flaw: 'Late' } }, identity);
+    expect(resaved.statusCode, resaved.body).toBe(200);
+    expect((await request('/api/character-builder/submit', { commandId: randomUUID(), expectedRevision: 2, draft: draftWith(foreign) }, identity)).statusCode).toBe(409);
+    const submitted = await request('/api/character-builder/submit', { commandId: randomUUID(), expectedRevision: 2, draft: { ...draftWith(own), flaw: 'Late' } }, identity);
+    expect(submitted.statusCode, submitted.body).toBe(200);
+    const library = (await request('/api/library')).json();
+    expect(library.characters).toHaveLength(1);
+    expect(library.characters[0].definition.portraitId).toBe(own);
+    expect(library.characters[0].id).toBe(submitted.json().submittedTemplate.templateId);
   });
 });

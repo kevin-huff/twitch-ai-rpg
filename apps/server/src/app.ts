@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
-import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type Role } from '@rpg/contracts';
+import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { createPool, migrate, transaction } from './database';
 import { AppError, authorize, project, saveState, type Actor } from './repository';
@@ -25,6 +25,9 @@ import { invitationToken as deriveInvitationToken, registerInvites } from './inv
 import { registerAudio, type SpeechEngine } from './audio';
 import { registerDraftAudio } from './draft-audio';
 import { registerPlayback } from './playback';
+import { ImageService, PICTURE_MESSAGES } from './images';
+import { registerPictureRoutes } from './picture-routes';
+import { registerPortraitRoutes } from './portrait-routes';
 import { registerOperations } from './operations';
 import { httpCredential, identityCookieName, selectCredential, requestIdentity } from './identity';
 
@@ -42,7 +45,11 @@ export interface AppOptions {
   speechVoiceId?: string;
   speechVoices?: Record<string, string>;
   assetDir?: string;
+  images?: ImageProvider;
+  imageHourlyLimit?: number;
 }
+// Picture bytes never change under their id, so a picture response may be cached for good.
+const IMAGE_PATH = /^\/api\/(?:sessions\/[^/]+|library|character-builder)\/images\/[0-9a-f-]{36}$/;
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 export async function buildApp(options: AppOptions) {
@@ -51,9 +58,13 @@ export async function buildApp(options: AppOptions) {
   await migrate(pool);
   // Restarted workers expose interrupted work as retryable; accepted rolls remain stored.
   await pool.query('UPDATE generation_jobs SET status=\'failed\',error=\'The server restarted. Retry generation or write a manual script.\',finished_at=now() WHERE status=\'running\'');
+  await pool.query('UPDATE images SET status=\'failed\',message=CASE WHEN moment IS NOT NULL THEN $4 ELSE CASE purpose WHEN \'scene\' THEN $1 WHEN \'npc\' THEN $2 ELSE $3 END END,finished_at=clock_timestamp() WHERE status=\'making\'', [PICTURE_MESSAGES.sceneFailed, PICTURE_MESSAGES.npcFailed, PICTURE_MESSAGES.cardFailed, PICTURE_MESSAGES.beatFailed]);
+  const assetDir = options.assetDir ?? '.local/audio';
+  const provider = options.provider ?? new FakeAiProvider();
+  // Only a story AI the server was given describes pictures; without one the server describes each beat from its own text.
+  const images = new ImageService({ pool, provider: options.images, assetDir, hourlyLimit: options.imageHourlyLimit, ai: options.provider });
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   await app.register(cookie);
-  const provider = options.provider ?? new FakeAiProvider();
   const authenticate = async (request: FastifyRequest, client?: PoolClient): Promise<Actor> => {
     const credential = httpCredential(request).token;
     const found = credential ? await findActiveActor(client ?? pool, hash(credential)) : null;
@@ -71,7 +82,12 @@ export async function buildApp(options: AppOptions) {
       return reply.code(403).send({ code: 'origin_forbidden', message: 'Use the configured application origin.', recoverable: false });
     }
   });
-  app.addHook('onSend', async (_request, reply) => { reply.header('Referrer-Policy', 'no-referrer'); reply.header('X-Content-Type-Options', 'nosniff'); reply.header('Cache-Control', 'no-store'); });
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('Referrer-Policy', 'no-referrer'); reply.header('X-Content-Type-Options', 'nosniff');
+    const immutable = request.url.split('?')[0]!.startsWith('/assets/') && reply.statusCode === 200 && !String(reply.getHeader('content-type') ?? '').startsWith('text/html');
+    const picture = reply.statusCode === 200 && IMAGE_PATH.test(request.url.split('?')[0]!);
+    reply.header('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : picture ? 'private, max-age=31536000, immutable' : 'no-store');
+  });
   const tokenBody = z.strictObject({ token: z.string().min(1).max(1024), tab: z.literal(true).optional() });
   const persistCredential = async (row: CredentialRow, client: Pick<PoolClient, 'query'> = pool, credentialOptions: { expiresAt?: Date } = {}) => {
     const credential = randomBytes(32).toString('base64url');
@@ -124,7 +140,7 @@ export async function buildApp(options: AppOptions) {
         const state = custom?.state ?? createLedgerState(sessionId, randomUUID);
         if (command.title) state.session.title = command.title;
         await client.query('INSERT INTO sessions(id,owner_id,title,scene,status) VALUES($1,$2,$3,$4,$5)', [sessionId, actor.actor_id, state.session.title, state.session.scene, state.session.status]);
-        if (custom) await client.query('UPDATE sessions SET scenario_snapshot=$2,character_snapshots=$3 WHERE id=$1', [sessionId, custom.scenarioSnapshot, JSON.stringify(custom.characterSnapshots)]);
+        if (custom) await client.query('UPDATE sessions SET scenario_snapshot=$2,character_snapshots=$3,picture_settings=$4 WHERE id=$1', [sessionId, custom.scenarioSnapshot, JSON.stringify(custom.characterSnapshots), JSON.stringify(custom.pictureSettings)]);
         const seedEvent = await recordEvent(client, sessionId, actor.actor_id, command.commandId, 'session.created', 0);
         for (const npc of state.npcs) {
           for (const record of [...npc.knowledge, ...npc.relationships]) record.sourceEventId = seedEvent.eventId;
@@ -166,22 +182,24 @@ export async function buildApp(options: AppOptions) {
   app.get<{ Params: { sessionId: string }; Querystring: { view?: Role } }>('/api/sessions/:sessionId', async (request) => {
     const actor = await authenticate(request);
     const view = request.query.view && z.enum(['director', 'player', 'stage']).parse(request.query.view);
-    return transaction(pool, (client) => project(client, request.params.sessionId, actor, view));
+    return transaction(pool, (client) => project(client, request.params.sessionId, actor, view, { picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined }));
   });
-  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client) }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
+  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client), pictures: images.enabled ? images : undefined, picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
   const accessDeps: AccessRouteDeps = { pool, authenticate, hostToken: options.hostToken, origin: options.origin, persistCredential, issueCookie };
-  registerLibrary(app, { pool, authenticate });
-  registerCharacterBuilders(app, { pool, authenticate, hostToken: options.hostToken, origin: options.origin, provider, timeoutMs: options.providerTimeoutMs });
+  registerLibrary(app, { pool, authenticate, picturesEnabled: images.enabled });
+  registerCharacterBuilders(app, { pool, authenticate, hostToken: options.hostToken, origin: options.origin, provider, timeoutMs: options.providerTimeoutMs, picturesEnabled: images.enabled });
   registerProducers(app, accessDeps);
   registerStreamLinks(app, accessDeps);
   registerInvites(app, accessDeps);
   registerFieldGeneration(app, { authenticate, provider, timeoutMs: options.providerTimeoutMs });
   registerSeatGeneration(app, { pool, authenticate, provider, timeoutMs: options.providerTimeoutMs });
   registerScenarioDrafts(app, { authenticate, provider, scenarioTimeoutMs: options.scenarioTimeoutMs });
-  registerAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
-  registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
+  registerAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir });
+  registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir });
   registerOperations(app, { pool, authenticate, speechConfigured: Boolean(options.speech), model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices });
   registerPlayback(app, { pool, authenticate });
+  registerPictureRoutes(app, { pool, authenticate, images });
+  registerPortraitRoutes(app, { pool, authenticate, images, assetDir });
   for (const path of ['/health', '/health/ready']) app.get(path, async () => { await pool.query('SELECT 1'); return { ok: true }; });
 
   const io = new Server(app.server, { cors: { origin: options.origin, credentials: true }, maxHttpBufferSize: 1024 });
@@ -216,7 +234,7 @@ export async function buildApp(options: AppOptions) {
     finally { dispatching = false; }
   };
   const interval = setInterval(() => { void dispatch(); }, 250); interval.unref();
-  app.addHook('onClose', async () => { clearInterval(interval); io.close(); await pool.end(); });
+  app.addHook('onClose', async () => { clearInterval(interval); io.close(); await images.close(); await pool.end(); });
   const dist = fileURLToPath(new URL('../../web/dist/', import.meta.url));
   if (options.serveStatic !== false && existsSync(dist)) {
     await app.register(fastifyStatic, { root: dist });

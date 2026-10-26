@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Blob as NodeBlob } from 'node:buffer';
-import { MAX_NATIVE_BYTES, NpcDefinitionSchema, ScenarioDefinitionSchema } from '@rpg/contracts';
+import { MAX_NATIVE_BYTES, NpcDefinitionSchema, PICTURE_MODELS, ScenarioDefinitionSchema } from '@rpg/contracts';
 import Library from './Library.vue';
 import CharacterForm from './CharacterForm.vue';
 import ScenarioGenerator from './ScenarioGenerator.vue';
@@ -290,7 +290,7 @@ describe('native scenario and character library', () => {
     await wrapper.findAll('label').find(label => label.text().startsWith('Relationship to the party'))!.get('select').setValue('friendly');
     const fields = wrapper.findAllComponents({ name: 'FieldGenerator' }).map(control => control.props('field'));
     expect(fields.sort()).toEqual([
-      'scenario.title', 'scenario.premise', 'scenario.genre', 'scenario.tone', 'scenario.directorNotes',
+      'scenario.title', 'scenario.premise', 'scenario.genre', 'scenario.tone', 'scenario.pictureStyle', 'scenario.directorNotes',
       'scenario.boundaries', 'scenario.playerHooks', 'scenario.objectives', 'scenario.discoveries', 'scenario.opportunities',
       'scene.title', 'scene.description', 'location.title', 'location.description',
       'npc.displayName', 'npc.role', 'npc.appearance', 'npc.hiddenIdentity', 'npc.motivation', 'npc.goal', 'npc.mood',
@@ -861,6 +861,419 @@ describe('native scenario and character library', () => {
       expect((wrapper.get(sel('prompt')).element as HTMLTextAreaElement).value).toBe('A drowned bell tower');
       expect(wrapper.find(sel('apply')).exists()).toBe(true);
       wrapper.unmount();
+    });
+  });
+  describe('pictures', () => {
+    const styleInput = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('label').find(label => label.text().startsWith('Picture style'))!.get('input');
+
+    it('shows the Picture style field with help and an AI button even when pictures are off', async () => {
+      const wrapper = mount(Library); await flushPromises();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      const input = styleInput(wrapper);
+      expect(input.attributes('maxlength')).toBe('300');
+      const help = wrapper.findAll('p.field-help').find(item => item.attributes('id') === input.attributes('aria-describedby'))!;
+      expect(help.text()).toContain('Leave it blank to use Painterly digital illustration, rich color, cinematic lighting.');
+      expect(help.element.closest('label')).toBeNull();
+      const control = fieldControl(wrapper, 'scenario.pictureStyle');
+      expect(control.props('modelValue')).toBe('');
+      const generated = await generate(wrapper, 'scenario.pictureStyle', 'inky noir');
+      await generated.get('[data-testid="field-generator-apply"]').trigger('click');
+      expect((input.element as HTMLInputElement).value).toBe('A suggested detail.');
+      wrapper.unmount();
+    });
+
+    it('offers Server default plus every picture model and saves the choice only when made', async () => {
+      const wrapper = mount(Library); await flushPromises();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      const select = wrapper.get('[data-testid="scenario-picture-model"]');
+      const options = select.findAll('option');
+      expect(options).toHaveLength(PICTURE_MODELS.length + 1);
+      expect(options[0]!.text()).toBe('Server default');
+      expect(options[0]!.attributes('value')).toBe('');
+      expect(options.slice(1).map(option => option.text())).toEqual(PICTURE_MODELS.map(model => model.label));
+      expect((select.element as HTMLSelectElement).value).toBe('');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(transport.saveScenario.mock.lastCall![0].definition).not.toHaveProperty('pictureModel');
+      await select.setValue(PICTURE_MODELS[1]!.id);
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(transport.saveScenario).toHaveBeenLastCalledWith(expect.objectContaining({ definition: expect.objectContaining({ pictureModel: PICTURE_MODELS[1]!.id }) }));
+      await select.setValue('');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(transport.saveScenario.mock.lastCall![0].definition).not.toHaveProperty('pictureModel');
+      wrapper.unmount();
+    });
+
+    it('shows the stored picture model', async () => {
+      transport.library.mockResolvedValue({ scenarios: [{ id: 'scenario-one', version: 2, definition: { ...scenario, pictureModel: PICTURE_MODELS[1]!.id } }], characters: [] });
+      const wrapper = mount(Library); await flushPromises();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      expect((wrapper.get('[data-testid="scenario-picture-model"]').element as HTMLSelectElement).value).toBe(PICTURE_MODELS[1]!.id);
+      wrapper.unmount();
+    });
+
+    it('saves the picture style with the scenario', async () => {
+      const wrapper = mount(Library); await flushPromises();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      await styleInput(wrapper).setValue('Soft watercolor, pale light');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(transport.saveScenario).toHaveBeenLastCalledWith(expect.objectContaining({ definition: expect.objectContaining({ pictureStyle: 'Soft watercolor, pale light' }) }));
+      wrapper.unmount();
+    });
+
+    it('gives the character editor portrait props only when pictures are on, with a fresh key per new card', async () => {
+      const off = mount(Library); await flushPromises();
+      await off.get('[data-testid="edit-character-card-one"]').trigger('click');
+      expect(off.findComponent(CharacterForm).props('picturesEnabled')).toBe(false);
+      expect(off.find('[data-testid="portrait-generator"]').exists()).toBe(false);
+      off.unmount();
+
+      transport.library.mockResolvedValue({ scenarios: [], characters: [{ id: 'card-one', version: 1, definition: card }], picturesEnabled: true });
+      transport.createLibraryPortrait.mockResolvedValue({ imageId: 'a'.repeat(8) + '-0000-4000-8000-' + 'b'.repeat(12) });
+      const on = mount(Library); await flushPromises();
+      await on.get('[data-testid="edit-character-card-one"]').trigger('click');
+      const form = on.findComponent(CharacterForm);
+      expect(form.props('picturesEnabled')).toBe(true);
+      const details = { appearance: 'A silver coat.', role: 'Navigation', pronouns: 'they/them', name: 'Aster' };
+      await form.props('generatePortrait')!(details);
+      expect(transport.createLibraryPortrait).toHaveBeenLastCalledWith({ subject: 'card', subjectKey: 'card-one', details, pictureStyle: '' });
+      expect(form.props('portraitUrl')!('abc')).toBe(`/api/library/images/abc?identity=${'a'.repeat(32)}`);
+
+      const keys: string[] = [];
+      for (let i = 0; i < 2; i += 1) {
+        await on.findAll('button').find(button => button.text() === 'New character')!.trigger('click');
+        await on.findComponent(CharacterForm).props('generatePortrait')!(details);
+        keys.push(transport.createLibraryPortrait.mock.calls.at(-1)![0].subjectKey);
+      }
+      expect(keys[0]).not.toBe(keys[1]);
+      expect(keys[0]).not.toBe('card-one');
+      on.unmount();
+    });
+
+    describe('non-player character portraits', () => {
+      const imageId = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-${'b'.repeat(12)}`;
+      const crew = (count: number, overrides: Record<number, Record<string, unknown>> = {}) => Array.from({ length: count }, (_, i) => NpcDefinitionSchema.parse({ id: `npc-${i}`, displayName: `Crew ${i}`, role: 'Deckhand', appearance: `Tall number ${i}.`, locationId: 'tower', status: 'present', voiceProfileId: 'narrator', ...overrides[i] }));
+      async function open(npcs: ReturnType<typeof crew>, pictures = true) {
+        transport.library.mockResolvedValue({ scenarios: [{ id: 'scenario-one', version: 2, definition: { ...scenario, npcs } }], characters: [], ...(pictures ? { picturesEnabled: true } : {}) });
+        const wrapper = mount(Library); await flushPromises();
+        await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+        return wrapper;
+      }
+      beforeEach(() => { transport.createLibraryPortrait.mockReset(); });
+      const controls = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('[data-testid="npc-portrait-controls"]');
+      const status = (wrapper: ReturnType<typeof mount>) => wrapper.find('[data-testid="create-all-portraits-status"]');
+      const deferred = () => { let resolve!: (value: { imageId: string }) => void; let reject!: (cause: Error) => void; const promise = new Promise<{ imageId: string }>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+
+      it('shows Create portrait and Remove portrait on each character and sends the request body', async () => {
+        const wrapper = await open(crew(2, { 1: { portraitId: imageId(9) } }));
+        expect(controls(wrapper)).toHaveLength(2);
+        expect(controls(wrapper)[0]!.find('[data-testid="npc-portrait-create"]').text()).toBe('Create portrait');
+        expect(controls(wrapper)[0]!.find('[data-testid="npc-portrait-remove"]').exists()).toBe(false);
+        expect(controls(wrapper)[1]!.get('[data-testid="npc-portrait-remove"]').text()).toBe('Remove portrait');
+        await styleOf(wrapper).setValue('Inky noir');
+        transport.createLibraryPortrait.mockResolvedValue({ imageId: imageId(1) });
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-create"]').trigger('click'); await flushPromises();
+        expect(transport.createLibraryPortrait).toHaveBeenCalledWith({ subject: 'npc', subjectKey: 'npc-0', details: { appearance: 'Tall number 0.', role: 'Deckhand', pronouns: '', name: 'Crew 0' }, pictureStyle: 'Inky noir' });
+        expect(transport.createLibraryPortrait.mock.lastCall![0]).not.toHaveProperty('pictureModel');
+        await wrapper.get('[data-testid="scenario-picture-model"]').setValue(PICTURE_MODELS[1]!.id);
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-remove"]').trigger('click');
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-create"]').trigger('click'); await flushPromises();
+        expect(transport.createLibraryPortrait).toHaveBeenLastCalledWith(expect.objectContaining({ subject: 'npc', pictureModel: PICTURE_MODELS[1]!.id }));
+        expect(controls(wrapper)[0]!.find('[data-testid="npc-portrait-remove"]').exists()).toBe(true);
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-remove"]').trigger('click');
+        expect(controls(wrapper)[0]!.find('[data-testid="npc-portrait-remove"]').exists()).toBe(false);
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        expect(transport.saveScenario.mock.calls[0]![0].definition.npcs[0]).not.toHaveProperty('portraitId');
+        wrapper.unmount();
+      });
+      const styleOf = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('label').find(label => label.text().startsWith('Picture style'))!.get('input');
+
+      it('keeps Create portrait off for a character with no appearance or role, and shows why', async () => {
+        const wrapper = await open(crew(1, { 0: { role: ' ', appearance: '' } }));
+        expect(controls(wrapper)[0]!.get('[data-testid="npc-portrait-create"]').attributes('disabled')).toBeDefined();
+        expect(controls(wrapper)[0]!.text()).toContain('Give this character an appearance or a role first.');
+        expect(wrapper.get('[data-testid="create-all-portraits"]').attributes('disabled')).toBeDefined();
+        wrapper.unmount();
+      });
+
+      it('creates portraits for everyone three at a time, only for the missing ones, with progress sentences', async () => {
+        const wrapper = await open(crew(6, { 2: { portraitId: imageId(8) }, 5: { role: '', appearance: '' } }));
+        const calls: Array<ReturnType<typeof deferred>> = [];
+        transport.createLibraryPortrait.mockImplementation(() => { const d = deferred(); calls.push(d); return d.promise; });
+        const all = wrapper.get('[data-testid="create-all-portraits"]');
+        expect(all.text()).toBe('Create portraits for everyone');
+        expect(all.classes()).toContain('secondary');
+        await all.trigger('click'); await flushPromises();
+        expect(calls).toHaveLength(3);
+        expect(status(wrapper).text()).toBe('Making portraits: 0 of 4 done.');
+        expect(status(wrapper).attributes('role')).toBe('status');
+        expect(wrapper.get('[data-testid="create-all-portraits"]').attributes('disabled')).toBeDefined();
+        calls[0]!.resolve({ imageId: imageId(1) }); await flushPromises();
+        expect(calls).toHaveLength(4);
+        expect(status(wrapper).text()).toBe('Making portraits: 1 of 4 done.');
+        calls[1]!.resolve({ imageId: imageId(2) }); calls[2]!.resolve({ imageId: imageId(3) }); calls[3]!.resolve({ imageId: imageId(4) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Made 4 portraits.');
+        expect(transport.createLibraryPortrait.mock.calls.map(call => call[0].subjectKey)).toEqual(['npc-0', 'npc-1', 'npc-3', 'npc-4']);
+        expect(wrapper.get('[data-testid="create-all-portraits"]').attributes('disabled')).toBeDefined();
+        wrapper.unmount();
+      });
+
+      it('reports partial success and uses the singular for one portrait', async () => {
+        const wrapper = await open(crew(2));
+        transport.createLibraryPortrait.mockResolvedValueOnce({ imageId: imageId(1) }).mockRejectedValueOnce(new Error('Pictures are busy right now.'));
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).text()).toBe('Made 1 of 2 portraits. Press Create portrait on a character to try again.');
+        expect(controls(wrapper)[1]!.text()).toContain('Pictures are busy right now.');
+        expect(wrapper.get('[data-testid="create-all-portraits"]').attributes('disabled')).toBeUndefined();
+        wrapper.unmount();
+
+        const one = await open(crew(1));
+        transport.createLibraryPortrait.mockResolvedValueOnce({ imageId: imageId(1) });
+        await one.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(one).text()).toBe('Made 1 portrait.');
+        one.unmount();
+
+        const failed = await open(crew(1));
+        transport.createLibraryPortrait.mockRejectedValueOnce(new Error('No.'));
+        await failed.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(failed).text()).toBe('Made 0 of 1 portrait. Press Create portrait on a character to try again.');
+        failed.unmount();
+      });
+
+      it('shows Making the portrait... and a plain failure message for a single request', async () => {
+        const wrapper = await open(crew(1));
+        const d = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(d.promise);
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-create"]').trigger('click');
+        expect(controls(wrapper)[0]!.text()).toContain('Making the portrait...');
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.get('[data-testid="portraits-pending-save-notice"]').text()).toBe('Portraits are still being made. Save when they finish.');
+        expect(wrapper.get('[data-testid="portraits-pending-save-notice"]').attributes('role')).toBe('status');
+        d.reject(new Error('The picture service refused this one.')); await flushPromises();
+        expect(controls(wrapper)[0]!.text()).toContain('The picture service refused this one.');
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(false);
+        expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+        wrapper.unmount();
+      });
+
+      it('holds Save scenario version while a batch makes portraits, then saves both portrait ids', async () => {
+        const wrapper = await open(crew(2));
+        const first = deferred(); const second = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(true);
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        expect(transport.saveScenario).not.toHaveBeenCalled();
+        first.resolve({ imageId: imageId(1) }); second.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="scenario-unsaved"]').exists()).toBe(true);
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        const saved = transport.saveScenario.mock.calls[0]![0].definition.npcs;
+        expect([saved[0].portraitId, saved[1].portraitId]).toEqual([imageId(1), imageId(2)]);
+        expect(wrapper.find('[data-testid="scenario-unsaved"]').exists()).toBe(false);
+        wrapper.unmount();
+      });
+
+      it('shows Unsaved changes only after an edit to a freshly opened saved scenario', async () => {
+        const wrapper = await open(crew(1));
+        expect(wrapper.find('[data-testid="scenario-unsaved"]').exists()).toBe(false);
+        await wrapper.get('input').setValue('Changed'); await flushPromises();
+        expect(wrapper.get('[data-testid="scenario-unsaved"]').text()).toBe('Unsaved changes');
+        wrapper.unmount();
+      });
+
+      it('drops an answer for a row that was removed, and in a batch one for a row that already has a portrait', async () => {
+        const wrapper = await open(crew(2));
+        const first = deferred(); const second = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        await wrapper.findAll('button').filter(button => button.text() === 'Remove character')[0]!.trigger('click');
+        expect(controls(wrapper)).toHaveLength(1);
+        first.resolve({ imageId: imageId(1) }); await flushPromises();
+        expect(controls(wrapper)).toHaveLength(1);
+        expect(controls(wrapper)[0]!.find('[data-testid="npc-portrait-remove"]').exists()).toBe(false);
+        // reloading the saved scenario while the batch runs brings in a row that already has a portrait
+        transport.library.mockResolvedValue({ scenarios: [{ id: 'scenario-one', version: 2, definition: { ...scenario, npcs: crew(2, { 1: { portraitId: imageId(3) } }) } }], characters: [], picturesEnabled: true });
+        await wrapper.findAll('button').find(button => button.text() === 'Refresh saved library')!.trigger('click'); await flushPromises();
+        await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+        second.resolve({ imageId: imageId(4) }); await flushPromises();
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        expect(transport.saveScenario.mock.calls[0]![0].definition.npcs[1].portraitId).toBe(imageId(3));
+        wrapper.unmount();
+      });
+
+      it('keeps Save enabled on a newly opened scenario while the old portraits are still pending, and ignores their late answers', async () => {
+        const wrapper = await open(crew(2));
+        const calls: ReturnType<typeof deferred>[] = [];
+        transport.createLibraryPortrait.mockImplementation(() => { const d = deferred(); calls.push(d); return d.promise; });
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).text()).toBe('Making portraits: 0 of 2 done.');
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+        await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).exists()).toBe(false);
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+        calls[0]!.resolve({ imageId: imageId(1) }); calls[1]!.reject(new Error('Too late.')); await flushPromises();
+        expect(status(wrapper).exists()).toBe(false);
+        expect(controls(wrapper).every(item => !item.find('[data-testid="npc-portrait-remove"]').exists() && !item.text().includes('Too late.'))).toBe(true);
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        expect(transport.saveScenario.mock.calls[0]![0].definition.npcs.map((npc: { portraitId?: string }) => npc.portraitId)).toEqual([undefined, undefined]);
+        wrapper.unmount();
+      });
+
+      it('stops an old batch from starting its queued portraits after the scenario is opened again', async () => {
+        const wrapper = await open(crew(5));
+        const calls: ReturnType<typeof deferred>[] = [];
+        transport.createLibraryPortrait.mockImplementation(() => { const d = deferred(); calls.push(d); return d.promise; });
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(calls).toHaveLength(3);
+        await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click'); await flushPromises();
+        calls[0]!.resolve({ imageId: imageId(1) }); await flushPromises();
+        expect(calls).toHaveLength(3);
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(false);
+        calls[1]!.resolve({ imageId: imageId(2) }); calls[2]!.resolve({ imageId: imageId(3) }); await flushPromises();
+        expect(calls).toHaveLength(3);
+        expect(status(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+      });
+
+      it('starts its own batch when a second AI draft is loaded in the middle of the first', async () => {
+        const wrapper = await open(crew(2));
+        const calls: ReturnType<typeof deferred>[] = [];
+        transport.createLibraryPortrait.mockImplementation(() => { const d = deferred(); calls.push(d); return d.promise; });
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(calls).toHaveLength(2);
+        const draftNpcs = Array.from({ length: 2 }, (_, i) => NpcDefinitionSchema.parse({ id: `draft-${i}`, displayName: `Drafted ${i}`, role: 'Keeper', appearance: `Pale number ${i}.`, locationId: 'tower', status: 'present', voiceProfileId: 'narrator' }));
+        wrapper.findComponent(ScenarioGenerator).vm.$emit('apply', { definition: { ...scenario, title: 'The Drowned Bell', npcs: draftNpcs }, suggestedBoundaries: [] }); await flushPromises();
+        expect(calls).toHaveLength(4);
+        expect(transport.createLibraryPortrait.mock.calls.slice(2).map(call => call[0].subjectKey)).toEqual(['draft-0', 'draft-1']);
+        expect(status(wrapper).text()).toBe('Making portraits: 0 of 2 done.');
+        calls[0]!.resolve({ imageId: imageId(1) }); calls[1]!.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Making portraits: 0 of 2 done.');
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+        calls[2]!.resolve({ imageId: imageId(3) }); calls[3]!.resolve({ imageId: imageId(4) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Made 2 portraits.');
+        expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+        wrapper.unmount();
+      });
+
+      it('does not count an answer for a removed character as made', async () => {
+        const wrapper = await open(crew(2));
+        const first = deferred(); const second = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        await wrapper.findAll('button').filter(button => button.text() === 'Remove character')[0]!.trigger('click');
+        first.resolve({ imageId: imageId(1) }); second.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Made 1 portrait.');
+        wrapper.unmount();
+      });
+
+      it('takes a character removed during the batch out of the total instead of calling it a failure', async () => {
+        const wrapper = await open(crew(2));
+        const first = deferred(); const second = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).text()).toBe('Making portraits: 0 of 2 done.');
+        await wrapper.findAll('button').filter(button => button.text() === 'Remove character')[0]!.trigger('click');
+        second.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Making portraits: 1 of 2 done.');
+        first.resolve({ imageId: imageId(1) }); await flushPromises();
+        expect(status(wrapper).text()).toBe('Made 1 portrait.');
+        expect(status(wrapper).text()).not.toContain('try again');
+        wrapper.unmount();
+      });
+
+      it('shows no batch line when every character is removed during the batch', async () => {
+        const wrapper = await open(crew(2));
+        const first = deferred(); const second = deferred();
+        transport.createLibraryPortrait.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        await wrapper.findAll('button').filter(button => button.text() === 'Remove character')[0]!.trigger('click');
+        await wrapper.findAll('button').filter(button => button.text() === 'Remove character')[0]!.trigger('click');
+        first.resolve({ imageId: imageId(1) }); second.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(status(wrapper).exists()).toBe(false);
+        expect(wrapper.text()).not.toContain('Made 0');
+        wrapper.unmount();
+      });
+
+      it('clears every character portrait state and the batch line when native JSON is imported', async () => {
+        const wrapper = await open(crew(2));
+        const second = deferred();
+        transport.createLibraryPortrait.mockRejectedValueOnce(new Error('Pictures are busy right now.')).mockReturnValueOnce(second.promise);
+        await wrapper.get('[data-testid="create-all-portraits"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).text()).toBe('Making portraits: 1 of 2 done.');
+        expect(controls(wrapper)[0]!.text()).toContain('Pictures are busy right now.');
+        expect(controls(wrapper)[1]!.text()).toContain('Making the portrait...');
+        await wrapper.get('[data-testid="native-json"]').setValue(JSON.stringify({ ...scenario, npcs: crew(2) }));
+        await wrapper.get('[data-testid="import-json"]').trigger('click'); await flushPromises();
+        expect(status(wrapper).exists()).toBe(false);
+        expect(controls(wrapper)).toHaveLength(2);
+        expect(controls(wrapper)[0]!.text()).not.toContain('Pictures are busy right now.');
+        expect(controls(wrapper)[1]!.text()).not.toContain('Making the portrait...');
+        expect(wrapper.find('[data-testid="portraits-pending-save-notice"]').exists()).toBe(false);
+        second.resolve({ imageId: imageId(2) }); await flushPromises();
+        expect(status(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+      });
+
+      it('tells the director to start the Appearance of a non-player character with age and gender', async () => {
+        const wrapper = await open(crew(1));
+        const help = wrapper.findAll('.field-help').find(item => item.text().includes('Visible details shared with players'))!;
+        expect(help.text()).toBe('Visible details shared with players, including while this character is offstage. Start with age and gender, for example "A woman in her forties", so the portrait matches.');
+        wrapper.unmount();
+      });
+
+      it('lets a single request replace an existing portrait', async () => {
+        const wrapper = await open(crew(1, { 0: { portraitId: imageId(7) } }));
+        transport.createLibraryPortrait.mockResolvedValueOnce({ imageId: imageId(2) });
+        await controls(wrapper)[0]!.get('[data-testid="npc-portrait-create"]').trigger('click'); await flushPromises();
+        await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+        expect(transport.saveScenario.mock.calls[0]![0].definition.npcs[0].portraitId).toBe(imageId(2));
+        wrapper.unmount();
+      });
+
+      it('starts portraits for an AI draft automatically and says so, only when pictures are on', async () => {
+        vi.useFakeTimers();
+        try {
+          const draftNpcs = crew(2);
+          const job = { status: 'succeeded', jobId: 'job-1', definition: { ...scenario, title: 'The Drowned Bell', boundaries: [], npcs: draftNpcs }, adjustments: [], warnings: [], suggestedBoundaries: [] };
+          for (const pictures of [true, false]) {
+            transport.createLibraryPortrait.mockReset().mockResolvedValue({ imageId: imageId(5) });
+            transport.library.mockResolvedValue({ scenarios: [], characters: [], ...(pictures ? { picturesEnabled: true } : {}) });
+            transport.startScenarioDraft.mockResolvedValue({ status: 'running', jobId: 'job-1', size: 'medium', startedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 240_000).toISOString() });
+            transport.scenarioDraft.mockResolvedValue(job);
+            const wrapper = mount(Library); await flushPromises();
+            await wrapper.get('[data-testid="scenario-generator-open"]').trigger('click');
+            await wrapper.get('[data-testid="scenario-generator-prompt"]').setValue('A drowned bell tower');
+            await wrapper.get('[data-testid="scenario-generator-generate"]').trigger('click'); await flushPromises();
+            await vi.advanceTimersByTimeAsync(2000); await flushPromises();
+            await wrapper.get('[data-testid="scenario-generator-apply"]').trigger('click'); await flushPromises();
+            const loaded = 'Loaded the AI draft as a new unsaved scenario. Check every field, then press Save scenario version.';
+            if (pictures) {
+              expect(wrapper.get('p.notice').text()).toBe(`${loaded} Portraits for its characters are being made now.`);
+              expect(transport.createLibraryPortrait).toHaveBeenCalledTimes(2);
+              expect(status(wrapper).text()).toBe('Made 2 portraits.');
+              expect(controls(wrapper).every(item => item.find('[data-testid="npc-portrait-remove"]').exists())).toBe(true);
+            } else {
+              expect(wrapper.get('p.notice').text()).toBe(loaded);
+              expect(transport.createLibraryPortrait).not.toHaveBeenCalled();
+            }
+            wrapper.unmount();
+          }
+        } finally { vi.useRealTimers(); }
+      });
+
+      it('shows the off sentence and no portrait buttons when pictures are off', async () => {
+        const wrapper = await open(crew(2), false);
+        expect(wrapper.text()).toContain('Pictures are off on this server.');
+        expect(wrapper.find('[data-testid="create-all-portraits"]').exists()).toBe(false);
+        expect(controls(wrapper)).toHaveLength(0);
+        expect(wrapper.findAll('button').some(button => button.text() === 'Create portrait')).toBe(false);
+        wrapper.unmount();
+      });
     });
   });
 });

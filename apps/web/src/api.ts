@@ -89,6 +89,16 @@ export const api = {
   reissueInvite: async (sessionId: string, inviteId: string, signOutCurrent: boolean): Promise<InviteLink> => InviteLinkSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/invites/${encodeURIComponent(inviteId)}/reissue`, { commandId: crypto.randomUUID(), signOutCurrent })),
   playback: async (sessionId: string): Promise<PlaybackSnapshot> => PlaybackSnapshotSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/playback`)),
   command: (id: string, command: Command) => request(`/sessions/${encodeURIComponent(id)}/commands`, command),
+  createSeatPortrait: async (sessionId: string, body: SeatPortraitRequest): Promise<PictureIdResponse> => PictureIdResponseSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/character/portrait`, SeatPortraitRequestSchema.parse(body))),
+  createBuilderPortrait: async (body: BuilderPortraitRequest): Promise<PictureIdResponse> => PictureIdResponseSchema.parse(await request('/character-builder/portrait', BuilderPortraitRequestSchema.parse(body))),
+  createLibraryPortrait: async (body: LibraryPortraitRequest): Promise<PictureIdResponse> => PictureIdResponseSchema.parse(await request('/library/portraits', LibraryPortraitRequestSchema.parse(body))),
+  newScenePicture: (sessionId: string) => request(`/sessions/${encodeURIComponent(sessionId)}/scene-picture`, {}),
+  drawBeatPicture: async (sessionId: string): Promise<PictureIdResponse> => PictureIdResponseSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/beat-picture`, {})),
+  savePictureSettings: async (sessionId: string, settings: PictureSettings): Promise<PictureSettings> => PictureSettingsSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/picture-settings`, PictureSettingsSchema.parse(settings))),
+  hideScenePicture: (sessionId: string) => request(`/sessions/${encodeURIComponent(sessionId)}/scene-picture/hide`, {}),
+  showScenePicture: (sessionId: string) => request(`/sessions/${encodeURIComponent(sessionId)}/scene-picture/show`, {}),
+  createNpcPortrait: (sessionId: string, npcId: string) => request(`/sessions/${encodeURIComponent(sessionId)}/npcs/${encodeURIComponent(npcId)}/portrait`, {}),
+  removeNpcPortrait: (sessionId: string, npcId: string) => request(`/sessions/${encodeURIComponent(sessionId)}/npcs/${encodeURIComponent(npcId)}/portrait/remove`, {}),
 };
 
 export function subscribeToSession(sessionId: string, refresh: () => void, connection: (connected: boolean) => void) {

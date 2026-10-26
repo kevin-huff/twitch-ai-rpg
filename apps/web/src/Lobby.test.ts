@@ -414,4 +414,119 @@ describe('pre-show character review and readiness', () => {
     wrapper.unmount();
   });
 });
+
+describe('portraits in the cast and the form', () => {
+  const portraitId = '11111111-1111-4111-8111-111111111111';
+  const otherId = '22222222-2222-4222-8222-222222222222';
+  const withPictures = <T extends DirectorSnapshot | PlayerSnapshot>(current: T, on = true): T => {
+    const next = JSON.parse(JSON.stringify(current)) as DirectorSnapshot | PlayerSnapshot;
+    next.picturesEnabled = on;
+    next.characters[0]!.portraitId = portraitId;
+    if (next.role === 'director') next.characterDetails[0]!.draft = { ...next.characterDetails[0]!.draft!, portraitId: otherId };
+    return next as T;
+  };
+
+  it('forgets a failed review portrait only when its source changes or comes back', async () => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot('director')), busy: false } });
+    const withReview = (id: string | undefined) => {
+      const next = JSON.parse(JSON.stringify(withPictures(snapshot('director')))) as DirectorSnapshot;
+      next.characterDetails[0]!.draft = { ...next.characterDetails[0]!.draft!, portraitId: id };
+      return next;
+    };
+    const review = () => wrapper.find('.card-review .review-portrait');
+    expect(review().attributes('src')).toContain(otherId);
+    await review().trigger('error');
+    expect(review().exists()).toBe(false);
+    await wrapper.setProps({ snapshot: withReview(otherId) });
+    expect(review().exists()).toBe(false);
+    await wrapper.setProps({ snapshot: withReview(undefined) });
+    expect(review().exists()).toBe(false);
+    await wrapper.setProps({ snapshot: withReview(otherId) });
+    expect(review().exists()).toBe(true);
+    await review().trigger('error');
+    expect(review().exists()).toBe(false);
+    await wrapper.setProps({ snapshot: withReview(portraitId) });
+    expect(review().attributes('src')).toContain(portraitId);
+    wrapper.unmount();
+  });
+
+  it.each(['director', 'player'] as const)('shows the public portrait in the cast list for the %s and falls back to initials', async role => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot(role)), busy: false } });
+    const people = wrapper.findAll('.cast-person');
+    const image = people[0]!.get('.avatar img');
+    expect(image.attributes('src')).toBe(`/api/sessions/show/images/${portraitId}?identity=${'a'.repeat(32)}`);
+    expect(image.attributes('alt')).toBe('Portrait of Aster');
+    expect(people[1]!.find('.avatar img').exists()).toBe(false);
+    expect(people[1]!.get('.avatar').text()).toBe('B');
+    await image.trigger('error');
+    expect(people[0]!.find('.avatar img').exists()).toBe(false);
+    expect(people[0]!.get('.avatar').text()).toBe('A');
+    wrapper.unmount();
+  });
+
+  it.each(['director', 'player'] as const)('keeps initials and no portrait props for the %s when pictures are off', role => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot(role), false), busy: false } });
+    expect(wrapper.find('.cast-person img').exists()).toBe(false);
+    expect(wrapper.get('.cast-person .avatar').text()).toBe('A');
+    expect(wrapper.find('.review-portrait').exists()).toBe(false);
+    if (role === 'player') expect(wrapper.getComponent({ name: 'CharacterForm' }).props('picturesEnabled')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows the director the draft portrait beside the card under review', async () => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot('director')), busy: false } });
+    const reviews = wrapper.findAll('.card-review');
+    const image = reviews[0]!.get('img.review-portrait');
+    expect(image.attributes('src')).toContain(`/images/${otherId}`);
+    expect(image.attributes('alt')).toBe('Portrait of Aster');
+    expect(reviews[1]!.find('img.review-portrait').exists()).toBe(false);
+    await image.trigger('error');
+    expect(wrapper.findAll('.card-review')[0]!.find('img.review-portrait').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('gives the character form the portrait props only when pictures are on', async () => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot('player')), busy: false } });
+    const form = wrapper.getComponent({ name: 'CharacterForm' });
+    expect(form.props('picturesEnabled')).toBe(true);
+    expect(form.props('portraitUrl')!(otherId)).toBe(`/api/sessions/show/images/${otherId}?identity=${'a'.repeat(32)}`);
+    expect(wrapper.find('[data-testid="portrait-create"]').exists()).toBe(true);
+    const create = vi.spyOn(api, 'createSeatPortrait').mockResolvedValue({ imageId: otherId });
+    await wrapper.get('[data-testid="portrait-create"]').trigger('click'); await flushPromises();
+    expect(create).toHaveBeenCalledWith('show', { expectedCharacterRevision: 2, details: { appearance: 'A silver coat.', role: 'Navigation', pronouns: 'they/them', name: 'Aster' } });
+    await wrapper.setProps({ snapshot: withPictures(snapshot('player'), false) });
+    expect(wrapper.find('[data-testid="portrait-create"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('refuses to make a portrait once the card can no longer be edited', async () => {
+    const current = withPictures(snapshot('player'));
+    const wrapper = mount(Lobby, { props: { snapshot: current, busy: false } });
+    const generate = wrapper.getComponent({ name: 'CharacterForm' }).props('generatePortrait')!;
+    const create = vi.spyOn(api, 'createSeatPortrait').mockResolvedValue({ imageId: otherId });
+    await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, status: 'live' } } });
+    await expect(generate({ appearance: 'A silver coat.', role: '', pronouns: '', name: 'Aster' })).rejects.toThrow('unavailable');
+    expect(create).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('keeps the portrait of an approved card when it is edited and submitted', async () => {
+    const current = withPictures(snapshot('player') as PlayerSnapshot);
+    const approved = { ...current.ownCharacter!, ...card, draft: null, approved: true, cardRevision: 4, portraitId };
+    const wrapper = mount(Lobby, { props: { snapshot: { ...current, ownCharacter: approved } as PlayerSnapshot, busy: false } });
+    await wrapper.get('[data-testid="card-appearance"]').setValue('A silver coat, newly mended.');
+    await wrapper.get('[data-testid="save-character-draft"]').trigger('click');
+    expect(wrapper.emitted('command')?.[0]?.[0]).toMatchObject({ type: 'save_character', expectedCharacterRevision: 4, card: { displayName: 'Aster', appearance: 'A silver coat, newly mended.', portraitId } });
+    wrapper.unmount();
+  });
+
+  it('sends the portrait picked in the form with Submit card for approval', async () => {
+    const wrapper = mount(Lobby, { props: { snapshot: withPictures(snapshot('player')), busy: false } });
+    vi.spyOn(api, 'createSeatPortrait').mockResolvedValue({ imageId: otherId });
+    await wrapper.get('[data-testid="portrait-create"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="portrait-use"]').trigger('click');
+    await wrapper.get('[data-testid="save-character-draft"]').trigger('click');
+    expect(wrapper.emitted('command')?.[0]?.[0]).toMatchObject({ type: 'save_character', card: { portraitId: otherId } });
+    wrapper.unmount();
+  });
 });

@@ -276,4 +276,42 @@ describe('private character builder', () => {
       wrapper.unmount();
     });
   });
+
+  describe('portraits', () => {
+    const withPictures = () => transport.characterBuilder.mockResolvedValue({ ...snapshot(), picturesEnabled: true });
+    it('shows the portrait block only when pictures are on', async () => {
+      const off = mount(PlayerBuilder); await flushPromises();
+      expect(off.find('[data-testid="portrait-create"]').exists()).toBe(false);
+      expect(off.findComponent(CharacterForm).props('picturesEnabled')).toBe(false);
+      off.unmount();
+      withPictures();
+      const on = mount(PlayerBuilder); await flushPromises();
+      expect(on.findComponent(CharacterForm).props('picturesEnabled')).toBe(true);
+      expect(on.findComponent(CharacterForm).props('portraitUrl')!('abc')).toContain('/api/character-builder/images/abc');
+      expect(on.find('[data-testid="portrait-create"]').exists()).toBe(true);
+      on.unmount();
+    });
+    it('marks the saved draft as changed when making a portrait gets a 409', async () => {
+      withPictures();
+      transport.createBuilderPortrait.mockRejectedValue(Object.assign(new Error('This draft changed. Reload it before generating.'), { status: 409 }));
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await wrapper.get('[data-testid="card-appearance"]').setValue('Tall, with a red scarf');
+      await wrapper.get('[data-testid="portrait-create"]').trigger('click'); await flushPromises();
+      expect(transport.createBuilderPortrait).toHaveBeenCalledWith({ expectedRevision: 3, details: expect.objectContaining({ appearance: 'Tall, with a red scarf' }) });
+      expect(wrapper.find('[data-testid="reload-builder-draft"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+    it('sends the portrait when submitting to the director', async () => {
+      withPictures();
+      transport.createBuilderPortrait.mockResolvedValue({ imageId: '11111111-1111-4111-8111-111111111111' });
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await wrapper.get('[data-testid="card-name"]').setValue('Aster');
+      await wrapper.get('[data-testid="card-appearance"]').setValue('Tall, with a red scarf');
+      await wrapper.get('[data-testid="portrait-create"]').trigger('click'); await flushPromises();
+      await wrapper.get('[data-testid="portrait-use"]').trigger('click'); await flushPromises();
+      await wrapper.get('[data-testid="submit-builder-card"]').trigger('click'); await flushPromises();
+      expect(transport.submitCharacterBuilder).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ portraitId: '11111111-1111-4111-8111-111111111111' }) }));
+      wrapper.unmount();
+    });
+  });
 });

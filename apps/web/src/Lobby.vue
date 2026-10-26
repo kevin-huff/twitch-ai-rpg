@@ -3,12 +3,14 @@ import { computed, ref, useId, watch } from 'vue';
 import { CharacterCardDefinitionSchema } from '@rpg/contracts';
 import type { CardGenerationResponse, Character, CharacterCardDefinition, Command, DirectorSnapshot, FieldGenerationCharacterContext, FieldGenerationRequest, FieldGenerationResponse, PictureIdResponse, PlayerSnapshot, PortraitDetails } from '@rpg/contracts';
 import CharacterForm from './CharacterForm.vue';
+import PictureAvatar from './PictureAvatar.vue';
 import FieldGenerator from './FieldGenerator.vue';
 import StreamLinks from './StreamLinks.vue';
 import SeatInvites from './SeatInvites.vue';
 import { api } from './api';
 import { characterFieldContext } from './field-context';
 import { identityPath } from './identity';
+import { pictureUrl, portraitAlt, portraitIdFor } from './pictures';
 
 const props = defineProps<{ snapshot: DirectorSnapshot | PlayerSnapshot; busy: boolean }>();
 const emit = defineEmits<{ command: [command: Command] }>();
@@ -42,13 +44,24 @@ const allApproved = computed(() => props.snapshot.characters.every(character => 
 const allReady = computed(() => props.snapshot.characters.every(character => character.ready));
 const isReady = computed(() => own.value?.ready && own.value.acceptedBoundariesRevision === setup.value?.boundariesRevision);
 const canReady = computed(() => own.value?.approved && !own.value.draft && (setup.value?.started || !dirty.value));
-const initials = (name: string) => name.split(' ').map(part => part[0]).slice(0, 2).join('').toUpperCase();
+const picturesOn = computed(() => props.snapshot.picturesEnabled === true);
+const portraitSrc = (portraitId: string | null | undefined) => portraitId ? pictureUrl({ kind: 'session', sessionId: props.snapshot.session.id }, portraitId) : null;
+const castPortrait = (characterId: string) => portraitSrc(portraitIdFor(props.snapshot, characterId));
+const reviewPortrait = (character: Character) => picturesOn.value ? portraitSrc((character.draft ?? character).portraitId) : null;
+const portraitUrlFor = (imageId: string) => pictureUrl({ kind: 'session', sessionId: props.snapshot.session.id }, imageId);
+const brokenReview = ref<string[]>([]);
+const reviewShown = (character: Character) => { const src = reviewPortrait(character); return !!src && !brokenReview.value.includes(src); };
+const markReviewBroken = (character: Character) => { const src = reviewPortrait(character); if (src && !brokenReview.value.includes(src)) brokenReview.value = [...brokenReview.value, src]; };
+watch(() => (director.value?.characterDetails ?? []).map(reviewPortrait), sources => {
+  const kept = brokenReview.value.filter(src => sources.includes(src));
+  if (kept.length !== brokenReview.value.length) brokenReview.value = kept;
+});
 const sessionPath = (view: string) => identityPath(`/sessions/${encodeURIComponent(props.snapshot.session.id)}/${view}`);
 const testSeatUrl = (characterId: string) => identityPath(`/sessions/${encodeURIComponent(props.snapshot.session.id)}/play?testCharacterId=${encodeURIComponent(characterId)}`);
 function characterCard(character: Character): CharacterCardDefinition {
   if (!character.draft && !character.approved) return { schemaVersion: 1, displayName: '', pronouns: '', appearance: '', personality: '', backstory: '', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, specialty: '', flaw: '', possessions: ['', '', ''], connection: '', secret: '', extensions: {} };
   if (character.draft) return JSON.parse(JSON.stringify(character.draft));
-  return CharacterCardDefinitionSchema.parse({ schemaVersion: 1, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance, personality: character.personality, backstory: character.backstory, traits: character.traits, specialty: character.specialty, flaw: character.flaw, possessions: character.possessions.slice(0, 3).filter(Boolean), connection: character.connection, secret: character.secret, extensions: {} });
+  return CharacterCardDefinitionSchema.parse({ schemaVersion: 1, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance, personality: character.personality, backstory: character.backstory, traits: character.traits, specialty: character.specialty, flaw: character.flaw, possessions: character.possessions.slice(0, 3).filter(Boolean), connection: character.connection, secret: character.secret, extensions: {}, portraitId: character.portraitId });
 }
 function resetDraft() {
   if (!own.value) return;
@@ -78,6 +91,10 @@ async function generateField(request: FieldGenerationRequest): Promise<FieldGene
   if (!editable.value || !supplied || supplied.kind !== 'character') throw new Error('This character card is unavailable for generation.');
   const characterContext: Extract<FieldGenerationCharacterContext, { kind: 'character' }> = supplied;
   return api.generateSeatField(props.snapshot.session.id, { expectedCharacterRevision: formRevision.value, field: request.field, seed: request.seed, characterContext, usePremise: request.premise !== undefined });
+}
+async function generatePortrait(details: PortraitDetails): Promise<PictureIdResponse> {
+  if (!editable.value) throw new Error('This character card is unavailable for generation.');
+  return api.createSeatPortrait(props.snapshot.session.id, { expectedCharacterRevision: formRevision.value, details });
 }
 async function generateCard(input: { prompt: string; keepFilled: boolean; current: FieldGenerationCharacterContext }): Promise<CardGenerationResponse> {
   const current = input.current;
@@ -109,7 +126,7 @@ function start() {
 <template>
   <section class="panel lobby"><p class="eyebrow">The cast</p><h2>{{ setup ? 'Get ready for your story.' : 'Meet your accomplices.' }}</h2>
     <div v-if="snapshot.session.brief" class="session-brief"><p>{{ snapshot.session.brief.premise }}</p><p class="muted">{{ snapshot.session.brief.genre }} · {{ snapshot.session.brief.tone }}</p><h3 v-if="snapshot.session.brief.objectives.length">Objectives</h3><ul><li v-for="objective in snapshot.session.brief.objectives" :key="objective">{{ objective }}</li></ul><h3 v-if="snapshot.session.brief.playerHooks.length">Connections to the story</h3><ul><li v-for="hook in snapshot.session.brief.playerHooks" :key="hook">{{ hook }}</li></ul></div>
-    <div class="cast"><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><span class="avatar">{{ initials(character.displayName) }}</span><div><strong>{{ character.displayName }}</strong><small>{{ character.approved ? 'Approved character' : 'Awaiting approval' }} · {{ setup ? character.ready ? 'Ready' : 'Not ready' : `Strain ${character.strain}/4` }}</small><p class="muted">{{ character.appearance }}</p><a v-if="director" :href="testSeatUrl(character.id)" target="_blank" rel="noopener">Test as {{ character.displayName }} ↗</a></div></div></div>
+    <div class="cast"><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="castPortrait(character.id)" /><div><strong>{{ character.displayName }}</strong><small>{{ character.approved ? 'Approved character' : 'Awaiting approval' }} · {{ setup ? character.ready ? 'Ready' : 'Not ready' : `Strain ${character.strain}/4` }}</small><p class="muted">{{ character.appearance }}</p><a v-if="director" :href="testSeatUrl(character.id)" target="_blank" rel="noopener">Test as {{ character.displayName }} ↗</a></div></div></div>
     <p v-if="director" class="notice">Testing on your own? Open each character in a new tab. Every tab keeps its own seat, and player invitations remain available for your cast.</p>
     <StreamLinks v-if="director" :session-id="snapshot.session.id" :characters="snapshot.characters" />
     <SeatInvites v-if="director" :session-id="snapshot.session.id" :characters="snapshot.characters" />
@@ -133,6 +150,7 @@ function start() {
 .lobby-section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
 .session-brief { margin: 1.5rem 0; }
 .card-review { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+.review-portrait { float: right; width: 6rem; height: 6rem; object-fit: cover; border-radius: 8px; margin: 0 0 .5rem 1rem; }
 .card-review dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 4fr); gap: .4rem 1rem; }
 .card-review dt { color: var(--muted); text-transform: capitalize; }
 .card-review dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

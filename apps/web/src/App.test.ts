@@ -173,6 +173,19 @@ describe('public performance and player authority', () => {
     }
   });
 
+  it('turns off the non-player portrait buttons once the show has ended', async () => {
+    window.history.replaceState({}, '', '/sessions/show/director');
+    const npc = { id: 'mara', displayName: 'Mara Vale', role: 'Bartender', appearance: 'A woman in her forties.', status: 'present', goal: '', secrets: [], knowledge: [] };
+    for (const status of ['live', 'ended']) {
+      const base = snapshot('director');
+      transport.snapshot.mockResolvedValue({ ...base, picturesEnabled: true, portraitJobs: [], npcDetails: [npc], session: { ...base.session, status } });
+      const wrapper = mount(App);
+      await flushPromises();
+      expect(wrapper.get('[data-testid="npc-portrait-create"]').attributes('disabled'), status).toBe(status === 'ended' ? '' : undefined);
+      wrapper.unmount();
+    }
+  });
+
   it('keeps the beat panel clear of the show bar after Go to beat', async () => {
     window.history.replaceState({}, '', '/sessions/show/director');
     transport.snapshot.mockResolvedValue(snapshot('director'));

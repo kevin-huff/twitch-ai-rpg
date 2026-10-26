@@ -6,6 +6,7 @@ import { CharacterCardDefinitionSchema, FieldGenerationRequestSchema } from '@rp
 import type { CardGenerationResponse, CharacterCardDefinition } from '@rpg/contracts';
 import CardGenerator from './CardGenerator.vue';
 import CharacterForm from './CharacterForm.vue';
+import PortraitGenerator from './PortraitGenerator.vue';
 import { characterFieldContext } from './field-context';
 import { api } from './api';
 
@@ -248,6 +249,109 @@ describe('whole-card generation in the form', () => {
     expect(vm.draft).toEqual({ ...card, extensions: { mine: 1 } });
     expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('Aster');
     expect(wrapper.find('[data-testid="suggested-pronouns-notice"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe('portrait block in the form', () => {
+  const portraitId = '11111111-1111-4111-8111-111111111111';
+  const newId = '22222222-2222-4222-8222-222222222222';
+  const generatePortrait = vi.fn().mockResolvedValue({ imageId: newId });
+  const portraitUrl = (id: string) => `/pictures/${id}`;
+  const portraitProps = { picturesEnabled: true, generatePortrait, portraitUrl };
+  const generated: CharacterCardDefinition = { ...card, displayName: 'Rook', appearance: 'Tall and scarred.', possessions: ['Knife'], extensions: {} };
+  const harness = (extra: Record<string, unknown> = {}, start: Partial<CharacterCardDefinition> = {}) => defineComponent({
+    components: { CharacterForm },
+    setup: () => ({ draft: ref<CharacterCardDefinition>({ ...structuredClone(card), ...start }), pending: ref(false), generateCard: vi.fn().mockResolvedValue({ card: generated, notes: [], pronounsSuggested: false }), extra }),
+    template: '<CharacterForm v-model="draft" v-model:pronouns-pending="pending" :generation-enabled="true" :generate-card="generateCard" v-bind="extra" />',
+  });
+  const draftOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown as { draft: CharacterCardDefinition }).draft;
+  async function makePortrait(wrapper: ReturnType<typeof mount>) {
+    await wrapper.get('[data-testid="portrait-create"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-testid="portrait-use"]').trigger('click');
+    await flushPromises();
+  }
+
+  it('shows no portrait block without all three props or when pictures are off', () => {
+    for (const extra of [{}, { picturesEnabled: true }, { picturesEnabled: true, generatePortrait }, { picturesEnabled: true, portraitUrl }, { generatePortrait, portraitUrl }, { ...portraitProps, picturesEnabled: false }]) {
+      const wrapper = mount(harness(extra));
+      expect(wrapper.findComponent(PortraitGenerator).exists()).toBe(false);
+      wrapper.unmount();
+    }
+  });
+
+  it('shows the portrait block right after the whole-card generator, with or without AI drafting', () => {
+    const wrapper = mount(harness(portraitProps, { portraitId }));
+    const block = wrapper.findComponent(PortraitGenerator);
+    expect(block.exists()).toBe(true);
+    expect(wrapper.findComponent(CardGenerator).element.nextElementSibling).toBe(block.element);
+    expect(block.props('name')).toBe('Aster');
+    expect(block.props('portraitId')).toBe(portraitId);
+    expect(block.props('details')).toEqual({ appearance: 'A silver coat.', role: 'Navigation', pronouns: 'they/them', name: 'Aster' });
+    expect(block.props('imageUrl')).toBe(portraitUrl);
+    expect(block.props('generate')).toBe(generatePortrait);
+    wrapper.unmount();
+    const plain = mount(CharacterForm, { props: { modelValue: structuredClone(card), ...portraitProps } });
+    expect(plain.findComponent(PortraitGenerator).exists()).toBe(true);
+    plain.unmount();
+  });
+
+  it('puts the portrait on the card when Use this portrait is pressed and takes it off with Remove portrait', async () => {
+    const wrapper = mount(harness(portraitProps));
+    expect(draftOf(wrapper).portraitId).toBeUndefined();
+    await makePortrait(wrapper);
+    expect(generatePortrait).toHaveBeenCalledWith({ appearance: 'A silver coat.', role: 'Navigation', pronouns: 'they/them', name: 'Aster' });
+    expect(draftOf(wrapper).portraitId).toBe(newId);
+    expect(draftOf(wrapper).displayName).toBe('Aster');
+    await wrapper.get('[data-testid="portrait-remove"]').trigger('click');
+    expect(draftOf(wrapper).portraitId).toBeUndefined();
+    expect('portraitId' in draftOf(wrapper)).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps the portrait when the whole-card result is used, and Undo keeps it too', async () => {
+    const wrapper = mount(harness(portraitProps, { portraitId }));
+    await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+    await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A tough soldier');
+    await wrapper.get('[data-testid="card-generator-generate"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+    await flushPromises();
+    expect(draftOf(wrapper).displayName).toBe('Rook');
+    expect(draftOf(wrapper).portraitId).toBe(portraitId);
+    await wrapper.get('[data-testid="card-generator-undo"]').trigger('click');
+    await flushPromises();
+    expect(draftOf(wrapper).displayName).toBe('Aster');
+    expect(draftOf(wrapper).portraitId).toBe(portraitId);
+    wrapper.unmount();
+  });
+
+  it('does not mark an open whole-card result stale when a portrait is used meanwhile', async () => {
+    const wrapper = mount(harness(portraitProps));
+    await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+    await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A tough soldier');
+    await wrapper.get('[data-testid="card-generator-generate"]').trigger('click');
+    await flushPromises();
+    await makePortrait(wrapper);
+    expect(draftOf(wrapper).portraitId).toBe(newId);
+    await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('Your card changed while the AI was writing');
+    expect(draftOf(wrapper).displayName).toBe('Rook');
+    expect(draftOf(wrapper).portraitId).toBe(newId);
+    wrapper.unmount();
+  });
+
+  it('still marks a whole-card result stale when another box changes', async () => {
+    const wrapper = mount(harness(portraitProps));
+    await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+    await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A tough soldier');
+    await wrapper.get('[data-testid="card-generator-generate"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-testid="card-flaw"]').setValue('Changed');
+    await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+    expect(wrapper.text()).toContain('Your card changed while the AI was writing');
     wrapper.unmount();
   });
 });

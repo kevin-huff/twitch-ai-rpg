@@ -1,8 +1,10 @@
 import { z } from 'zod';
 export * from './access';
 export * from './draft-audio';
+export * from './images';
 export * from './operations';
 export * from './playback';
+import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
 import { FieldGenerationCharacterContextSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES } from './field-generation';
 export * from './field-generation';
@@ -37,6 +39,7 @@ const authoredCharacter = {
   specialty: z.string().max(1000).default(''), flaw: z.string().max(1000).default(''),
   possessions: z.array(z.string().trim().min(1).max(160)).max(3).default([]),
   connection: z.string().max(1000).default(''), secret: z.string().max(2000).default(''),
+  portraitId: IdSchema.optional(),
 };
 export const CharacterCardDefinitionSchema = z.strictObject({ schemaVersion: z.literal(1), ...authoredCharacter, extensions: ExtensionsSchema })
   .refine(nativeSize, 'Native definitions must be no larger than 120 KB.');
@@ -80,6 +83,7 @@ export type CharacterBuilderSummary = z.infer<typeof CharacterBuilderSummarySche
 export const CharacterBuilderSnapshotSchema = z.strictObject({
   id: IdSchema, label: z.string().min(1).max(80), instructions: z.string().max(4000),
   revision: RevisionSchema, draft: CharacterBuilderDraftSchema, expiresAt: z.string().datetime(), submittedTemplate: TemplateRefSchema.nullable(),
+  picturesEnabled: z.boolean().optional(),
 });
 export type CharacterBuilderSnapshot = z.infer<typeof CharacterBuilderSnapshotSchema>;
 export const CharacterBuilderLinkSchema = z.strictObject({ builder: CharacterBuilderSummarySchema, token: z.string().min(1).max(1024) });
@@ -97,6 +101,7 @@ export const PacingSchema = z.strictObject({
 export const ScenarioBriefSchema = z.strictObject({
   premise: z.string().max(4000), genre: z.string().max(160), tone: z.string().max(500),
   objectives: z.array(z.string().max(1000)).max(20), playerHooks: z.array(z.string().max(1000)).max(20), pacing: PacingSchema,
+  pictureStyle: z.string().max(300).optional(),
 });
 export type ScenarioBrief = z.infer<typeof ScenarioBriefSchema>;
 
@@ -109,11 +114,11 @@ export const CharacterSchema = z.strictObject({
   pronouns: authoredCharacter.pronouns, personality: authoredCharacter.personality, backstory: authoredCharacter.backstory,
   templateRef: TemplateRefSchema.nullable().default(null), cardRevision: RevisionSchema.default(0),
   draft: CharacterCardDefinitionSchema.nullable().default(null), ready: z.boolean().default(false),
-  acceptedBoundariesRevision: RevisionSchema.nullable().default(null),
+  acceptedBoundariesRevision: RevisionSchema.nullable().default(null), portraitId: authoredCharacter.portraitId,
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
-  id: true, displayName: true, traits: true, strain: true, appearance: true, approved: true, ready: true,
+  id: true, displayName: true, traits: true, strain: true, appearance: true, approved: true, ready: true, portraitId: true,
 });
 export type PublicCharacter = z.infer<typeof PublicCharacterSchema>;
 
@@ -136,11 +141,11 @@ export const NpcSchema = z.strictObject({
   mood: z.string().max(160).default('neutral'), locationId: IdSchema, status: z.enum(['present', 'offstage']),
   communicationChannel: z.string().max(160).nullable().default(null), voiceProfileId: IdSchema,
   secrets: z.array(z.string().max(2000)).default([]), knowledge: z.array(NpcKnowledgeSchema).default([]),
-  relationships: z.array(RelationshipSchema).default([]), version: RevisionSchema.default(1),
+  relationships: z.array(RelationshipSchema).default([]), version: RevisionSchema.default(1), portraitId: IdSchema.optional(),
 });
 export type Npc = z.infer<typeof NpcSchema>;
 export const PublicNpcSchema = NpcSchema.pick({
-  id: true, displayName: true, role: true, appearance: true, status: true, voiceProfileId: true,
+  id: true, displayName: true, role: true, appearance: true, status: true, voiceProfileId: true, portraitId: true,
 });
 export type PublicNpc = z.infer<typeof PublicNpcSchema>;
 
@@ -218,6 +223,8 @@ export type LiveNpcProfile = z.infer<typeof LiveNpcProfileSchema>;
 export const ScenarioDefinitionSchema = z.strictObject({
   schemaVersion: z.literal(1), title: z.string().trim().min(1).max(160), premise: z.string().max(4000).default(''),
   genre: z.string().max(160).default(''), tone: z.string().max(500).default(''),
+  pictureStyle: z.string().trim().max(300).optional(),
+  pictureModel: PictureModelIdSchema.optional(),
   boundaries: z.array(z.string().trim().min(1).max(500)).max(30).default([]),
   locations: z.array(LocationSchema).min(1).max(30),
   openingScene: SceneSchema, npcs: z.array(NpcDefinitionSchema).max(20).default([]),
@@ -258,7 +265,7 @@ export const SaveCharacterTemplateSchema = z.strictObject({ ...templateSave, def
 export type SaveScenario = z.infer<typeof SaveScenarioSchema>;
 export type SaveCharacterTemplate = z.infer<typeof SaveCharacterTemplateSchema>;
 export interface TemplateVersion<T> { id: string; version: number; definition: T }
-export interface Library { scenarios: TemplateVersion<ScenarioDefinition>[]; characters: TemplateVersion<CharacterCardDefinition>[] }
+export interface Library { scenarios: TemplateVersion<ScenarioDefinition>[]; characters: TemplateVersion<CharacterCardDefinition>[]; picturesEnabled?: boolean }
 export const SessionSummarySchema = z.strictObject({
   id: IdSchema, title: z.string().min(1).max(160), status: z.enum(['lobby', 'live', 'paused', 'ended']),
   mode: z.enum(['conversation', 'action']), stateRevision: RevisionSchema, beatNumber: RevisionSchema,
@@ -385,12 +392,15 @@ const snapshotBase = {
   schemaVersion: z.literal(1), session: SessionSummarySchema, eventSeq: RevisionSchema,
   characters: z.array(PublicCharacterSchema), npcs: z.array(PublicNpcSchema), tracks: z.array(PublicTrackSchema),
   facts: z.array(PublicFactSchema), history: z.array(PublishedBeatSchema), corrections: z.array(PublicCorrectionSchema).default([]),
+  picturesEnabled: z.boolean().default(false), scenePicture: ScenePictureSchema.nullable().default(null),
 };
 export const DirectorSnapshotSchema = z.strictObject({
   ...snapshotBase, role: z.literal('director'), activeBeat: BeatSchema.nullable(),
   submissions: z.array(SubmissionSchema), npcDetails: z.array(NpcSchema), characterDetails: z.array(CharacterSchema),
   jobs: z.array(GenerationJobSchema), directorNotes: z.string(), setup: SessionSetupSchema.optional(),
   locations: z.array(LocationSchema).max(100).default([]),
+  scenePictureStatus: ScenePictureStatusSchema.nullable().default(null), actionPicture: ActionPictureStatusSchema.nullable().default(null), portraitJobs: z.array(PortraitJobSchema).max(50).default([]),
+  pictureSettings: PictureSettingsSchema.nullable().default(null), lastSceneBeatId: IdSchema.nullable().default(null),
 });
 export type DirectorSnapshot = z.infer<typeof DirectorSnapshotSchema>;
 export const PlayerSnapshotSchema = z.strictObject({
@@ -480,10 +490,17 @@ export interface ProviderContext {
   corrections?: PublicCorrection[];
 }
 
+export const PictureDescriptionRequestSchema = z.strictObject({
+  style: z.string().max(PICTURE_STYLE_MAX), scene: PictureSceneSchema, lines: z.array(PictureLineSchema),
+  cast: z.array(PicturePersonSchema.omit({ portraitId: true })), budget: z.number().int().positive(),
+});
+export type PictureDescriptionRequest = z.infer<typeof PictureDescriptionRequestSchema>;
+
 export interface AiProvider {
   generateField?(input: FieldGenerationRequest): Promise<FieldGenerationResponse>;
   generateCard?(input: CardGenerationInput): Promise<CardDraft>;
   generateScenario?(input: ScenarioGenerationRequest, options?: { deadlineAt?: number }): Promise<ScenarioDraft>;
+  describePicture?(input: PictureDescriptionRequest): Promise<string>;   // one paragraph; callers clean it
   plan(context: ProviderContext): Promise<PlanResult>;
   render(context: ProviderContext): Promise<AiDraft>;
 }

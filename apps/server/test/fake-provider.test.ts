@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AiDraftSchema, CardDraftSchema, PictureDescriptionRequestSchema, ScenarioDraftSchema, type CardGenerationInput, type Beat, type PictureDescriptionRequest, type ProviderContext, type Submission } from '@rpg/contracts';
 import { validateContracts } from '@rpg/rules';
 import { createLedgerState } from '@rpg/test-fixtures';
-import { FakeAiProvider } from '../src/fake-provider';
+import { FAKE_PICTURE_DESCRIPTION, FakeAiProvider } from '../src/fake-provider';
 
 function context(kind: 'conversation' | 'action' = 'conversation'): ProviderContext {
   let sequence = 0;
@@ -177,5 +177,33 @@ describe('fake whole-scenario writer', () => {
 
   it('stays within limits for a 4,000 character prompt', async () => {
     expect(ScenarioDraftSchema.safeParse(await ask('p'.repeat(4000))).success).toBe(true);
+  });
+});
+
+describe('fake picture description', () => {
+  const request: PictureDescriptionRequest = {
+    style: 'Painterly digital illustration', scene: { title: 'The Hall', description: 'A busy hall.', place: 'Meeting Hall' },
+    lines: [{ kind: 'narration', speaker: null, text: 'The bell rings.' }],
+    cast: [{ name: 'Ines Park', appearance: 'A tall guide.', role: 'Guide', pronouns: 'she/her', imageNumber: null }],
+    budget: 400,
+  };
+
+  it('returns the pinned description', async () => {
+    expect(await new FakeAiProvider().describePicture(request)).toBe(FAKE_PICTURE_DESCRIPTION);
+  });
+
+  it('records each parsed request in order', async () => {
+    const fake = new FakeAiProvider();
+    await fake.describePicture(request);
+    await fake.describePicture({ ...request, budget: 500 });
+    expect(fake.pictureRequests).toEqual([request, { ...request, budget: 500 }]);
+  });
+
+  it('rejects an invalid request and records nothing', async () => {
+    const fake = new FakeAiProvider();
+    await expect(fake.describePicture({ ...request, budget: 0 })).rejects.toThrow();
+    await expect(fake.describePicture({ ...request, extra: true } as unknown as PictureDescriptionRequest)).rejects.toThrow();
+    expect(fake.pictureRequests).toEqual([]);
+    expect(PictureDescriptionRequestSchema.safeParse(request).success).toBe(true);
   });
 });

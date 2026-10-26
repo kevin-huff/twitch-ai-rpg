@@ -10,10 +10,11 @@ import { createLedgerState } from '@rpg/test-fixtures';
 import { transaction } from './database';
 import { AppError, conflict, type Actor } from './repository';
 import { digest } from './commands';
+import { scenarioPictureSettings } from './picture-settings';
 
 type LibraryKind = 'scenarios' | 'characters';
 export interface VersionedDefinition<T> { id: string; version: number; definition: T }
-interface LibraryOptions { pool: Pool; authenticate(request: FastifyRequest): Promise<Actor> }
+interface LibraryOptions { pool: Pool; authenticate(request: FastifyRequest): Promise<Actor>; picturesEnabled?: boolean }
 
 export function starterDefinitions(): { scenario: ScenarioDefinition; characters: CharacterCardDefinition[] } {
   let sequence = 0;
@@ -84,7 +85,7 @@ export async function materializeSession(client: PoolClient, ownerId: string, se
     session: {
       id: sessionId, title: scenario.title, status: 'lobby', mode: 'conversation', stateRevision: 0, beatNumber: 0, actionRoundNumber: 0, inputEpoch: 0,
       scene: { ...scenario.openingScene, id: remap(scenario.openingScene.id), locationId: remap(scenario.openingScene.locationId) },
-      brief: { premise: scenario.premise, genre: scenario.genre, tone: scenario.tone, objectives: scenario.objectives, playerHooks: scenario.playerHooks, pacing: scenario.pacing },
+      brief: { premise: scenario.premise, genre: scenario.genre, tone: scenario.tone, objectives: scenario.objectives, playerHooks: scenario.playerHooks, pacing: scenario.pacing, ...(scenario.pictureStyle ? { pictureStyle: scenario.pictureStyle } : {}) },
     },
     characters: definitions.map((definition, index) => CharacterSchema.parse({ id: randomUUID(), displayName: `Seat ${index + 1}`, traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 0, approved: false, draft: definition, templateRef: characterRefs[index] })),
     locations: scenario.locations.map(location => ({ ...location, id: remap(location.id) })),
@@ -107,6 +108,7 @@ export async function materializeSession(client: PoolClient, ownerId: string, se
     state,
     scenarioSnapshot: { ref: scenarioRef, definition: scenario },
     characterSnapshots: definitions.map((definition, index) => ({ ref: characterRefs[index], definition })),
+    pictureSettings: scenarioPictureSettings(scenario),
   };
 }
 
@@ -123,6 +125,7 @@ export function registerLibrary(app: FastifyInstance, options: LibraryOptions) {
     return {
       scenarios: result.rows.filter((row) => row.kind === 'scenarios').map(({ id, version, definition }) => ({ id, version, definition: ScenarioDefinitionSchema.parse(definition) })),
       characters: result.rows.filter((row) => row.kind === 'characters').map(({ id, version, definition }) => ({ id, version, definition: CharacterCardDefinitionSchema.parse(definition) })),
+      ...(options.picturesEnabled ? { picturesEnabled: true } : {}),
     };
   });
   app.get<{ Params: { kind: string; templateId: string; version: string } }>('/api/library/:kind/:templateId/versions/:version', async (request) => {

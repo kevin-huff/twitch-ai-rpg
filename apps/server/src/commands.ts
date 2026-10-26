@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, type AiProvider, type Beat, type Command, type CommandResponse,
+  AiDraftSchema, ActionContractSchema, ImageIdSchema, type AiProvider, type Beat, type Command, type CommandResponse,
   type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type ScriptSegment, type SessionState, type Submission,
 } from '@rpg/contracts';
 import { applyResolution, resolveContracts, validateContracts } from '@rpg/rules';
 import { transaction } from './database';
 import { attachPreparedAudio } from './draft-audio';
 import { finishUsageAttempt, startUsageAttempt } from './operations';
+import { draftNarration } from './picture-prompts';
+import { RELEASED } from './picture-views';
 import { AppError, authorize, conflict, corrections, currentBeat, history, project, readState, saveBeat, saveState, saveSubmission, submissions, type Actor } from './repository';
 
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -28,8 +30,8 @@ async function receipt(client: PoolClient, actor: Actor, commandId: string, requ
   if (found.rows[0].request_hash !== requestHash) conflict('This command ID was already used with different input.');
   return found.rows[0].response;
 }
-async function finish(client: PoolClient, sessionId: string, actor: Actor, command: Command, requestHash: string): Promise<CommandResponse> {
-  const snapshot = await project(client, sessionId, actor);
+async function finish(client: PoolClient, sessionId: string, actor: Actor, command: Command, requestHash: string, picturesEnabled?: boolean, defaultPictureModel?: string): Promise<CommandResponse> {
+  const snapshot = await project(client, sessionId, actor, undefined, { picturesEnabled, defaultPictureModel });
   const response = { commandId: command.commandId, eventSeq: snapshot.eventSeq, snapshot };
   await client.query('INSERT INTO command_receipts(actor_id,command_id,request_hash,session_id,response) VALUES($1,$2,$3,$4,$5)', [actor.actor_id, command.commandId, requestHash, sessionId, response]);
   return response;
@@ -132,7 +134,20 @@ function makeScript(beat: Beat, state: SessionState): ScriptSegment[] {
   return [...quotes, ...segments];
 }
 
-export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor> }
+// A round gets a fresh picture for its first script and whenever the narration (not the dialogue) changes.
+function narrationChanged(before: Beat['draft'], after: Beat['draft']): boolean {
+  return !before || draftNarration(before) !== draftNarration(after);
+}
+
+// Declared here so commands.ts needs nothing at runtime from the image service.
+export interface CommandPictures {
+  reserveScene(client: PoolClient, state: SessionState, actor: Actor): Promise<string | null>;
+  reserveNpcPortrait(client: PoolClient, state: SessionState, npcId: string, actor: Actor): Promise<string | null>;
+  reserveActionPicture(client: PoolClient, state: SessionState, beat: Beat, actor: Actor): Promise<string | null>;
+  releaseActionPicture(client: PoolClient, sessionId: string, beatId: string): Promise<string | null>;
+  run(imageIds: string[]): void;
+}
+export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string }
 export async function executeCommand(deps: CommandDependencies, sessionId: string, actor: Actor, command: Command): Promise<CommandResponse> {
   if (actor.role === 'stage' || (directorCommands.has(command.type) && actor.role !== 'host')) throw new AppError(403, 'forbidden', 'This command requires a director.');
   if (['save_character', 'set_ready', 'save_submission', 'cancel_submission'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
@@ -148,9 +163,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     const duplicate = await receipt(client, actor, command.commandId, requestHash);
     if (duplicate) return { response: duplicate };
     let state = await readState(client, sessionId);
+    const wasLive = state.session.status === 'live';
     let beat = await currentBeat(client, sessionId);
+    const draftBefore = beat?.draft ?? null;
     const all = await submissions(client, sessionId);
     let eventData: Record<string, unknown> = {};
+    let createdNpcId: string | undefined;
     if (state.session.status === 'ended') conflict('This session has ended.');
     if (state.session.status === 'paused' && command.type !== 'set_status' && command.type !== 'save_submission' && command.type !== 'set_ready' && !liveCommands.has(command.type)) conflict('Resume the session before advancing the story.');
 
@@ -223,10 +241,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (command.npcId && (!npc || npc.version !== command.expectedNpcVersion)) conflict('The NPC changed or no longer exists.');
         if (!state.locations.some(location => location.id === command.profile.locationId)) conflict('Choose a known location for this NPC.');
         if (command.profile.status === 'present' && command.profile.locationId !== state.session.scene.locationId) conflict('Present NPCs must be at the current scene location.');
-        if (npc) { Object.assign(npc, command.profile); npc.version++; }
+        // Portraits change only through the picture routes, so an old form cannot undo a newer one.
+        const { portraitId: _portraitId, ...profile } = command.profile;
+        if (npc) { Object.assign(npc, profile); npc.version++; }
         else {
           if (state.npcs.length >= 50) conflict('A session supports at most 50 NPCs.');
-          state.npcs.push({ ...command.profile, id: randomUUID(), knowledge: [], relationships: [], version: 1 });
+          createdNpcId = randomUUID();
+          state.npcs.push({ ...profile, id: createdNpcId, knowledge: [], relationships: [], version: 1 });
         }
       } else {
         revealTarget = state.npcs.find(npc => npc.id === command.npcId);
@@ -269,12 +290,20 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!character) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
         if (character.cardRevision !== command.expectedCharacterRevision) conflict('The character changed. Review the latest revision before continuing.');
         if (command.type === 'save_character') {
+          const portraitId = command.card.portraitId;
+          if (portraitId && portraitId !== character.draft?.portraitId && portraitId !== character.portraitId) {
+            if (!ImageIdSchema.safeParse(portraitId).success || portraitId !== portraitId.toLowerCase()) conflict('That portrait is not available for this card. Create a new one.');
+            if (!(await client.query("SELECT 1 FROM images WHERE id=$1 AND status='ready' AND purpose='character' AND session_id=$2 AND subject_id=$3", [portraitId, sessionId, character.id])).rowCount) {
+              conflict('That portrait is not available for this card. Create a new one.');
+            }
+          }
           character.draft = command.card; character.approved = false; character.ready = false; character.acceptedBoundariesRevision = null;
           eventData = { characterId: character.id, cardRevision: character.cardRevision + 1 };
         } else if (command.type === 'approve_character') {
           if (!character.draft) conflict('There is no pending character draft to approve.');
           const { schemaVersion: _schemaVersion, extensions: _extensions, ...approved } = character.draft!;
           Object.assign(character, approved);
+          if (approved.portraitId) character.portraitId = approved.portraitId; else delete character.portraitId;
           character.draft = null; character.approved = true; character.ready = false; character.acceptedBoundariesRevision = null;
           state.session.stateRevision++;
           eventData = { characterId: character.id, cardRevision: character.cardRevision + 1 };
@@ -479,10 +508,34 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       }
       beat.revision++; await saveBeat(client, beat);
     }
+    // Pictures are reserved inside this transaction and only start after it commits.
+    const pictureIds: string[] = [];
+    if (deps.pictures) {
+      // Going live reserves the opening picture unless this scene already has one, so lobby to paused to live still gets it once.
+      const wentLive = !wasLive && state.session.status === 'live'
+        && !(await client.query(`SELECT 1 FROM images WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND ${RELEASED} LIMIT 1`, [sessionId, state.session.scene.id])).rowCount;
+      if (command.type === 'change_scene' || wentLive) {
+        const id = await deps.pictures.reserveScene(client, state, actor);
+        if (id) pictureIds.push(id);
+      }
+      if (createdNpcId) {
+        const id = await deps.pictures.reserveNpcPortrait(client, state, createdNpcId, actor);
+        if (id) pictureIds.push(id);
+      }
+      if (beat?.kind === 'action' && command.type === 'edit_script' && narrationChanged(draftBefore, beat.draft)) {
+        const id = await deps.pictures.reserveActionPicture(client, state, beat, actor);
+        if (id) pictureIds.push(id);
+      }
+      // Publishing reveals the round's newest held picture together with the round itself.
+      if (beat?.kind === 'action' && command.type === 'publish_beat') await deps.pictures.releaseActionPicture(client, sessionId, beat.id);
+    }
     if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor, command.commandId, command.type, state.session.stateRevision, eventData);
-    return { response: await finish(client, sessionId, actor, command, requestHash) };
+    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel), pictureIds };
   });
-  if (prepared.response) return prepared.response;
+  if (prepared.response) {
+    if (prepared.pictureIds?.length) deps.pictures?.run(prepared.pictureIds);
+    return prepared.response;
+  }
   const generation = prepared.generation!;
   let output: unknown;
   let failure: string | null = null;
@@ -498,7 +551,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   await finishUsageAttempt(deps.pool, { attemptId, status: failure ? 'failed' : 'succeeded' });
   const completed = await transaction(deps.pool, async (client) => {
     await client.query('SELECT id FROM sessions WHERE id=$1 FOR UPDATE', [sessionId]);
-    const duplicate = await receipt(client, actor, command.commandId, requestHash); if (duplicate) return duplicate;
+    const duplicate = await receipt(client, actor, command.commandId, requestHash); if (duplicate) return { response: duplicate };
     const beat = await currentBeat(client, sessionId);
     const job = (await client.query('SELECT * FROM generation_jobs WHERE id=$1 FOR UPDATE', [generation.jobId])).rows[0];
     const state = await readState(client, sessionId);
@@ -506,6 +559,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       await client.query('UPDATE generation_jobs SET status=\'cancelled\',finished_at=now() WHERE id=$1', [generation.jobId]);
       return { superseded: true as const };
     }
+    const draftBefore = beat.draft;
     try {
       if (!failure && generation.task === 'plan') {
         const plan = output as Awaited<ReturnType<AiProvider['plan']>>;
@@ -521,8 +575,11 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     await saveBeat(client, beat);
     await client.query('UPDATE generation_jobs SET status=$2,error=$3,finished_at=now() WHERE id=$1', [generation.jobId, failure ? 'failed' : 'succeeded', failure]);
     await recordEvent(client, sessionId, actor, command.commandId, failure ? 'job.failed' : command.type, state.session.stateRevision);
-    return finish(client, sessionId, actor, command, requestHash);
+    const pictureId = deps.pictures && !failure && generation.task === 'render' && beat.kind === 'action' && narrationChanged(draftBefore, beat.draft)
+      ? await deps.pictures.reserveActionPicture(client, state, beat, actor) : null;
+    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel), pictureId };
   });
   if ('superseded' in completed) throw new AppError(409, 'superseded', 'The generation was superseded. Its result was discarded.');
-  return completed;
+  if ('pictureId' in completed && completed.pictureId) deps.pictures?.run([completed.pictureId]);
+  return completed.response;
 }
