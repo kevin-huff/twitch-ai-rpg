@@ -1,8 +1,8 @@
-import { CharacterBuilderFieldGenerationRequestSchema, FieldGenerationCharacterContextSchema } from '@rpg/contracts';
+import { CharacterBuilderFieldGenerationRequestSchema, FieldGenerationCharacterContextSchema, HostCardGenerationRequestSchema, BuilderCardGenerationRequestSchema, SeatCardGenerationRequestSchema, SeatFieldGenerationRequestSchema, CardGenerationResponseSchema, ScenarioGenerationRequestSchema, ScenarioDraftJobSchema, SeatPortraitRequestSchema, BuilderPortraitRequestSchema, LibraryPortraitRequestSchema, PictureIdResponseSchema, PictureSettingsSchema } from '@rpg/contracts';
 import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema } from '@rpg/contracts';
 import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot } from '@rpg/contracts';
 import { io } from 'socket.io-client';
-import type { Command, SessionSnapshot, CreateSessionResponse, RedeemResponse, Library, ScenarioDefinition, CharacterCardDefinition, TemplateVersion, TemplateRef, SaveScenario, SaveCharacterTemplate, FieldGenerationRequest, FieldGenerationResponse } from '@rpg/contracts';
+import type { Command, SessionSnapshot, CreateSessionResponse, RedeemResponse, Library, ScenarioDefinition, CharacterCardDefinition, TemplateVersion, TemplateRef, SaveScenario, SaveCharacterTemplate, FieldGenerationRequest, FieldGenerationResponse, SeatChoice, HostCardGenerationRequest, BuilderCardGenerationRequest, SeatCardGenerationRequest, SeatFieldGenerationRequest, CardGenerationResponse, ScenarioGenerationRequest, ScenarioDraftJob, SeatPortraitRequest, BuilderPortraitRequest, LibraryPortraitRequest, PictureIdResponse, PictureSettings } from '@rpg/contracts';
 import type { CharacterBuilderAccess, CharacterBuilderFieldGenerationRequest, CharacterBuilderLink, CharacterBuilderSnapshot, CharacterBuilderSummary, CreateCharacterBuilder, SaveCharacterBuilder } from '@rpg/contracts';
 import { getIdentity, identityHeaders, selectIdentity } from './identity';
 
@@ -30,6 +30,12 @@ export const api = {
   revokeCharacterBuilder: (id: string, value: { commandId: string }) => request<CharacterBuilderSummary>(`/character-builders/${encodeURIComponent(id)}/revoke`, value),
   accessCharacterBuilder: (token: string) => request<CharacterBuilderAccess>('/character-builder/access', { token }, false),
   characterBuilder: () => request<CharacterBuilderSnapshot>('/character-builder'),
+  generateCard: async ({ prompt, keepFilled, current, premise }: HostCardGenerationRequest) => CardGenerationResponseSchema.parse(await request<CardGenerationResponse>('/authoring/generate-card', HostCardGenerationRequestSchema.parse({ prompt, keepFilled, current, premise }))),
+  generateBuilderCard: async ({ expectedRevision, prompt, keepFilled, current }: BuilderCardGenerationRequest) => CardGenerationResponseSchema.parse(await request<CardGenerationResponse>('/character-builder/generate-card', BuilderCardGenerationRequestSchema.parse({ expectedRevision, prompt, keepFilled, current }))),
+  generateSeatCard: async (sessionId: string, { expectedCharacterRevision, prompt, keepFilled, current }: SeatCardGenerationRequest) => CardGenerationResponseSchema.parse(await request<CardGenerationResponse>(`/sessions/${encodeURIComponent(sessionId)}/character/generate-card`, SeatCardGenerationRequestSchema.parse({ expectedCharacterRevision, prompt, keepFilled, current }))),
+  generateSeatField: (sessionId: string, { expectedCharacterRevision, field, seed, characterContext, usePremise }: SeatFieldGenerationRequest) => request<FieldGenerationResponse>(`/sessions/${encodeURIComponent(sessionId)}/character/generate-field`, SeatFieldGenerationRequestSchema.parse({ expectedCharacterRevision, field, seed, characterContext, usePremise })),
+  startScenarioDraft: async ({ prompt, size, boundaries }: ScenarioGenerationRequest) => ScenarioDraftJobSchema.parse(await request<ScenarioDraftJob>('/authoring/scenario-drafts', ScenarioGenerationRequestSchema.parse({ prompt, size, boundaries }))),
+  scenarioDraft: async (jobId: string) => ScenarioDraftJobSchema.parse(await request<ScenarioDraftJob>(`/authoring/scenario-drafts/${encodeURIComponent(jobId)}`)),
   generateCharacterBuilderField: ({ expectedRevision, field, seed, characterContext }: CharacterBuilderFieldGenerationRequest) => request<FieldGenerationResponse>('/character-builder/generate-field', CharacterBuilderFieldGenerationRequestSchema.parse({ expectedRevision, field, seed, characterContext })),
   saveCharacterBuilder: (value: SaveCharacterBuilder) => request<CharacterBuilderSnapshot>('/character-builder/save', value),
   submitCharacterBuilder: (value: SaveCharacterBuilder) => request<CharacterBuilderSnapshot>('/character-builder/submit', value),
@@ -51,7 +57,7 @@ export const api = {
   generateField: ({ field, seed, premise, characterContext }: FieldGenerationRequest) => request<FieldGenerationResponse>('/authoring/generate-field', { field, seed, ...(premise === undefined ? {} : { premise }), ...(characterContext === undefined ? {} : { characterContext: FieldGenerationCharacterContextSchema.parse(characterContext) }) }),
   saveScenario: (value: Omit<SaveScenario, 'commandId'>) => request<TemplateVersion<ScenarioDefinition>>('/library/scenarios', { commandId: crypto.randomUUID(), ...value }),
   saveCharacterTemplate: (value: Omit<SaveCharacterTemplate, 'commandId'>) => request<TemplateVersion<CharacterCardDefinition>>('/library/characters', { commandId: crypto.randomUUID(), ...value }),
-  createCustom: (title: string, scenarioRef: TemplateRef, characterRefs: TemplateRef[]) => request<CreateSessionResponse>('/sessions', { commandId: crypto.randomUUID(), title, scenario: scenarioRef, characters: characterRefs }),
+  createCustom: (title: string, scenarioRef: TemplateRef, seats: SeatChoice[]) => request<CreateSessionResponse>('/sessions', { commandId: crypto.randomUUID(), title, scenario: scenarioRef, characters: seats }),
   sessions: () => request<Array<{ id: string; title: string }>>('/sessions'),
   snapshot: (id: string, view?: string) => request<SessionSnapshot>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${encodeURIComponent(view)}` : ''}`),
   me: async (): Promise<Viewer> => ViewerSchema.parse(await request('/auth/me')),

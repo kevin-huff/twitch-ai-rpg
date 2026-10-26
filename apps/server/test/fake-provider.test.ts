@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiDraftSchema, type Beat, type ProviderContext, type Submission } from '@rpg/contracts';
+import { AiDraftSchema, CardDraftSchema, PictureDescriptionRequestSchema, ScenarioDraftSchema, type CardGenerationInput, type Beat, type PictureDescriptionRequest, type ProviderContext, type Submission } from '@rpg/contracts';
 import { validateContracts } from '@rpg/rules';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { FakeAiProvider } from '../src/fake-provider';
@@ -92,5 +92,90 @@ describe('fake narrator speaker identity', () => {
     const second = await provider.render(input);
     expect(second.segments[1]!.text).toBe('Then someone expects you not to survive the paperwork. Show me the seller’s name.');
     expect(second.continuity).toContainEqual({ kind: 'npc_knowledge', npcId: mara.id, statement: 'The party reported a sale offer for the club.', category: 'claim', acquisition: 'told', sourceSubmissionIds: ['submission'], sourceEntityId: input.submissions[0]!.characterId });
+  });
+});
+
+describe('fake whole-card writer', () => {
+  const ask = (prompt: string, extra: Partial<CardGenerationInput> = {}) => provider.generateCard({ prompt, keepFilled: false, ...extra });
+
+  it('returns a draft that parses and carries the prompt text', async () => {
+    const draft = await ask('A weary lighthouse keeper');
+    expect(CardDraftSchema.parse(draft)).toEqual(draft);
+    expect(draft.backstory).toContain('A weary lighthouse keeper');
+  });
+
+  it('uses explicit pronouns and falls back to they/them', async () => {
+    expect((await ask('A pilot, she/her, dry humor')).pronouns).toBe('she/her');
+    expect((await ask('A quiet pilot')).pronouns).toBe('they/them');
+  });
+
+  it('picks traits by keyword with wits as the default', async () => {
+    const traits = async (prompt: string) => { const d = await ask(prompt); return [d.strongestTrait, d.weakestTrait]; };
+    expect(await traits('A tough soldier')).toEqual(['force', 'wits']);
+    expect(await traits('A nimble thief')).toEqual(['finesse', 'force']);
+    expect(await traits('A clever scholar')).toEqual(['wits', 'force']);
+    expect(await traits('A charming singer')).toEqual(['presence', 'force']);
+    expect(await traits('A baker')).toEqual(['wits', 'force']);
+  });
+
+  it('is deterministic', async () => {
+    expect(await ask('A sneaky courier')).toEqual(await ask('A sneaky courier'));
+  });
+
+  it('stays within every limit for a 4,000 character prompt and a full card', async () => {
+    const full = (n: number) => 'x'.repeat(n);
+    const draft = await ask('p'.repeat(4000), {
+      keepFilled: true,
+      current: { kind: 'character', displayName: full(80), appearance: full(1000), personality: full(2000), backstory: full(4000),
+        specialty: full(1000), flaw: full(1000), connection: full(1000), secret: full(2000) } as CardGenerationInput['current'],
+    });
+    expect(CardDraftSchema.safeParse(draft).success).toBe(true);
+    expect(draft.displayName.length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe('fake whole-scenario writer', () => {
+  const ask = (prompt: string) => provider.generateScenario!({ prompt, size: 'medium', boundaries: [] });
+
+  it('returns a draft that parses with the draft schema', async () => {
+    const draft = await ask('A haunted harbor town');
+    expect(ScenarioDraftSchema.parse(draft)).toEqual(draft);
+    expect(draft.suggestedBoundaries).toEqual(['Keep serious injuries off screen.']);
+  });
+
+  it('only uses listed location keys and seats the present character at the opening', async () => {
+    const draft = await ask('A haunted harbor town');
+    const keys = draft.locations.map(place => place.key);
+    expect(keys).toEqual(['opening', 'second', 'third']);
+    expect(keys).toContain(draft.openingScene.locationKey);
+    for (const npc of draft.npcs) expect(keys).toContain(npc.locationKey);
+    const present = draft.npcs.filter(npc => npc.presence === 'present');
+    expect(present).toHaveLength(1);
+    expect(present[0].locationKey).toBe(draft.openingScene.locationKey);
+    expect(present[0].hiddenIdentity).toBeNull();
+    const remote = draft.npcs.find(npc => npc.presence === 'offstage');
+    expect(remote).toMatchObject({ locationKey: 'second', communicationChannel: 'radio' });
+  });
+
+  it('has the expected tracks and facts', async () => {
+    const draft = await ask('A haunted harbor town');
+    expect(draft.tracks.map(track => track.kind)).toEqual(['progress', 'countdown']);
+    expect(draft.tracks[1].ticksEachActionRound).toBe(true);
+    expect(draft.facts.filter(fact => fact.visibility === 'director')).toHaveLength(1);
+    expect(draft.facts).toHaveLength(3);
+  });
+
+  it('carries the prompt text in the title or premise', async () => {
+    const draft = await ask('A haunted harbor town');
+    expect(`${draft.title} ${draft.premise}`).toContain('A haunted harbor town');
+  });
+
+  it('is deterministic and never returns a boundaries key', async () => {
+    expect(await ask('A haunted harbor town')).toEqual(await ask('A haunted harbor town'));
+    expect(Object.keys(await ask('A haunted harbor town'))).not.toContain('boundaries');
+  });
+
+  it('stays within limits for a 4,000 character prompt', async () => {
+    expect(ScenarioDraftSchema.safeParse(await ask('p'.repeat(4000))).success).toBe(true);
   });
 });

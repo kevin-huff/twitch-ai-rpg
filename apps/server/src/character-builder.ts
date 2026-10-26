@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import {
   CharacterBuilderDraftSchema, CharacterBuilderSnapshotSchema, CharacterBuilderSummarySchema,
+  BuilderCardGenerationRequestSchema, CardGenerationInputSchema,
   CharacterBuilderFieldGenerationRequestSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES,
   CreateCharacterBuilderSchema, IdSchema, SaveCharacterBuilderSchema, SubmitCharacterBuilderSchema,
   type AiProvider, type CharacterBuilderDraft,
@@ -13,6 +14,7 @@ import { AppError, conflict, type Actor } from './repository';
 import { digest } from './commands';
 import { requestIdentity } from './identity';
 import { executeFieldGeneration } from './field-generation';
+import { executeCardGeneration } from './card-generation';
 
 interface BuilderOptions {
   pool: Pool;
@@ -22,7 +24,7 @@ interface BuilderOptions {
   provider: AiProvider;
   timeoutMs?: number;
 }
-interface BuilderRow {
+export interface BuilderRow {
   id: string;
   owner_id: string;
   label: string;
@@ -68,6 +70,29 @@ async function saveReceipt(client: PoolClient, actorId: string, commandId: strin
   await client.query('INSERT INTO command_receipts(actor_id,command_id,request_hash,response) VALUES($1,$2,$3,$4)', [actorId, commandId, requestHash, response]);
 }
 
+export const selectedCredential = (request: FastifyRequest) => {
+  const identityId = requestIdentity(request.url, request.headers['x-rpg-identity']);
+  if (!identityId) return unauthorized();
+  const name = `rpg_builder_${identityId}`;
+  const credential = request.cookies[name];
+  if (!credential) return unauthorized();
+  return { name, tokenHash: hash(credential) };
+};
+export async function builderSession(client: PoolClient, request: FastifyRequest) {
+  const selected = selectedCredential(request);
+  const credential = (await client.query('SELECT builder_id FROM character_builder_credentials WHERE token_hash=$1', [selected.tokenHash])).rows[0];
+  if (!credential) return unauthorized();
+  const row = (await client.query<BuilderRow>('SELECT * FROM character_builders WHERE id=$1 FOR UPDATE', [credential.builder_id])).rows[0];
+  if (!row || !await activeGrant(client, row.id)) return unauthorized();
+  const activeCredential = (await client.query('SELECT 1 FROM character_builder_credentials WHERE token_hash=$1 AND expires_at>clock_timestamp() AND revoked_at IS NULL', [selected.tokenHash])).rowCount;
+  if (!activeCredential) return unauthorized();
+  return { row, selected };
+}
+export const requireEditable = (row: BuilderRow, expectedRevision: number) => {
+  if (row.submitted_at !== null) conflict('This character has already been submitted. It is now read-only.');
+  if (row.draft_revision !== expectedRevision) conflict('This draft changed. Reload it before generating.');
+};
+
 export function registerCharacterBuilders(app: FastifyInstance, options: BuilderOptions) {
   const tokenFor = (id: string) => createHmac('sha256', options.hostToken).update(JSON.stringify(['rpg-character-builder-v1', id])).digest('base64url');
   const host = async (request: FastifyRequest) => {
@@ -80,25 +105,6 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
     if (!row) return notFound();
     return row;
   };
-  const selectedCredential = (request: FastifyRequest) => {
-    const identityId = requestIdentity(request.url, request.headers['x-rpg-identity']);
-    if (!identityId) return unauthorized();
-    const name = `rpg_builder_${identityId}`;
-    const credential = request.cookies[name];
-    if (!credential) return unauthorized();
-    return { name, tokenHash: hash(credential) };
-  };
-  const authenticated = async (client: PoolClient, request: FastifyRequest) => {
-    const selected = selectedCredential(request);
-    const credential = (await client.query('SELECT builder_id FROM character_builder_credentials WHERE token_hash=$1', [selected.tokenHash])).rows[0];
-    if (!credential) return unauthorized();
-    const row = (await client.query<BuilderRow>('SELECT * FROM character_builders WHERE id=$1 FOR UPDATE', [credential.builder_id])).rows[0];
-    if (!row || !await activeGrant(client, row.id)) return unauthorized();
-    const activeCredential = (await client.query('SELECT 1 FROM character_builder_credentials WHERE token_hash=$1 AND expires_at>clock_timestamp() AND revoked_at IS NULL', [selected.tokenHash])).rowCount;
-    if (!activeCredential) return unauthorized();
-    return { row, selected };
-  };
-
   app.get('/api/character-builders', async (request) => {
     const actor = await host(request);
     const builders = await options.pool.query<BuilderRow>('SELECT * FROM character_builders WHERE owner_id=$1 ORDER BY created_at DESC,id', [actor.actor_id]);
@@ -164,14 +170,10 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
     });
     return { identityId, builder: snapshot(result.row) };
   });
-  app.get('/api/character-builder', async (request) => transaction(options.pool, async (client) => snapshot((await authenticated(client, request)).row)));
+  app.get('/api/character-builder', async (request) => transaction(options.pool, async (client) => snapshot((await builderSession(client, request)).row, options.picturesEnabled)));
   app.post('/api/character-builder/generate-field', { bodyLimit: MAX_FIELD_GENERATION_REQUEST_BYTES }, async (request) => {
-    const requireEditable = (row: BuilderRow, expectedRevision: number) => {
-      if (row.submitted_at !== null) conflict('This character has already been submitted. It is now read-only.');
-      if (row.draft_revision !== expectedRevision) conflict('This draft changed. Reload it before generating.');
-    };
     const { input, expectedRevision } = await transaction(options.pool, async (client) => {
-      const { row } = await authenticated(client, request);
+      const { row } = await builderSession(client, request);
       const command = CharacterBuilderFieldGenerationRequestSchema.parse(request.body);
       requireEditable(row, command.expectedRevision);
       const instructions = row.instructions.trim();
@@ -184,14 +186,32 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
       };
     });
     const output = await executeFieldGeneration(options.provider, input, options.timeoutMs);
-    await transaction(options.pool, async (client) => requireEditable((await authenticated(client, request)).row, expectedRevision));
+    await transaction(options.pool, async (client) => requireEditable((await builderSession(client, request)).row, expectedRevision));
+    return output;
+  });
+  app.post('/api/character-builder/generate-card', { bodyLimit: MAX_FIELD_GENERATION_REQUEST_BYTES }, async (request) => {
+    const { input, expectedRevision } = await transaction(options.pool, async (client) => {
+      const { row } = await builderSession(client, request);
+      const command = BuilderCardGenerationRequestSchema.parse(request.body);
+      requireEditable(row, command.expectedRevision);
+      const instructions = row.instructions.trim();
+      return {
+        expectedRevision: command.expectedRevision,
+        input: CardGenerationInputSchema.parse({
+          prompt: command.prompt, keepFilled: command.keepFilled, current: command.current,
+          ...(instructions ? { instructions } : {}),
+        }),
+      };
+    });
+    const output = await executeCardGeneration(options.provider, input, options.timeoutMs);
+    await transaction(options.pool, async (client) => requireEditable((await builderSession(client, request)).row, expectedRevision));
     return output;
   });
   for (const operation of ['save', 'submit'] as const) {
     app.post(`/api/character-builder/${operation}`, async (request) => {
       const command = (operation === 'submit' ? SubmitCharacterBuilderSchema : SaveCharacterBuilderSchema).parse(request.body);
       return transaction(options.pool, async (client) => {
-        const { row } = await authenticated(client, request);
+        const { row } = await builderSession(client, request);
         const actorId = `builder:${row.id}`;
         const requestHash = digest({ operation: `character-builder.${operation}`, builderId: row.id, command });
         const previous = await previousCommand(client, actorId, command.commandId, requestHash);
@@ -216,7 +236,7 @@ export function registerCharacterBuilders(app: FastifyInstance, options: Builder
   app.post('/api/character-builder/logout', async (request, reply) => {
     z.strictObject({}).parse(request.body);
     const name = await transaction(options.pool, async (client) => {
-      const { selected } = await authenticated(client, request);
+      const { selected } = await builderSession(client, request);
       await client.query('UPDATE character_builder_credentials SET revoked_at=clock_timestamp() WHERE token_hash=$1', [selected.tokenHash]);
       return selected.name;
     });

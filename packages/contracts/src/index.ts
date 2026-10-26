@@ -4,6 +4,7 @@ export * from './draft-audio';
 export * from './operations';
 export * from './playback';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
+import { FieldGenerationCharacterContextSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES } from './field-generation';
 export * from './field-generation';
 
 export const IdSchema = z.string().min(1).max(128);
@@ -447,8 +448,10 @@ export const CommandSchema = z.discriminatedUnion('type', [
 export type Command = z.infer<typeof CommandSchema>;
 export const CommandResponseSchema = z.strictObject({ commandId: IdSchema, eventSeq: RevisionSchema, snapshot: SessionSnapshotSchema });
 export type CommandResponse = z.infer<typeof CommandResponseSchema>;
+export const SeatChoiceSchema = z.union([TemplateRefSchema, z.strictObject({ playerWritten: z.literal(true) })]);
+export type SeatChoice = z.infer<typeof SeatChoiceSchema>;
 export const CreateSessionSchema = z.strictObject({ commandId: IdSchema, title: z.string().min(1).max(160).optional(),
-  scenario: TemplateRefSchema.optional(), characters: z.array(TemplateRefSchema).min(2).max(6).optional(),
+  scenario: TemplateRefSchema.optional(), characters: z.array(SeatChoiceSchema).min(2).max(6).optional(),
 }).refine(value => Boolean(value.scenario) === Boolean(value.characters), 'Select both a scenario and a cast for a custom session.');
 export const InviteSchema = z.strictObject({ role: z.enum(['player', 'stage']), characterId: IdSchema.nullable(), token: z.string().min(20) });
 export const CreateSessionResponseSchema = z.strictObject({ sessionId: IdSchema, invites: z.array(InviteSchema) });
@@ -479,6 +482,96 @@ export interface ProviderContext {
 
 export interface AiProvider {
   generateField?(input: FieldGenerationRequest): Promise<FieldGenerationResponse>;
+  generateCard?(input: CardGenerationInput): Promise<CardDraft>;
+  generateScenario?(input: ScenarioGenerationRequest, options?: { deadlineAt?: number }): Promise<ScenarioDraft>;
   plan(context: ProviderContext): Promise<PlanResult>;
   render(context: ProviderContext): Promise<AiDraft>;
 }
+
+const CardPromptSchema = z.string().trim().min(1).max(4000);
+const cardRequestSize = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length <= MAX_FIELD_GENERATION_REQUEST_BYTES;
+const CARD_TOO_LARGE = 'The drafting request is too large. Shorten the description or character notes.';
+const cardText = (max: number) => z.string().max(max).default('');
+export const CardDraftSchema = z.object({
+  displayName: cardText(80), pronouns: cardText(80), appearance: cardText(1000), personality: cardText(2000), backstory: cardText(4000),
+  specialty: cardText(1000), flaw: cardText(1000), connection: cardText(1000), secret: cardText(2000),
+  possessions: z.array(z.string().max(160)).max(3).default([]),
+  strongestTrait: TraitSchema, weakestTrait: TraitSchema,
+});
+export type CardDraft = z.infer<typeof CardDraftSchema>;
+export const CardCharacterContextSchema = FieldGenerationCharacterContextSchema.refine(context => context.kind === 'character', 'Only this character card can be used as context.');
+export type CardCharacterContext = z.infer<typeof CardCharacterContextSchema>;
+export const CardGenerationInputSchema = z.strictObject({
+  prompt: CardPromptSchema, keepFilled: z.boolean(), current: CardCharacterContextSchema.optional(),
+  premise: CardPromptSchema.optional(), instructions: CardPromptSchema.optional(),
+}).refine(cardRequestSize, CARD_TOO_LARGE);
+export type CardGenerationInput = z.infer<typeof CardGenerationInputSchema>;
+export const HostCardGenerationRequestSchema = z.strictObject({
+  prompt: CardPromptSchema, keepFilled: z.boolean().default(true), current: CardCharacterContextSchema.optional(), premise: CardPromptSchema.optional(),
+}).refine(cardRequestSize, CARD_TOO_LARGE);
+export type HostCardGenerationRequest = z.infer<typeof HostCardGenerationRequestSchema>;
+export const BuilderCardGenerationRequestSchema = z.strictObject({
+  expectedRevision: z.number().int().min(0), prompt: CardPromptSchema, keepFilled: z.boolean().default(true), current: CardCharacterContextSchema,
+}).refine(cardRequestSize, CARD_TOO_LARGE);
+export type BuilderCardGenerationRequest = z.infer<typeof BuilderCardGenerationRequestSchema>;
+export const SeatCardGenerationRequestSchema = z.strictObject({
+  expectedCharacterRevision: z.number().int().min(0), prompt: CardPromptSchema, keepFilled: z.boolean().default(true), current: CardCharacterContextSchema,
+}).refine(cardRequestSize, CARD_TOO_LARGE);
+export type SeatCardGenerationRequest = z.infer<typeof SeatCardGenerationRequestSchema>;
+export const SeatFieldGenerationRequestSchema = z.strictObject({
+  expectedCharacterRevision: z.number().int().min(0),
+  field: FieldGenerationRequestSchema.shape.field.refine(field => field.startsWith('character.'), 'Only character fields can be generated here.'),
+  seed: FieldGenerationRequestSchema.shape.seed,
+  characterContext: CardCharacterContextSchema,
+  usePremise: z.boolean().default(false),
+}).refine(cardRequestSize, CARD_TOO_LARGE);
+export type SeatFieldGenerationRequest = z.infer<typeof SeatFieldGenerationRequestSchema>;
+export const CardGenerationResponseSchema = z.strictObject({
+  card: CharacterCardDefinitionSchema, notes: z.array(z.string().max(300)).max(10), pronounsSuggested: z.boolean(),
+});
+export type CardGenerationResponse = z.infer<typeof CardGenerationResponseSchema>;
+
+export const ScenarioSizeSchema = z.enum(['small', 'medium', 'large']);
+export type ScenarioSize = z.infer<typeof ScenarioSizeSchema>;
+export const ScenarioGenerationRequestSchema = z.strictObject({
+  prompt: CardPromptSchema, size: ScenarioSizeSchema.default('medium'),
+  boundaries: z.array(z.string().trim().min(1).max(500)).max(30).default([]),
+});
+export type ScenarioGenerationRequest = z.infer<typeof ScenarioGenerationRequestSchema>;
+const draftList = (max: number, count: number) => z.array(z.string().max(max)).max(count).default([]);
+export const ScenarioDraftNpcSchema = z.object({
+  name: cardText(80), role: cardText(160), appearance: cardText(1000), locationKey: cardText(40),
+  presence: z.enum(['present', 'offstage']).default('offstage'),
+  communicationChannel: z.string().max(160).nullable().default(null), hiddenIdentity: z.string().max(160).nullable().default(null),
+  aliases: draftList(80, 10), personality: draftList(500, 10), limits: draftList(500, 10),
+  dialogueExamples: draftList(1000, 10), secrets: draftList(2000, 10),
+  motivation: cardText(1000), goal: cardText(1000), mood: cardText(160),
+  knowledge: z.array(z.object({ statement: cardText(6000), category: z.enum(['fact', 'belief', 'claim']).default('fact') })).max(30).default([]),
+  partyStance: z.enum(['hostile', 'wary', 'neutral', 'friendly', 'trusting']).nullable().default(null),
+  partyReason: cardText(6000),
+});
+export type ScenarioDraftNpc = z.infer<typeof ScenarioDraftNpcSchema>;
+export const ScenarioDraftSchema = z.object({
+  title: cardText(160), premise: cardText(4000), genre: cardText(160), tone: cardText(500), pictureStyle: cardText(300), directorNotes: cardText(12000),
+  playerHooks: draftList(1000, 20), objectives: draftList(1000, 20), discoveries: draftList(2000, 20), opportunities: draftList(2000, 20),
+  suggestedBoundaries: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
+  locations: z.array(z.object({ key: z.string().trim().min(1).max(40), title: cardText(160), description: cardText(4000) })).min(1).max(30),
+  openingScene: z.object({ title: cardText(160), description: cardText(6000), locationKey: cardText(40) }),
+  npcs: z.array(ScenarioDraftNpcSchema).max(20).default([]),
+  tracks: z.array(z.object({
+    label: cardText(120), kind: z.enum(['progress', 'danger', 'countdown']), max: z.number().int().min(1).max(8),
+    visibility: VisibilitySchema.default('public'), ticksEachActionRound: z.boolean().default(false), completionText: cardText(2000),
+  })).max(20).default([]),
+  facts: z.array(z.object({ text: cardText(6000), visibility: VisibilitySchema.default('public') })).max(50).default([]),
+});
+export type ScenarioDraft = z.infer<typeof ScenarioDraftSchema>;
+const jobSuggestedBoundaries = z.array(z.string().trim().min(1).max(500)).max(10);
+export const ScenarioDraftJobSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('running'), jobId: IdSchema, size: ScenarioSizeSchema, startedAt: z.string().datetime(), deadlineAt: z.string().datetime() }),
+  z.strictObject({
+    status: z.literal('succeeded'), jobId: IdSchema, definition: ScenarioDefinitionSchema,
+    adjustments: z.array(z.string().max(300)).max(40), warnings: z.array(z.string().max(300)).max(40), suggestedBoundaries: jobSuggestedBoundaries,
+  }),
+  z.strictObject({ status: z.literal('failed'), jobId: IdSchema, code: z.enum(['generation_timeout', 'generation_failed']), message: z.string().max(300) }),
+]);
+export type ScenarioDraftJob = z.infer<typeof ScenarioDraftJobSchema>;

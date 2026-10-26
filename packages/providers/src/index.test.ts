@@ -384,6 +384,7 @@ describe('field generation', () => {
     expect(body.system).toContain('untrusted creative guidance');
     expect(body.system).toContain('Pronouns');
     expect(body.system).toContain('Do not reveal hidden identities or secrets');
+    expect(body.system).toContain('Never put a double quote character inside a string value.');
     expect(body.system).not.toContain(input.instructions);
     expect(body.system).not.toContain('PRIVATE-SECRET');
   });

@@ -4,7 +4,7 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import {
   CharacterCardDefinitionSchema, CharacterSchema, NpcSchema, ScenarioDefinitionSchema, SessionStateSchema, SaveCharacterTemplateSchema, SaveScenarioSchema,
-  type CharacterCardDefinition, type ScenarioDefinition, type SessionState, type TemplateRef,
+  type CharacterCardDefinition, type ScenarioDefinition, type SeatChoice, type SessionState, type TemplateRef,
 } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { transaction } from './database';
@@ -59,10 +59,19 @@ export async function ownedVersion<T extends ScenarioDefinition | CharacterCardD
 }
 
 
-export async function materializeSession(client: PoolClient, ownerId: string, sessionId: string, scenarioRef: TemplateRef, characterRefs: TemplateRef[]) {
+export async function materializeSession(client: PoolClient, ownerId: string, sessionId: string, scenarioRef: TemplateRef, seats: SeatChoice[]) {
   const scenario = (await ownedVersion<ScenarioDefinition>(client, ownerId, 'scenarios', scenarioRef)).definition;
-  const definitions: CharacterCardDefinition[] = [];
-  for (const ref of characterRefs) definitions.push((await ownedVersion<CharacterCardDefinition>(client, ownerId, 'characters', ref)).definition);
+  const definitions: (CharacterCardDefinition | null)[] = [];
+  const characterRefs: (TemplateRef | null)[] = [];
+  for (const seat of seats) {
+    if ('templateId' in seat) {
+      definitions.push((await ownedVersion<CharacterCardDefinition>(client, ownerId, 'characters', seat)).definition);
+      characterRefs.push(seat);
+    } else {
+      definitions.push(null);
+      characterRefs.push(null);
+    }
+  }
   const ids = new Map<string, string>();
   const remap = (id: string) => {
     if (!ids.has(id)) ids.set(id, randomUUID());

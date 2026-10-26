@@ -285,4 +285,47 @@ suite('custom session casting and approval', () => {
     expect((await command({ type: 'set_boundaries', expectedStateRevision: state.session.stateRevision, boundaries: [] })).statusCode).toBe(409);
     await refresh(); expect(state.setup!.started).toBe(true);
   });
+
+  async function createSeats(seats: unknown[]) {
+    const creation = await request('/api/sessions', { commandId: crypto.randomUUID(), scenario: scenarioRef, characters: seats });
+    expect(creation.statusCode, creation.body).toBe(200);
+    const id = creation.json().sessionId as string;
+    const credentials: string[] = [];
+    for (const invite of creation.json().invites) {
+      if (invite.role !== 'player') continue;
+      credentials.push(cookie((await request('/api/auth/redeem', { token: invite.token }, '')).headers));
+    }
+    sessionId = id;
+    await refresh();
+    return credentials;
+  }
+
+  it('creates an empty seat for a player-written choice that must be written, submitted and approved before the show starts', async () => {
+    players = await createSeats([{ playerWritten: true }, characterRefs[0]]);
+    expect(state.characterDetails).toHaveLength(2);
+    const seat = state.characterDetails[0]!;
+    expect(seat.displayName).toBe('Seat 1');
+    expect(seat.draft).toBeNull();
+    expect(seat.templateRef).toBeNull();
+    expect(seat.approved).toBe(false);
+    expect(state.characterDetails[1]!.templateRef).toEqual(characterRefs[0]);
+    expect((await command({ type: 'approve_character', characterId: seat.id, expectedCharacterRevision: seat.cardRevision })).statusCode).toBe(409);
+    expect((await command({ type: 'start_session', expectedStateRevision: state.session.stateRevision })).statusCode).toBe(409);
+    await succeed({ type: 'save_character', expectedCharacterRevision: seat.cardRevision, card: { ...starter.characters[0]!, displayName: 'Written at the table' } }, players[0]);
+    const written = state.characterDetails[0]!;
+    expect(written.draft).not.toBeNull();
+    await succeed({ type: 'approve_character', characterId: written.id, expectedCharacterRevision: written.cardRevision });
+    expect(state.characterDetails[0]!.approved).toBe(true);
+  });
+
+  it('lets a show use only player-written seats without any saved cards and stores null snapshots for them', async () => {
+    players = await createSeats([{ playerWritten: true }, { playerWritten: true }]);
+    expect(players).toHaveLength(2);
+    expect(state.characterDetails.every((item) => item.draft === null && item.templateRef === null)).toBe(true);
+    const pool = createPool(databaseUrl!);
+    try {
+      const row = (await pool.query('SELECT character_snapshots FROM sessions WHERE id=$1', [sessionId])).rows[0];
+      expect(row.character_snapshots).toEqual([{ ref: null, definition: null }, { ref: null, definition: null }]);
+    } finally { await pool.end(); }
+  });
 });

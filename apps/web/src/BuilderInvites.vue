@@ -79,7 +79,7 @@ async function revoke(builder: CharacterBuilderSummary) {
   <details class="panel builder-invites" @toggle="toggle">
     <summary>Invite players to build characters</summary>
     <div v-if="opened" class="builder-content">
-      <p>Send each player their own private link before creating a show. They can save an unfinished draft and submit one reusable card to your library. Links expire after 30 days.</p>
+      <p>Use a private character link when a player wants to write their card days before the show. The link lasts 30 days, and the player can save an unfinished draft and submit one card to your library. A player who writes on show day needs no link. Choose Player writes their own character for their seat when you create a custom show.</p>
       <ErrorNotice v-if="error" class="builder-error" :message="error" @dismiss="error = ''" />
       <fieldset :disabled="locked">
         <label>Player name or label<input v-model="label" data-testid="builder-label" maxlength="80" :aria-describedby="helpId('label')"></label>

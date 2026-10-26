@@ -5,9 +5,10 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { MAX_NATIVE_BYTES, NpcDefinitionSchema, ScenarioDefinitionSchema } from '@rpg/contracts';
 import Library from './Library.vue';
 import CharacterForm from './CharacterForm.vue';
+import ScenarioGenerator from './ScenarioGenerator.vue';
 import { characterFieldContext, npcFieldContext } from './field-context';
 
-const transport = vi.hoisted(() => ({ library: vi.fn(), starter: vi.fn(), saveScenario: vi.fn(), saveCharacterTemplate: vi.fn(), createCustom: vi.fn(), generateField: vi.fn() }));
+const transport = vi.hoisted(() => ({ library: vi.fn(), starter: vi.fn(), saveScenario: vi.fn(), saveCharacterTemplate: vi.fn(), createCustom: vi.fn(), generateField: vi.fn(), generateCard: vi.fn(), startScenarioDraft: vi.fn(), scenarioDraft: vi.fn(), createLibraryPortrait: vi.fn() }));
 vi.mock('./api', () => ({ api: transport }));
 
 const card = { schemaVersion: 1, displayName: 'Aster', pronouns: 'they/them', appearance: 'A silver coat.', personality: 'Patient.', backstory: 'A former courier.', traits: { force: 0, finesse: 2, wits: 1, presence: 1 }, specialty: 'Navigation', flaw: 'Distrustful', possessions: ['Map', 'Compass', 'Coat'], connection: 'Owes the crew a favor.', secret: 'The map is a forgery.', extensions: {} };
@@ -25,12 +26,16 @@ async function generate(wrapper: ReturnType<typeof mount>, field: string, seed: 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
   window.history.replaceState({}, '', `/library?identity=${'a'.repeat(32)}`);
   transport.library.mockResolvedValue({ scenarios: [{ id: 'scenario-one', version: 2, definition: scenario }], characters: [{ id: 'card-one', version: 1, definition: card }] });
   transport.starter.mockResolvedValue({ scenario, characters: [card] });
   transport.saveScenario.mockResolvedValue({ id: 'scenario-one', version: 3, definition: scenario });
   transport.saveCharacterTemplate.mockResolvedValue({ id: 'card-new', version: 1, definition: card });
   transport.generateField.mockReset().mockResolvedValue({ text: 'A suggested detail.' });
+  transport.generateCard.mockReset();
+  transport.startScenarioDraft.mockReset();
+  transport.scenarioDraft.mockReset();
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -544,6 +549,8 @@ describe('native scenario and character library', () => {
     transport.createCustom.mockResolvedValue({ sessionId: 'custom-show', invites: [] });
     const wrapper = mount(Library);
     await flushPromises();
+    await wrapper.get('[data-testid="show-seat-0"]').setValue('card-one:1');
+    await wrapper.get('[data-testid="show-seat-1"]').setValue('card-one:1');
     await wrapper.get('[data-testid="edit-character-card-one"]').trigger('click');
     await wrapper.get('[data-testid="card-name"]').setValue('Aster Vale');
     await wrapper.get('[data-testid="save-character"]').trigger('click');
@@ -553,6 +560,68 @@ describe('native scenario and character library', () => {
     await wrapper.get('[data-testid="create-custom"]').trigger('click');
     await flushPromises();
     expect(transport.createCustom).toHaveBeenCalledWith(expect.any(String), expect.anything(), [{ templateId: 'card-one', version: 2 }, { templateId: 'card-one', version: 2 }]);
+    wrapper.unmount();
+  });
+
+  it('defaults seats to player-written with that option first', async () => {
+    const wrapper = mount(Library);
+    await flushPromises();
+    for (const index of [0, 1]) {
+      const select = wrapper.get(`[data-testid="show-seat-${index}"]`);
+      expect((select.element as HTMLSelectElement).value).toBe('player');
+      const first = select.findAll('option')[0];
+      expect(first.text()).toBe('Player writes their own character');
+      expect(first.attributes('value')).toBe('player');
+    }
+    expect(wrapper.text()).toContain('Choose Player writes their own character to let the player write it in Cast & lobby, or pick a saved card. Each seat gets its own copy to change.');
+    wrapper.unmount();
+  });
+
+  it('creates player-written seats even with no saved cards', async () => {
+    transport.library.mockResolvedValueOnce({ scenarios: [{ id: 'scenario-one', version: 2, definition: { title: 'S', premise: 'P' } }], characters: [] });
+    transport.createCustom.mockResolvedValue({ sessionId: 'custom-show', invites: [] });
+    const wrapper = mount(Library);
+    await flushPromises();
+    await wrapper.get('[data-testid="show-title"]').setValue('Show');
+    await wrapper.get('[data-testid="show-scenario"]').setValue('scenario-one:2');
+    expect(wrapper.get('[data-testid="create-custom"]').attributes('disabled')).toBeUndefined();
+    await wrapper.get('[data-testid="create-custom"]').trigger('click');
+    await flushPromises();
+    expect(transport.createCustom).toHaveBeenCalledWith('Show', { templateId: 'scenario-one', version: 2 }, [{ playerWritten: true }, { playerWritten: true }]);
+    expect(wrapper.text()).toContain('In Cast & lobby, each player writes or checks their card and reads the boundaries. You approve every card before you start.');
+    wrapper.unmount();
+  });
+
+  it('mixes a player seat with a saved card and leaves player seats alone when a card is saved', async () => {
+    transport.saveCharacterTemplate.mockResolvedValue({ id: 'card-one', version: 2, definition: { ...card, displayName: 'Aster Vale' } });
+    transport.createCustom.mockResolvedValue({ sessionId: 'custom-show', invites: [] });
+    const wrapper = mount(Library);
+    await flushPromises();
+    await wrapper.get('[data-testid="show-title"]').setValue('Show');
+    await wrapper.get('[data-testid="show-scenario"]').setValue('scenario-one:2');
+    await wrapper.get('[data-testid="show-seat-1"]').setValue('card-one:1');
+    await wrapper.get('[data-testid="edit-character-card-one"]').trigger('click');
+    await wrapper.get('[data-testid="save-character"]').trigger('click');
+    await flushPromises();
+    expect((wrapper.get('[data-testid="show-seat-0"]').element as HTMLSelectElement).value).toBe('player');
+    expect((wrapper.get('[data-testid="show-seat-1"]').element as HTMLSelectElement).value).toBe('card-one:2');
+    await wrapper.get('[data-testid="create-custom"]').trigger('click');
+    await flushPromises();
+    expect(transport.createCustom).toHaveBeenCalledWith('Show', { templateId: 'scenario-one', version: 2 }, [{ playerWritten: true }, { templateId: 'card-one', version: 2 }]);
+    wrapper.unmount();
+  });
+
+  it('starts a new character with an empty name and three empty possessions', async () => {
+    transport.saveCharacterTemplate.mockResolvedValue({ id: 'new', version: 1, definition: card });
+    const wrapper = mount(Library);
+    await flushPromises();
+    const button = wrapper.findAll('button').find(b => b.text() === 'New character');
+    expect(button).toBeTruthy();
+    await button!.trigger('click');
+    expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('');
+    const possessions = wrapper.findAll('input[maxlength="160"]').filter(input => input.element.closest('label')?.textContent?.startsWith('Possession'));
+    expect(possessions).toHaveLength(3);
+    expect(possessions.map(input => (input.element as HTMLInputElement).value)).toEqual(['', '', '']);
     wrapper.unmount();
   });
 
@@ -570,5 +639,228 @@ describe('native scenario and character library', () => {
     expect(wrapper.get('[aria-label="Player 1 invitation"]').attributes('value')).toContain('/join/player-token');
     expect(wrapper.get('[data-testid="custom-lobby-link"]').attributes('href')).toBe(`/sessions/custom-show/lobby?identity=${'a'.repeat(32)}`);
     wrapper.unmount();
+  });
+  describe('whole-card generation', () => {
+    const generated = (pronounsSuggested: boolean) => ({ card: { ...card, displayName: 'Generated Wren', pronouns: 'she/her', possessions: ['A lantern'] }, notes: [], pronounsSuggested });
+    async function runCard(wrapper: ReturnType<typeof mount>) {
+      await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+      await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A brave lighthouse keeper');
+      await wrapper.get('[data-testid="card-generator-generate"]').trigger('click');
+      await flushPromises();
+    }
+    const open = async () => { const wrapper = mount(Library); await flushPromises(); await wrapper.get('[data-testid="edit-character-card-one"]').trigger('click'); return wrapper; };
+
+    it.each([false, true])('sends the whole-card request %s a chosen premise', async withPremise => {
+      transport.generateCard.mockResolvedValue(generated(false));
+      const wrapper = await open();
+      if (withPremise) await wrapper.get('[data-testid="character-premise-source"]').setValue('scenario-one:2');
+      await runCard(wrapper);
+      const sent = transport.generateCard.mock.calls[0]![0];
+      expect(sent).toEqual({ prompt: 'A brave lighthouse keeper', keepFilled: true, current: characterFieldContext(card as never), ...(withPremise ? { premise: scenario.premise } : {}) });
+      expect('premise' in sent).toBe(withPremise);
+      expect(wrapper.text().includes('The premise of the scenario you picked is sent too.')).toBe(withPremise);
+      wrapper.unmount();
+    });
+
+    it('fills the form without saving and blocks saving while suggested pronouns are pending', async () => {
+      transport.generateCard.mockResolvedValue(generated(true));
+      const wrapper = await open();
+      await runCard(wrapper);
+      await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+      await flushPromises();
+      expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('Generated Wren');
+      expect(transport.saveCharacterTemplate).not.toHaveBeenCalled();
+      const save = wrapper.get('[data-testid="save-character"]');
+      expect(save.attributes('disabled')).toBeDefined();
+      expect(wrapper.get('[data-testid="pronouns-pending-notice"]').text()).toBe('Check the pronouns the AI suggested first. Press Keep these pronouns, or change the Pronouns box.');
+      await wrapper.get('[data-testid="keep-suggested-pronouns"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-character"]').attributes('disabled')).toBeUndefined();
+      expect(transport.saveCharacterTemplate).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it('clears the pending state when another card is opened', async () => {
+      transport.generateCard.mockResolvedValue(generated(true));
+      const wrapper = await open();
+      await runCard(wrapper);
+      await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(true);
+      await wrapper.get('[data-testid="edit-character-card-one"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-character"]').attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+  });
+  describe('whole-scenario generation', () => {
+    const T0 = new Date('2026-10-24T12:00:00.000Z').getTime();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const runningJob = { status: 'running', jobId: 'job-1', size: 'medium', startedAt: iso(T0), deadlineAt: iso(T0 + 240_000) };
+    const draft = { ...scenario, title: 'The Drowned Bell', boundaries: [] };
+    const doneJob = (suggestedBoundaries: string[]) => ({ status: 'succeeded', jobId: 'job-1', definition: draft, adjustments: [], warnings: [], suggestedBoundaries });
+    const sel = (name: string) => `[data-testid="scenario-generator-${name}"]`;
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(T0); });
+    afterEach(() => { vi.useRealTimers(); });
+    async function tick(ms: number) { await vi.advanceTimersByTimeAsync(ms); await flushPromises(); }
+    async function run(wrapper: ReturnType<typeof mount>, suggested: string[]) {
+      transport.startScenarioDraft.mockResolvedValue(runningJob);
+      transport.scenarioDraft.mockResolvedValue(doneJob(suggested));
+      await wrapper.get(sel('open')).trigger('click');
+      await wrapper.get(sel('prompt')).setValue('A drowned bell tower');
+      await wrapper.get(sel('size')).setValue('large');
+      await wrapper.get(sel('generate')).trigger('click');
+      await flushPromises();
+      await tick(2000);
+    }
+    const mountLibrary = async () => { const wrapper = mount(Library); await flushPromises(); return wrapper; };
+
+    it('sends the prompt, size and current boundaries to the start call', async () => {
+      const wrapper = await mountLibrary();
+      expect(wrapper.get(sel('open')).text()).toBe('Create the whole scenario with AI');
+      await wrapper.get('[data-testid="native-json"]').setValue(JSON.stringify(scenario));
+      await wrapper.get('[data-testid="import-json"]').trigger('click');
+      await flushPromises();
+      await run(wrapper, []);
+      expect(transport.startScenarioDraft).toHaveBeenCalledTimes(1);
+      expect(transport.startScenarioDraft).toHaveBeenCalledWith({ prompt: 'A drowned bell tower', size: 'large', boundaries: ['No harm to children.'] });
+      wrapper.unmount();
+    });
+
+    it('loads the draft as a new unsaved template without saving', async () => {
+      const wrapper = await mountLibrary();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      expect(wrapper.text()).toContain('Editing version 2');
+      await wrapper.get('[data-testid="scenario-title"]').setValue('Edited saved scenario');
+      await run(wrapper, []);
+      expect(wrapper.get(sel('apply')).text()).toBe('Replace the editor with this draft');
+      await wrapper.get(sel('apply')).trigger('click');
+      await flushPromises();
+      expect((wrapper.get('[data-testid="scenario-title"]').element as HTMLInputElement).value).toBe('The Drowned Bell');
+      expect(wrapper.text()).toContain('New template');
+      expect(wrapper.text()).not.toContain('Editing version');
+      expect(wrapper.text()).toContain('Loaded the AI draft as a new unsaved scenario. Check every field, then press Save scenario version.');
+      expect(transport.saveScenario).not.toHaveBeenCalled();
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click');
+      await flushPromises();
+      const sent = transport.saveScenario.mock.calls[0]![0];
+      expect(sent.expectedVersion).toBe(0);
+      expect('templateId' in sent).toBe(false);
+      expect(sent.definition.title).toBe('The Drowned Bell');
+      wrapper.unmount();
+    });
+
+    it('offers a plain load in a fresh editor and a replace warning after edits', async () => {
+      const fresh = await mountLibrary();
+      await run(fresh, []);
+      expect(fresh.get(sel('apply')).text()).toBe('Load into the editor');
+      expect(fresh.text()).not.toContain('This replaces your unsaved changes in the editor.');
+      fresh.unmount();
+      const edited = await mountLibrary();
+      await edited.get('[data-testid="scenario-title"]').setValue('My unsaved scenario');
+      await run(edited, []);
+      expect(edited.get(sel('apply')).text()).toBe('Replace the editor with this draft');
+      expect(edited.text()).toContain('This replaces your unsaved changes in the editor.');
+      edited.unmount();
+    });
+
+    it('treats a saved scenario as unchanged until it is edited, and again after saving', async () => {
+      transport.saveScenario.mockResolvedValue({ id: 'scenario-one', version: 3, definition: { ...scenario, title: 'Renamed' } });
+      const wrapper = await mountLibrary();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      await run(wrapper, []);
+      expect(wrapper.get(sel('apply')).text()).toBe('Load into the editor');
+      await wrapper.get('[data-testid="scenario-title"]').setValue('Renamed');
+      await flushPromises();
+      expect(wrapper.get(sel('apply')).text()).toBe('Replace the editor with this draft');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.get(sel('apply')).text()).toBe('Load into the editor');
+      wrapper.unmount();
+    });
+
+    it('blocks saving while suggested boundaries are unconfirmed and clears on keep', async () => {
+      const wrapper = await mountLibrary();
+      await run(wrapper, ['Keep serious injuries off screen.']);
+      await wrapper.get(sel('apply')).trigger('click');
+      await flushPromises();
+      const notice = 'The AI suggested some content boundaries. Read them, change or remove any, then press Keep these boundaries.';
+      expect(wrapper.get('[data-testid="suggested-boundaries-notice"]').text()).toBe(notice);
+      expect(wrapper.get('[data-testid="suggested-boundaries-save-notice"]').text()).toBe(notice);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+      await wrapper.get('[data-testid="keep-suggested-boundaries"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="suggested-boundaries-save-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+      expect(transport.saveScenario).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it('also unblocks saving when the boundaries are edited or another scenario is opened', async () => {
+      const wrapper = await mountLibrary();
+      await run(wrapper, ['Keep serious injuries off screen.']);
+      await wrapper.get(sel('apply')).trigger('click');
+      await flushPromises();
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeDefined();
+      const boundaries = wrapper.findAll('textarea').find(area => area.attributes('aria-describedby') && area.element.closest('.generated-field')?.textContent?.includes('Content boundaries'))!;
+      await boundaries.setValue('Keep serious injuries off screen.\nNo spiders.');
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it('clears the boundaries notice when scenario JSON is imported', async () => {
+      const wrapper = await mountLibrary();
+      await run(wrapper, ['Keep serious injuries off screen.']);
+      await wrapper.get(sel('apply')).trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(true);
+      await wrapper.get('[data-testid="native-json"]').setValue(JSON.stringify({ ...scenario, boundaries: [] }));
+      await wrapper.get('[data-testid="import-json"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="suggested-boundaries-save-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it('clears the block when another scenario is opened', async () => {
+      const wrapper = await mountLibrary();
+      await run(wrapper, ['Keep serious injuries off screen.']);
+      await wrapper.get(sel('apply')).trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(true);
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      expect(wrapper.find('[data-testid="suggested-boundaries-notice"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="save-scenario"]').attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it('keeps the panel and its polling when the character editor is shown and hidden again', async () => {
+      const wrapper = await mountLibrary();
+      transport.startScenarioDraft.mockResolvedValue(runningJob);
+      transport.scenarioDraft.mockResolvedValue(runningJob);
+      await wrapper.get(sel('open')).trigger('click');
+      await wrapper.get(sel('prompt')).setValue('A drowned bell tower');
+      await wrapper.get(sel('generate')).trigger('click');
+      await flushPromises();
+      await wrapper.get('[data-testid="edit-character-card-one"]').trigger('click');
+      expect((wrapper.findComponent({ name: 'ScenarioGenerator' }).element as HTMLElement).style.display).toBe('none');
+      await tick(2000);
+      expect(transport.scenarioDraft).toHaveBeenCalledTimes(1);
+      transport.scenarioDraft.mockResolvedValue(doneJob([]));
+      await tick(2000);
+      expect(transport.scenarioDraft).toHaveBeenCalledTimes(2);
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      expect((wrapper.findComponent({ name: 'ScenarioGenerator' }).element as HTMLElement).style.display).not.toBe('none');
+      expect((wrapper.get(sel('prompt')).element as HTMLTextAreaElement).value).toBe('A drowned bell tower');
+      expect(wrapper.find(sel('apply')).exists()).toBe(true);
+      wrapper.unmount();
+    });
   });
 });

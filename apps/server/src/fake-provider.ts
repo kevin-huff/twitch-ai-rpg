@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
-  FIELD_GENERATION_FIELDS, FieldGenerationRequestSchema, validateFieldGenerationText,
+  FIELD_GENERATION_FIELDS, FieldGenerationRequestSchema, CardGenerationInputSchema, ScenarioGenerationRequestSchema, allowsPremise,
+  type CardDraft, type CardGenerationInput, type ScenarioDraft, type ScenarioGenerationRequest, type FieldGenerationField, validateFieldGenerationText,
   type AiProvider, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
   type FieldGenerationRequest, type FieldGenerationResponse, type FieldGenerationCharacterContext,
 } from '@rpg/contracts';
@@ -48,6 +49,69 @@ export class FakeAiProvider implements AiProvider {
         .map(line => expand(withInspiration(line), definition.maxItemChars!)).join('\n')
       : expand(withInspiration(source), definition.maxChars);
     return { text: validateFieldGenerationText(field, text) };
+  }
+
+  async generateCard(input: CardGenerationInput): Promise<CardDraft> {
+    const { prompt, current, premise, instructions } = CardGenerationInputSchema.parse(input);
+    const write = async (field: FieldGenerationField) => (await this.generateField({
+      field, seed: prompt, characterContext: current ?? { kind: 'character' },
+      ...(instructions ? { instructions } : {}),
+      ...(premise && allowsPremise(field) ? { premise } : {}),
+    })).text;
+    const pronouns = /\b(she|he|they|xe|ze|it)\/(her|him|them|xem|zir|its|she|he|they)\b/i.exec(prompt)?.[0] ?? 'they/them';
+    const keywords: [CardDraft['strongestTrait'], RegExp][] = [
+      ['force', /strong|fight|soldier|brawl|tough|athlet/i], ['finesse', /sneak|thief|nimble|acrobat|quick|stealth/i],
+      ['wits', /clever|scholar|detective|engineer|smart|study/i], ['presence', /charm|singer|actor|talk|persuad|perform/i],
+    ];
+    const strongestTrait = keywords.find(([, pattern]) => pattern.test(prompt))?.[0] ?? 'wits';
+    return {
+      displayName: await write('character.displayName'), pronouns,
+      appearance: await write('character.appearance'), personality: await write('character.personality'),
+      backstory: await write('character.backstory'), specialty: await write('character.specialty'),
+      flaw: await write('character.flaw'), connection: await write('character.connection'),
+      secret: await write('character.secret'), possessions: [await write('character.possession')],
+      strongestTrait, weakestTrait: strongestTrait === 'force' ? 'wits' : 'force',
+    };
+  }
+
+  async generateScenario(input: ScenarioGenerationRequest, _options?: { deadlineAt?: number }): Promise<ScenarioDraft> {
+    const { prompt } = ScenarioGenerationRequestSchema.parse(input);
+    const write = async (field: FieldGenerationField) => (await this.generateField({ field, seed: prompt })).text;
+    return {
+      title: await write('scenario.title'), premise: await write('scenario.premise'),
+      genre: 'Mystery', tone: 'Tense but playful', pictureStyle: 'Ink and watercolor storybook art, warm lantern light', directorNotes: 'Keep the pace brisk and let the players lead.',
+      playerHooks: ['A stranger asks the party for a favor.'], objectives: ['Find out who is behind the trouble.'],
+      discoveries: ['A torn note points to the second place.'], opportunities: ['A quiet moment to talk to the guide.'],
+      suggestedBoundaries: ['Keep serious injuries off screen.'],
+      locations: [
+        { key: 'opening', title: 'The Meeting Hall', description: 'A busy hall where the story begins.' },
+        { key: 'second', title: 'The Old Dock', description: 'A windy dock with creaking boats.' },
+        { key: 'third', title: 'The Lookout', description: 'A high point with a view of the whole town.' },
+      ],
+      openingScene: { title: 'A tense start', description: 'Everyone gathers as the trouble becomes clear.', locationKey: 'opening' },
+      npcs: [
+        {
+          name: 'Ines Park', role: 'Local guide', appearance: 'A tall guide in a faded green coat.', locationKey: 'opening', presence: 'present',
+          communicationChannel: null, hiddenIdentity: null, aliases: [], personality: ['Calm and watchful'], limits: [], dialogueExamples: [],
+          secrets: ['Ines saw who left the note.'], motivation: 'Keep the town safe.', goal: 'Guide the party to the truth.', mood: 'steady',
+          knowledge: [{ statement: 'The note was left before dawn.', category: 'fact' }], partyStance: null, partyReason: '',
+        },
+        {
+          name: 'Tomas Reed', role: 'Dock worker', appearance: 'A broad man with rope-burned hands.', locationKey: 'second', presence: 'offstage',
+          communicationChannel: 'radio', hiddenIdentity: null, aliases: [], personality: [], limits: [], dialogueExamples: [], secrets: [],
+          motivation: 'Get paid and stay out of trouble.', goal: '', mood: 'nervous', knowledge: [], partyStance: null, partyReason: '',
+        },
+      ],
+      tracks: [
+        { label: 'Find the truth', kind: 'progress', max: 6, visibility: 'public', ticksEachActionRound: false, completionText: 'The truth comes out.' },
+        { label: 'Time runs out', kind: 'countdown', max: 4, visibility: 'public', ticksEachActionRound: true, completionText: 'The trouble comes to a head.' },
+      ],
+      facts: [
+        { text: 'The town hall bell rang at midnight.', visibility: 'public' },
+        { text: 'The dock closes at dusk.', visibility: 'public' },
+        { text: 'The note was written by someone inside the hall.', visibility: 'director' },
+      ],
+    };
   }
 
   async plan(context: ProviderContext): Promise<PlanResult> {

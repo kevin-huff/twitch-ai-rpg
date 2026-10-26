@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils';
-import { defineComponent, reactive } from 'vue';
+import { defineComponent, reactive, ref } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CharacterCardDefinitionSchema, FieldGenerationRequestSchema } from '@rpg/contracts';
-import type { CharacterCardDefinition } from '@rpg/contracts';
+import type { CardGenerationResponse, CharacterCardDefinition } from '@rpg/contracts';
+import CardGenerator from './CardGenerator.vue';
 import CharacterForm from './CharacterForm.vue';
 import { characterFieldContext } from './field-context';
 import { api } from './api';
@@ -133,6 +134,120 @@ describe('character field guidance', () => {
     const descriptions = wrapper.findAll('input, textarea, select').map(control => control.attributes('aria-describedby'));
     expect(descriptions.every(Boolean)).toBe(true);
     expect(new Set(descriptions).size).toBe(descriptions.length);
+    wrapper.unmount();
+  });
+});
+
+describe('whole-card generation in the form', () => {
+  const generated: CharacterCardDefinition = { ...card, displayName: 'Rook', pronouns: 'she/her', appearance: 'Tall and scarred.', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, possessions: ['Knife'], extensions: { fromAi: true } };
+  const response = (pronounsSuggested: boolean): CardGenerationResponse => ({ card: generated, notes: [], pronounsSuggested });
+  const harness = (generateCard: ReturnType<typeof vi.fn> | undefined, extra: Record<string, unknown> = {}) => defineComponent({
+    components: { CharacterForm },
+    setup: () => ({ draft: ref<CharacterCardDefinition>({ ...structuredClone(card), extensions: { mine: 1 } }), pending: ref(false), generateCard, extra }),
+    template: '<CharacterForm v-model="draft" v-model:pronouns-pending="pending" :generation-enabled="true" :generate-card="generateCard" card-generation-note="Note here." v-bind="extra" />',
+  });
+  async function generate(wrapper: ReturnType<typeof mount>) {
+    await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+    await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A tough soldier');
+    await wrapper.get('[data-testid="card-generator-generate"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-testid="card-generator-apply"]').trigger('click');
+    await flushPromises();
+  }
+
+  it('renders the generator only with generation enabled and a generateCard function', () => {
+    const on = mount(harness(vi.fn()));
+    expect(on.findComponent(CardGenerator).exists()).toBe(true);
+    expect(on.findComponent(CardGenerator).props('contextNote')).toBe('Note here.');
+    expect(on.findComponent(CardGenerator).props('contextKey')).toBe('character-form');
+    on.unmount();
+    const none = mount(harness(undefined));
+    expect(none.findComponent(CardGenerator).exists()).toBe(false);
+    none.unmount();
+    const disabledGeneration = mount(harness(vi.fn(), { generationEnabled: false }));
+    expect(disabledGeneration.findComponent(CardGenerator).exists()).toBe(false);
+    disabledGeneration.unmount();
+    const plain = mount(CharacterForm, { props: { modelValue: structuredClone(card), generateCard: vi.fn() } });
+    expect(plain.findComponent(CardGenerator).exists()).toBe(false);
+    plain.unmount();
+  });
+
+  it('keeps exactly twelve field generators and no new button named AI Generate', () => {
+    const wrapper = mount(harness(vi.fn()));
+    expect(wrapper.findAllComponents({ name: 'FieldGenerator' })).toHaveLength(12);
+    expect(wrapper.findAll('button').filter(button => /AI Generate/.test(button.attributes('aria-label') ?? button.text()))).toHaveLength(12);
+    wrapper.unmount();
+  });
+
+  it('passes the current unsaved card as context to a stable generate function', async () => {
+    const generateCard = vi.fn().mockResolvedValue(response(false));
+    const wrapper = mount(harness(generateCard));
+    const generator = wrapper.findComponent(CardGenerator);
+    const stable = generator.props('generate');
+    await wrapper.get('[data-testid="card-secret"]').setValue('Unsaved secret');
+    await wrapper.get('[data-testid="card-name"]').setValue('Unsaved name');
+    await generator.props('generate')({ prompt: 'A soldier', keepFilled: true });
+    expect(generateCard).toHaveBeenCalledOnce();
+    const input = generateCard.mock.calls[0]![0];
+    expect(input).toMatchObject({ prompt: 'A soldier', keepFilled: true, current: { kind: 'character', displayName: 'Unsaved name', secret: 'Unsaved secret' } });
+    await wrapper.get('[data-testid="card-name"]').setValue('Another name');
+    expect(wrapper.findComponent(CardGenerator).props('generate')).toBe(stable);
+    wrapper.unmount();
+  });
+
+  it('applies the generated card, pads possessions to three and keeps the extensions', async () => {
+    const wrapper = mount(harness(vi.fn().mockResolvedValue(response(false))));
+    await generate(wrapper);
+    expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('Rook');
+    expect((wrapper.get('[data-testid="card-appearance"]').element as HTMLTextAreaElement).value).toBe('Tall and scarred.');
+    const draft = (wrapper.vm as unknown as { draft: CharacterCardDefinition }).draft;
+    expect(draft.possessions).toEqual(['Knife', '', '']);
+    expect(draft.extensions).toEqual({ mine: 1 });
+    expect(draft.traits).toEqual(generated.traits);
+    expect(wrapper.find('[data-testid="suggested-pronouns-notice"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows the suggested-pronouns notice right after the Pronouns help and clears it with Keep these pronouns', async () => {
+    const wrapper = mount(harness(vi.fn().mockResolvedValue(response(true))));
+    await generate(wrapper);
+    const vm = wrapper.vm as unknown as { pending: boolean };
+    expect(vm.pending).toBe(true);
+    const notice = wrapper.get('[data-testid="suggested-pronouns-notice"]');
+    expect(notice.text()).toBe('The AI suggested these pronouns. Keep them or change them.');
+    const help = wrapper.get('[data-testid="card-name"]').element.closest('.field-grid')!.querySelectorAll('.field-help')[1]!;
+    expect(help.nextElementSibling).toBe(notice.element.parentElement);
+    expect(wrapper.get('[data-testid="keep-suggested-pronouns"]').text()).toBe('Keep these pronouns');
+    await wrapper.get('[data-testid="keep-suggested-pronouns"]').trigger('click');
+    expect(vm.pending).toBe(false);
+    expect(wrapper.find('[data-testid="suggested-pronouns-notice"]').exists()).toBe(false);
+    expect((wrapper.findAll('input').find(input => input.attributes('maxlength') === '80' && (input.element as HTMLInputElement).value === 'she/her'))).toBeTruthy();
+    wrapper.unmount();
+  });
+
+  it('clears the pending state when the pronouns are changed away from the suggestion', async () => {
+    const wrapper = mount(harness(vi.fn().mockResolvedValue(response(true))));
+    await generate(wrapper);
+    const vm = wrapper.vm as unknown as { pending: boolean };
+    expect(vm.pending).toBe(true);
+    const pronouns = wrapper.get('[data-testid="card-name"]').element.closest('.field-grid')!.querySelectorAll('input')[1]! as HTMLInputElement;
+    pronouns.value = 'xe/xem'; pronouns.dispatchEvent(new Event('input'));
+    await flushPromises();
+    expect(vm.pending).toBe(false);
+    expect(wrapper.find('[data-testid="keep-suggested-pronouns"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('restores the previous card and clears pending on Undo', async () => {
+    const wrapper = mount(harness(vi.fn().mockResolvedValue(response(true))));
+    await generate(wrapper);
+    await wrapper.get('[data-testid="card-generator-undo"]').trigger('click');
+    await flushPromises();
+    const vm = wrapper.vm as unknown as { pending: boolean; draft: CharacterCardDefinition };
+    expect(vm.pending).toBe(false);
+    expect(vm.draft).toEqual({ ...card, extensions: { mine: 1 } });
+    expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('Aster');
+    expect(wrapper.find('[data-testid="suggested-pronouns-notice"]').exists()).toBe(false);
     wrapper.unmount();
   });
 });

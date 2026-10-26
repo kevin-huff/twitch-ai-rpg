@@ -16,6 +16,8 @@ import { activeTokenHashes, findActiveActor, type AccessRouteDeps, type Credenti
 import { FakeAiProvider } from './fake-provider';
 import { materializeSession, registerLibrary } from './library';
 import { registerFieldGeneration } from './field-generation';
+import { registerSeatGeneration } from './seat-generation';
+import { registerScenarioDrafts } from './scenario-drafts';
 import { registerCharacterBuilders } from './character-builder';
 import { registerProducers } from './producers';
 import { registerStreamLinks } from './stream-links';
@@ -33,6 +35,7 @@ export interface AppOptions {
   rollDie?: () => number;
   provider?: AiProvider;
   providerTimeoutMs?: number;
+  scenarioTimeoutMs?: number;
   serveStatic?: boolean;
   speech?: SpeechEngine;
   speechModel?: string;
@@ -173,6 +176,8 @@ export async function buildApp(options: AppOptions) {
   registerStreamLinks(app, accessDeps);
   registerInvites(app, accessDeps);
   registerFieldGeneration(app, { authenticate, provider, timeoutMs: options.providerTimeoutMs });
+  registerSeatGeneration(app, { pool, authenticate, provider, timeoutMs: options.providerTimeoutMs });
+  registerScenarioDrafts(app, { authenticate, provider, scenarioTimeoutMs: options.scenarioTimeoutMs });
   registerAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
   registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
   registerOperations(app, { pool, authenticate, speechConfigured: Boolean(options.speech), model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices });

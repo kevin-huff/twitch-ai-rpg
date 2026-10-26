@@ -27,6 +27,104 @@ describe('authorized session transport', () => {
     expect(window.location.search).toBe(`?identity=${playerIdentity}`);
   });
 
+  describe('card generation calls', () => {
+    const card = { schemaVersion: 1, displayName: 'Avery', pronouns: '', appearance: '', personality: '', backstory: '', traits: { force: 1, finesse: 1, wits: 2, presence: 0 }, specialty: '', flaw: '', connection: '', secret: '', possessions: [], extensions: {} };
+    const good = { card, notes: ['Kept what you already wrote.'], pronounsSuggested: false };
+    const current = { kind: 'character' as const, displayName: 'Avery', secret: 'Private', possessions: ['', '', ''] };
+    const spoof = { instructions: 'x', premise2: 'y', ids: 'z' };
+    const ok = (body: unknown) => { const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => body }); vi.stubGlobal('fetch', fetch); return fetch; };
+    const calls: Array<[string, string, () => Promise<unknown>, unknown]> = [
+      ['generateCard', '/api/authoring/generate-card', () => api.generateCard({ prompt: 'A thief', keepFilled: true, current, premise: 'Storm', ...spoof } as never), { prompt: 'A thief', keepFilled: true, current, premise: 'Storm' }],
+      ['generateBuilderCard', '/api/character-builder/generate-card', () => api.generateBuilderCard({ expectedRevision: 2, prompt: 'A thief', keepFilled: false, current, ...spoof } as never), { expectedRevision: 2, prompt: 'A thief', keepFilled: false, current }],
+      ['generateSeatCard', '/api/sessions/show%2F1/character/generate-card', () => api.generateSeatCard('show/1', { expectedCharacterRevision: 4, prompt: 'A thief', keepFilled: true, current, ...spoof } as never), { expectedCharacterRevision: 4, prompt: 'A thief', keepFilled: true, current }],
+    ];
+    for (const [name, url, run, body] of calls) {
+      it(`${name} posts only schema fields with the selected identity`, async () => {
+        window.history.replaceState({}, '', `/x?identity=${playerIdentity}`);
+        const fetch = ok(good);
+        expect(await run()).toEqual(good);
+        expect(fetch.mock.calls[0][0]).toBe(url);
+        expect(fetch.mock.calls[0][1].method).toBe('POST');
+        expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBe(playerIdentity);
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
+      });
+      it(`${name} rejects a malformed card response`, async () => {
+        ok({ card: { nope: true }, notes: [], pronounsSuggested: false });
+        await expect(run()).rejects.toThrow();
+      });
+      it(`${name} surfaces the server message with its status`, async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({ message: 'Your card changed.' }) }));
+        await expect(run()).rejects.toMatchObject({ message: 'Your card changed.', status: 409 });
+      });
+    }
+
+    it('generateSeatField posts only schema fields to the seat route', async () => {
+      window.history.replaceState({}, '', `/x?identity=${playerIdentity}`);
+      const fetch = ok({ text: 'A backstory' });
+      const input = { expectedCharacterRevision: 1, field: 'character.backstory', seed: '', characterContext: current, usePremise: true };
+      expect(await api.generateSeatField('show/1', { ...input, ...spoof } as never)).toEqual({ text: 'A backstory' });
+      expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/character/generate-field');
+      expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBe(playerIdentity);
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
+    });
+
+    it('refuses invalid bodies before sending a request', async () => {
+      const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+      await expect(api.generateCard({ prompt: '   ', keepFilled: true } as never)).rejects.toThrow();
+      await expect(api.generateBuilderCard({ expectedRevision: -1, prompt: 'x', keepFilled: true, current } as never)).rejects.toThrow();
+      await expect(api.generateSeatCard('s', { expectedCharacterRevision: 0, prompt: 'x', keepFilled: true, current: { kind: 'scenario' } } as never)).rejects.toThrow();
+      expect(() => api.generateSeatField('s', { expectedCharacterRevision: 0, field: 'scenario.title', seed: '', characterContext: current, usePremise: false } as never)).toThrow();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('createCustom sends player-written seats next to template references', async () => {
+      window.history.replaceState({}, '', `/library?identity=${hostIdentity}`);
+      const fetch = ok({});
+      await api.createCustom('Show', { templateId: 's', version: 1 }, [{ playerWritten: true }, { templateId: 'c', version: 2 }]);
+      expect(JSON.parse(fetch.mock.calls[0][1].body).characters).toEqual([{ playerWritten: true }, { templateId: 'c', version: 2 }]);
+    });
+  });
+
+  describe('scenario draft calls', () => {
+    const jobId = 'job-1';
+    const running = { status: 'running', jobId, size: 'medium', startedAt: '2026-10-24T10:00:00.000Z', deadlineAt: '2026-10-24T10:04:00.000Z' };
+    const ok = (body: unknown) => { const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => body }); vi.stubGlobal('fetch', fetch); return fetch; };
+
+    it('starts a draft with the host identity and only the requested fields', async () => {
+      window.history.replaceState({}, '', `/library?identity=${hostIdentity}`);
+      const fetch = ok(running);
+      expect(await api.startScenarioDraft({ prompt: 'A flooded harbor', size: 'small', boundaries: ['No gore'], extra: 'x' } as never)).toEqual(running);
+      expect(fetch.mock.calls[0][0]).toBe('/api/authoring/scenario-drafts');
+      expect(fetch.mock.calls[0][1].method).toBe('POST');
+      expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBe(hostIdentity);
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ prompt: 'A flooded harbor', size: 'small', boundaries: ['No gore'] });
+    });
+
+    it('polls a draft by escaped job id with the host identity', async () => {
+      window.history.replaceState({}, '', `/library?identity=${hostIdentity}`);
+      const fetch = ok(running);
+      expect(await api.scenarioDraft('job/1')).toEqual(running);
+      expect(fetch.mock.calls[0][0]).toBe('/api/authoring/scenario-drafts/job%2F1');
+      expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBe(hostIdentity);
+    });
+
+    it('rejects a malformed job response', async () => {
+      ok({ status: 'running', jobId, size: 'huge' });
+      await expect(api.scenarioDraft(jobId)).rejects.toThrow();
+    });
+
+    it('surfaces a 409 server message with its status', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({ message: 'A scenario draft is still being written. Wait for it to finish.' }) }));
+      await expect(api.startScenarioDraft({ prompt: 'A flooded harbor', size: 'medium', boundaries: [] })).rejects.toMatchObject({ message: 'A scenario draft is still being written. Wait for it to finish.', status: 409 });
+    });
+
+    it('refuses an invalid start body before sending a request', async () => {
+      const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+      await expect(api.startScenarioDraft({ prompt: '   ', size: 'medium', boundaries: [] } as never)).rejects.toThrow();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it('refuses invalid builder generation context before sending a request', async () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
     await expect(async () => api.generateCharacterBuilderField({ expectedRevision: 0, field: 'character.backstory', seed: '', characterContext: { kind: 'character', otherCharacter: 'Private' } } as never)).rejects.toThrow();

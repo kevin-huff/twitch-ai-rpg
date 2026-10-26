@@ -61,6 +61,14 @@ describe('native authoring and lobby contracts', () => {
     for (const count of [2, 6]) expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: Array(count).fill(ref) }).success).toBe(true);
     for (const count of [0, 1, 7]) expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: Array(count).fill(ref) }).success).toBe(false);
     expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref }).success).toBe(false);
+    const mine = { playerWritten: true };
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: [mine, ref, mine] }).success).toBe(true);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: Array(6).fill(mine) }).success).toBe(true);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: [mine, { playerWritten: false }] }).success).toBe(false);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: [mine, { playerWritten: true, extra: 1 }] }).success).toBe(false);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: [mine] }).success).toBe(false);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', scenario: ref, characters: Array(7).fill(mine) }).success).toBe(false);
+    expect(CreateSessionSchema.safeParse({ commandId: 'custom', characters: [mine, mine] }).success).toBe(false);
     expect(CreateSessionSchema.safeParse({ commandId: 'custom', characters: [ref, ref] }).success).toBe(false);
     expect(SaveScenarioSchema.safeParse({ commandId: 'new', expectedVersion: 0, definition: scenario }).success).toBe(true);
     expect(SaveScenarioSchema.safeParse({ commandId: 'new', expectedVersion: 2, definition: scenario }).success).toBe(false);

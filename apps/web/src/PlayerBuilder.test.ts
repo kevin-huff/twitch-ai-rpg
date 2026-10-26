@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PlayerBuilder from './PlayerBuilder.vue';
 import CharacterForm from './CharacterForm.vue';
 import FieldGenerator from './FieldGenerator.vue';
+import CardGenerator from './CardGenerator.vue';
 
-const transport = vi.hoisted(() => ({ accessCharacterBuilder: vi.fn(), characterBuilder: vi.fn(), saveCharacterBuilder: vi.fn(), submitCharacterBuilder: vi.fn(), logoutCharacterBuilder: vi.fn(), generateCharacterBuilderField: vi.fn(), generateField: vi.fn(), library: vi.fn(), sessions: vi.fn() }));
+const transport = vi.hoisted(() => ({ accessCharacterBuilder: vi.fn(), characterBuilder: vi.fn(), saveCharacterBuilder: vi.fn(), submitCharacterBuilder: vi.fn(), logoutCharacterBuilder: vi.fn(), generateCharacterBuilderField: vi.fn(), generateBuilderCard: vi.fn(), createBuilderPortrait: vi.fn(), generateField: vi.fn(), library: vi.fn(), sessions: vi.fn() }));
 vi.mock('./api', () => ({ api: transport }));
 const card = { schemaVersion: 1, displayName: 'Aster', pronouns: 'they/them', appearance: '', personality: '', backstory: '', traits: { force: 0, finesse: 2, wits: 1, presence: 1 }, specialty: '', flaw: '', possessions: [], connection: '', secret: 'Own private words', extensions: {} };
 const snapshot = () => ({ id: 'builder-one', label: 'Alex', instructions: 'Bring an explorer.', revision: 3, draft: structuredClone(card), expiresAt: '2026-11-21T12:00:00.000Z', submittedTemplate: null });
@@ -221,5 +222,58 @@ describe('private character builder', () => {
     expect(window.location.hash).toBe(''); expect(transport.accessCharacterBuilder).not.toHaveBeenCalled();
     expect(transport.characterBuilder).not.toHaveBeenCalled();
     expect(wrapper.get('[role="alert"]').text()).toContain('incomplete'); wrapper.unmount();
+  });
+
+  describe('whole card generation', () => {
+    const response = (pronounsSuggested = false) => ({ card: { ...card, displayName: 'Generated', pronouns: 'she/her' }, notes: [], pronounsSuggested });
+    async function generateWhole(wrapper: ReturnType<typeof mount>) {
+      await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
+      await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A courier');
+      await wrapper.get('[data-testid="card-generator-generate"]').trigger('click'); await flushPromises();
+    }
+    it('sends only the allowed fields and shows the instructions note', async () => {
+      transport.generateBuilderCard.mockResolvedValue(response());
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await generateWhole(wrapper);
+      expect(wrapper.text()).toContain("The director's instructions are sent too.");
+      expect(transport.generateBuilderCard).toHaveBeenCalledTimes(1);
+      const body = transport.generateBuilderCard.mock.calls[0][0];
+      expect(Object.keys(body).sort()).toEqual(['current', 'expectedRevision', 'keepFilled', 'prompt']);
+      expect(body.expectedRevision).toBe(3);
+      expect(body.prompt).toBe('A courier');
+      wrapper.unmount();
+    });
+    it('shows the reload notice on a 409', async () => {
+      transport.generateBuilderCard.mockRejectedValue(Object.assign(new Error('This draft changed. Reload it before generating.'), { status: 409 }));
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await generateWhole(wrapper);
+      expect(wrapper.find('[data-testid="reload-builder-draft"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+    it('blocks submit while pronouns are pending but not save, and keeps the block after saving', async () => {
+      transport.generateBuilderCard.mockResolvedValue(response(true));
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await generateWhole(wrapper);
+      await wrapper.get('[data-testid="card-generator-apply"]').trigger('click'); await flushPromises();
+      const submit = () => wrapper.get('[data-testid="submit-builder-card"]');
+      expect(submit().attributes('disabled')).toBeDefined();
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(true);
+      const saveButton = wrapper.get('[data-testid="save-builder-draft"]');
+      expect(saveButton.attributes('disabled')).toBeUndefined();
+      await saveButton.trigger('click'); await flushPromises();
+      expect(transport.saveCharacterBuilder).toHaveBeenCalledTimes(1);
+      expect(submit().attributes('disabled')).toBeDefined();
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(true);
+      await wrapper.get('[data-testid="keep-suggested-pronouns"]').trigger('click'); await flushPromises();
+      expect(submit().attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+    it('renders no card generator after submit', async () => {
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await wrapper.get('[data-testid="submit-builder-card"]').trigger('click'); await flushPromises();
+      expect(wrapper.findComponent(CardGenerator).exists()).toBe(false);
+      expect(wrapper.find('[data-testid="card-generator-open"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
   });
 });
