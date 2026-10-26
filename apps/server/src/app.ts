@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
@@ -12,10 +12,14 @@ import { createLedgerState } from '@rpg/test-fixtures';
 import { createPool, migrate, transaction } from './database';
 import { AppError, authorize, project, saveState, type Actor } from './repository';
 import { digest, executeCommand, recordEvent } from './commands';
+import { activeTokenHashes, findActiveActor, type AccessRouteDeps, type CredentialRow } from './credentials';
 import { FakeAiProvider } from './fake-provider';
 import { materializeSession, registerLibrary } from './library';
 import { registerFieldGeneration } from './field-generation';
 import { registerCharacterBuilders } from './character-builder';
+import { registerProducers } from './producers';
+import { registerStreamLinks } from './stream-links';
+import { invitationToken as deriveInvitationToken, registerInvites } from './invites';
 import { registerAudio, type SpeechEngine } from './audio';
 import { registerDraftAudio } from './draft-audio';
 import { registerPlayback } from './playback';
@@ -49,9 +53,9 @@ export async function buildApp(options: AppOptions) {
   const provider = options.provider ?? new FakeAiProvider();
   const authenticate = async (request: FastifyRequest, client?: PoolClient): Promise<Actor> => {
     const credential = httpCredential(request).token;
-    const found = credential && await (client ?? pool).query('SELECT actor_id,role,session_id,character_id FROM credentials WHERE token_hash=$1 AND expires_at>clock_timestamp() AND revoked_at IS NULL', [hash(credential)]);
-    if (!found || !found.rowCount) throw new AppError(401, 'unauthorized', 'Sign in or redeem an invitation first.');
-    return found.rows[0];
+    const found = credential ? await findActiveActor(client ?? pool, hash(credential)) : null;
+    if (!found) throw new AppError(401, 'unauthorized', 'Sign in or redeem an invitation first.');
+    return found;
   };
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError) return reply.code(error.status).send({ code: error.code, message: error.message, recoverable: error.status === 409 });
@@ -66,13 +70,13 @@ export async function buildApp(options: AppOptions) {
   });
   app.addHook('onSend', async (_request, reply) => { reply.header('Referrer-Policy', 'no-referrer'); reply.header('X-Content-Type-Options', 'nosniff'); reply.header('Cache-Control', 'no-store'); });
   const tokenBody = z.strictObject({ token: z.string().min(1).max(1024), tab: z.literal(true).optional() });
-  const persistCredential = async (actor: Actor, client: Pick<PoolClient, 'query'> = pool) => {
+  const persistCredential = async (row: CredentialRow, client: Pick<PoolClient, 'query'> = pool, credentialOptions: { expiresAt?: Date } = {}) => {
     const credential = randomBytes(32).toString('base64url');
-    await client.query('INSERT INTO credentials(token_hash,actor_id,role,session_id,character_id,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval \'12 hours\')', [hash(credential), actor.actor_id, actor.role, actor.session_id, actor.character_id]);
+    await client.query('INSERT INTO credentials(token_hash,actor_id,role,session_id,character_id,producer_grant_id,stream_link_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,LEAST(now()+interval \'12 hours\',$8::timestamptz))', [hash(credential), row.actor_id, row.role, row.session_id, row.character_id, row.producer_grant_id ?? null, row.stream_link_id ?? null, credentialOptions.expiresAt ?? null]);
     return credential;
   };
-  const issueCookie = (credential: string, reply: FastifyReply, identityId?: string) => {
-    reply.setCookie(identityCookieName(identityId), credential, { path: '/', httpOnly: true, sameSite: 'strict', secure: options.origin.startsWith('https:'), maxAge: 12 * 3600 });
+  const issueCookie = (credential: string, reply: FastifyReply, identityId?: string, maxAgeSeconds = 12 * 3600) => {
+    reply.setCookie(identityCookieName(identityId), credential, { path: '/', httpOnly: true, sameSite: 'strict', secure: options.origin.startsWith('https:'), maxAge: maxAgeSeconds });
   };
   app.post('/api/auth/host', async (request, reply) => {
     const { token, tab } = tokenBody.parse(request.body);
@@ -100,7 +104,7 @@ export async function buildApp(options: AppOptions) {
     if (selected.token) await pool.query('UPDATE credentials SET revoked_at=now() WHERE token_hash=$1', [hash(selected.token)]);
     reply.clearCookie(selected.name, { path: '/' }); return { ok: true };
   });
-  const invitationToken = (invite: { id: string; session_id: string; role: string; character_id: string | null }) => createHmac('sha256', options.hostToken).update(JSON.stringify(['rpg-invite-v1', invite.id, invite.session_id, invite.role, invite.character_id])).digest('base64url');
+  const invitationToken = (invite: { id: string; session_id: string; role: string; character_id: string | null }) => deriveInvitationToken(options.hostToken, invite);
   app.post('/api/sessions', async (request) => {
     const actor = await authenticate(request);
     if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the host can create sessions.');
@@ -130,7 +134,7 @@ export async function buildApp(options: AppOptions) {
         }
         await client.query('INSERT INTO command_receipts(actor_id,command_id,request_hash,session_id,response) VALUES($1,$2,$3,$4,$5)', [actor.actor_id, command.commandId, requestHash, sessionId, { sessionId }]);
       }
-      const invites = (await client.query(`SELECT i.* FROM invites i LEFT JOIN characters c ON c.id=i.character_id WHERE i.session_id=$1 ORDER BY CASE WHEN i.role='player' THEN 0 ELSE 1 END,c.ordinal,i.id`, [sessionId])).rows.map((invite) => ({ role: invite.role, characterId: invite.character_id, token: invitationToken(invite) }));
+      const invites = (await client.query(`SELECT i.* FROM invites i LEFT JOIN characters c ON c.id=i.character_id WHERE i.session_id=$1 AND i.revoked_at IS NULL ORDER BY CASE WHEN i.role='player' THEN 0 ELSE 1 END,c.ordinal,i.id`, [sessionId])).rows.map((invite) => ({ role: invite.role, characterId: invite.character_id, token: invitationToken(invite) }));
       return { sessionId, invites };
     });
   });
@@ -144,7 +148,7 @@ export async function buildApp(options: AppOptions) {
       const session = await authorize(client, sessionId, owner);
       const character = await client.query('SELECT id FROM characters WHERE id=$1 AND session_id=$2', [characterId, sessionId]);
       if (!character.rowCount) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
-      const credential = await persistCredential({ actor_id: randomUUID(), role: 'player', session_id: sessionId, character_id: characterId }, client);
+      const credential = await persistCredential({ actor_id: randomUUID(), role: 'player', session_id: sessionId, character_id: characterId, producer_grant_id: owner.producer_grant_id ?? null }, client);
       await recordEvent(client, sessionId, owner.actor_id, randomUUID(), 'seat.test_access_granted', session.version, { characterId });
       return credential;
     });
@@ -162,8 +166,12 @@ export async function buildApp(options: AppOptions) {
     return transaction(pool, (client) => project(client, request.params.sessionId, actor, view));
   });
   app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client) }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
+  const accessDeps: AccessRouteDeps = { pool, authenticate, hostToken: options.hostToken, origin: options.origin, persistCredential, issueCookie };
   registerLibrary(app, { pool, authenticate });
   registerCharacterBuilders(app, { pool, authenticate, hostToken: options.hostToken, origin: options.origin, provider, timeoutMs: options.providerTimeoutMs });
+  registerProducers(app, accessDeps);
+  registerStreamLinks(app, accessDeps);
+  registerInvites(app, accessDeps);
   registerFieldGeneration(app, { authenticate, provider, timeoutMs: options.providerTimeoutMs });
   registerAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
   registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir: options.assetDir ?? '.local/audio' });
@@ -177,7 +185,7 @@ export async function buildApp(options: AppOptions) {
       if (socket.handshake.headers.origin && socket.handshake.headers.origin !== options.origin) throw new Error('Origin is not allowed.');
       const identityId = requestIdentity(socket.handshake.url, socket.handshake.headers['x-rpg-identity'], socket.handshake.auth.identityId);
       const { token } = selectCredential(app.parseCookie(socket.handshake.headers.cookie ?? ''), identityId);
-      const actor = token && (await pool.query('SELECT actor_id,role,session_id,character_id FROM credentials WHERE token_hash=$1 AND expires_at>now() AND revoked_at IS NULL', [hash(token)])).rows[0];
+      const actor = token ? await findActiveActor(pool, hash(token)) : null;
       if (!actor || typeof socket.handshake.auth.sessionId !== 'string') throw new Error('Authentication is required.');
       await transaction(pool, (client) => authorize(client, socket.handshake.auth.sessionId, actor));
       socket.data.sessionId = socket.handshake.auth.sessionId; socket.data.tokenHash = hash(token!); next();
@@ -191,7 +199,7 @@ export async function buildApp(options: AppOptions) {
     try {
       const connected = [...io.sockets.sockets.values()];
       if (connected.length) {
-        const valid = new Set((await pool.query('SELECT token_hash FROM credentials WHERE token_hash=ANY($1::text[]) AND expires_at>now() AND revoked_at IS NULL', [connected.map((socket) => socket.data.tokenHash)])).rows.map((row) => row.token_hash));
+        const valid = await activeTokenHashes(pool, connected.map((socket) => socket.data.tokenHash));
         for (const socket of connected) if (!valid.has(socket.data.tokenHash)) socket.disconnect(true);
       }
       const events = (await pool.query('SELECT o.event_id,o.session_id,e.sequence FROM outbox o JOIN audit_events e ON e.id=o.event_id WHERE o.dispatched_at IS NULL ORDER BY e.sequence LIMIT 100')).rows;

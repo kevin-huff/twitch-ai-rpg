@@ -8,7 +8,11 @@ export class AppError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
 export const conflict = (message: string): never => { throw new AppError(409, 'conflict', message); };
-export interface Actor { actor_id: string; role: 'host' | 'player' | 'stage'; session_id: string | null; character_id: string | null }
+export interface Actor {
+  actor_id: string; role: 'host' | 'player' | 'stage'; session_id: string | null; character_id: string | null;
+  producer_grant_id?: string | null; stream_link_id?: string | null; can_present?: boolean; expires_at?: Date;
+}
+export const isHostOnly = (actor: Actor) => actor.role === 'host' && !actor.producer_grant_id;
 
 export async function authorize(client: PoolClient, sessionId: string, actor: Actor) {
   const result = await client.query('SELECT * FROM sessions WHERE id=$1', [sessionId]);

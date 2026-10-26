@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { io } from 'socket.io-client';
 import { api, subscribeToSession } from './api';
+import { streamUrl, producerUrl, readHashToken, parseStreamLocation } from './stream';
 
 const socket = vi.hoisted(() => ({ on: vi.fn(), disconnect: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: vi.fn(() => socket) }));
@@ -185,5 +186,64 @@ describe('authorized session transport', () => {
     expect(connection.mock.calls).toEqual([[true], [false], [true]]);
     close();
     expect(socket.disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe('stream links and producer access', () => {
+  const identity = 'c'.repeat(32);
+  const summary = { id: 'l1', sessionId: 's1', subject: 'show', label: 'Main', characterId: null, producerGrantId: null, canPresent: true, createdAt: 'a', expiresAt: 'b', revokedAt: null };
+  const producer = { id: 'p1', label: 'Sam', createdAt: 'a', expiresAt: 'b', revokedAt: null, lastSignedInAt: null, activeSignIns: 0 };
+
+  it('keeps tokens after the hash and layout and audio in the query', () => {
+    const url = streamUrl('https://x.test', 'a+b/c', { layout: 'overlay', audio: 'listen' });
+    expect(url).toBe('https://x.test/stream?layout=overlay&audio=listen#token=a%2Bb%2Fc');
+    expect(url.split('#')[0]).not.toContain('a%2Bb');
+    expect(producerUrl('https://x.test', 'tok')).toBe('https://x.test/producer#token=tok');
+  });
+
+  it('round-trips stream locations, ignores identity and falls back to scene', () => {
+    const url = new URL(streamUrl('https://x.test', 'tok-1', { layout: 'overlay', audio: 'present' }) + '');
+    url.searchParams.set('identity', identity);
+    expect(parseStreamLocation(url)).toEqual({ token: 'tok-1', layout: 'overlay', audio: 'present', checker: false, check: false });
+    expect(parseStreamLocation({ search: '?layout=weird&audio=loud&bg=checker&check=1', hash: '' })).toEqual({ token: null, layout: 'scene', audio: null, checker: true, check: true });
+  });
+
+  it('reads hash tokens', () => {
+    expect(readHashToken('#token=a%2Bb')).toBe('a+b');
+    expect(readHashToken('')).toBeNull();
+    expect(readHashToken('#other=1')).toBeNull();
+  });
+
+  it('exchanges a stream token without an identity header', async () => {
+    window.history.replaceState({}, '', `/stream?identity=${identity}`);
+    const response = { identityId: identity, sessionId: 's1', link: { id: 'l1', label: 'Main', subject: 'show', characterId: null, canPresent: true }, expiresAt: 'x' };
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => response });
+    vi.stubGlobal('fetch', fetch);
+    expect(await api.streamAccess('tok')).toEqual(response);
+    expect(fetch.mock.calls[0][0]).toBe('/api/stream/access');
+    expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBeUndefined();
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok' });
+  });
+
+  it('selects the identity returned by producer sign-in', async () => {
+    window.history.replaceState({}, '', '/producer');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ role: 'producer', label: 'Sam', expiresAt: 'x', identityId: identity }) });
+    vi.stubGlobal('fetch', fetch);
+    await api.producerSignIn('tok');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok', tab: true });
+    expect(window.location.search).toBe(`?identity=${identity}`);
+  });
+
+  it('sends a commandId when creating stream links and revoking producers', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ link: summary, token: 'tok' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => producer });
+    vi.stubGlobal('fetch', fetch);
+    await api.createStreamLink('s1', { subject: 'show' });
+    await api.revokeProducer('p/1');
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/s1/stream-links');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ commandId: expect.any(String), subject: 'show' });
+    expect(fetch.mock.calls[1][0]).toBe('/api/producers/p%2F1/revoke');
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ commandId: expect.any(String) });
   });
 });

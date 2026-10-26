@@ -14,8 +14,10 @@ export const digest = (data: unknown) => createHash('sha256').update(JSON.string
 const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering']);
 const directorCommands = new Set([...liveCommands, 'approve_character', 'set_boundaries', 'start_session', 'open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
 
-export async function recordEvent(client: PoolClient, sessionId: string, actorId: string, commandId: string, kind: string, revision: number, data: unknown = {}, eventId = randomUUID()) {
-  const result = await client.query('INSERT INTO audit_events(id,session_id,actor_id,command_id,kind,data) VALUES($1,$2,$3,$4,$5,$6) RETURNING sequence', [eventId, sessionId, actorId, commandId, kind, data]);
+export async function recordEvent(client: PoolClient, sessionId: string, actor: string | { actor_id: string; producer_grant_id?: string | null }, commandId: string, kind: string, revision: number, data: unknown = {}, eventId = randomUUID()) {
+  const actorId = typeof actor === 'string' ? actor : actor.actor_id;
+  const producerGrantId = typeof actor === 'string' ? null : actor.producer_grant_id ?? null;
+  const result = await client.query('INSERT INTO audit_events(id,session_id,actor_id,command_id,kind,data,producer_grant_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING sequence', [eventId, sessionId, actorId, commandId, kind, data, producerGrantId]);
   await client.query('INSERT INTO outbox(event_id,session_id,revision) VALUES($1,$2,$3)', [eventId, sessionId, revision]);
   return { eventId, eventSeq: Number(result.rows[0].sequence) };
 }
@@ -189,7 +191,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         stateRevision: state.session.stateRevision, recordedAt: new Date().toISOString(), publicText: command.publicText };
       eventData = { public: publicCorrection, reason: command.reason, changes: command.changes, before,
         after: { facts: state.facts, characters: state.characters, tracks: state.tracks, npcs: state.npcs }, cancelledSubmissionIds };
-      await recordEvent(client, sessionId, actor.actor_id, command.commandId, 'correction.recorded', state.session.stateRevision, eventData, eventId);
+      await recordEvent(client, sessionId, actor, command.commandId, 'correction.recorded', state.session.stateRevision, eventData, eventId);
       await saveState(client, state);
     } else if (command.type === 'change_scene' || command.type === 'save_npc' || command.type === 'reveal_npc') {
       if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the session before changing the live scene or cast.');
@@ -254,7 +256,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         for (const npc of new Set([revealTarget!, ...witnesses])) npc.version++;
         eventData = { ...eventData, source: command.source, privateSource, npcId: revealTarget!.id, witnessNpcIds: command.witnessNpcIds, fact };
         eventData.after = { scene: state.session.scene, locations: state.locations, npcs: state.npcs };
-        await recordEvent(client, sessionId, actor.actor_id, command.commandId, command.type, nextRevision, eventData, eventId);
+        await recordEvent(client, sessionId, actor, command.commandId, command.type, nextRevision, eventData, eventId);
       } else eventData.after = { scene: state.session.scene, locations: state.locations, npcs: state.npcs };
       await saveState(client, state);
     } else if (command.type === 'save_character' || command.type === 'approve_character' || command.type === 'set_ready' || command.type === 'set_boundaries' || command.type === 'start_session') {
@@ -453,7 +455,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         const audio = command.textOnly ? null : await attachPreparedAudio(client, { sessionId, beat, state, segments, preparationId: command.audioPreparationId! });
         if (audio) for (const segment of segments) segment.ttsEnabled = segment.kind === 'narration' || segment.kind === 'npc_dialogue';
         const carriedSubmissions = await carryUnconsumed(client, beat, all);
-        const event = await recordEvent(client, sessionId, actor.actor_id, command.commandId, 'beat.published', state.session.stateRevision + 1, { beatId: beat.id, draftRevision: beat.draftRevision, carriedSubmissions });
+        const event = await recordEvent(client, sessionId, actor, command.commandId, 'beat.published', state.session.stateRevision + 1, { beatId: beat.id, draftRevision: beat.draftRevision, carriedSubmissions });
         state = applyResolution(state, beat.resolution!, event.eventId);
         state.session.stateRevision++; state.session.beatNumber++; state.session.inputEpoch++;
         if (beat.kind === 'action') state.session.actionRoundNumber++;
@@ -476,7 +478,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       }
       beat.revision++; await saveBeat(client, beat);
     }
-    if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor.actor_id, command.commandId, command.type, state.session.stateRevision, eventData);
+    if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor, command.commandId, command.type, state.session.stateRevision, eventData);
     return { response: await finish(client, sessionId, actor, command, requestHash) };
   });
   if (prepared.response) return prepared.response;
@@ -517,7 +519,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     beat.lastError = failure; beat.revision++;
     await saveBeat(client, beat);
     await client.query('UPDATE generation_jobs SET status=$2,error=$3,finished_at=now() WHERE id=$1', [generation.jobId, failure ? 'failed' : 'succeeded', failure]);
-    await recordEvent(client, sessionId, actor.actor_id, command.commandId, failure ? 'job.failed' : command.type, state.session.stateRevision);
+    await recordEvent(client, sessionId, actor, command.commandId, failure ? 'job.failed' : command.type, state.session.stateRevision);
     return finish(client, sessionId, actor, command, requestHash);
   });
   if ('superseded' in completed) throw new AppError(409, 'superseded', 'The generation was superseded. Its result was discarded.');

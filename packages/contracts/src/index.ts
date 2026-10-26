@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './access';
 export * from './draft-audio';
 export * from './operations';
 export * from './playback';

@@ -1,8 +1,12 @@
 import { CharacterBuilderFieldGenerationRequestSchema, FieldGenerationCharacterContextSchema } from '@rpg/contracts';
+import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema } from '@rpg/contracts';
+import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot } from '@rpg/contracts';
 import { io } from 'socket.io-client';
 import type { Command, SessionSnapshot, CreateSessionResponse, RedeemResponse, Library, ScenarioDefinition, CharacterCardDefinition, TemplateVersion, TemplateRef, SaveScenario, SaveCharacterTemplate, FieldGenerationRequest, FieldGenerationResponse } from '@rpg/contracts';
 import type { CharacterBuilderAccess, CharacterBuilderFieldGenerationRequest, CharacterBuilderLink, CharacterBuilderSnapshot, CharacterBuilderSummary, CreateCharacterBuilder, SaveCharacterBuilder } from '@rpg/contracts';
 import { getIdentity, identityHeaders, selectIdentity } from './identity';
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -50,6 +54,34 @@ export const api = {
   createCustom: (title: string, scenarioRef: TemplateRef, characterRefs: TemplateRef[]) => request<CreateSessionResponse>('/sessions', { commandId: crypto.randomUUID(), title, scenario: scenarioRef, characters: characterRefs }),
   sessions: () => request<Array<{ id: string; title: string }>>('/sessions'),
   snapshot: (id: string, view?: string) => request<SessionSnapshot>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${encodeURIComponent(view)}` : ''}`),
+  me: async (): Promise<Viewer> => ViewerSchema.parse(await request('/auth/me')),
+  producerSignIn: async (token: string): Promise<ProducerSignInResponse> => {
+    const result = ProducerSignInResponseSchema.parse(await request('/auth/producer', { token, tab: true }));
+    selectIdentity(result.identityId);
+    return result;
+  },
+  producers: async (): Promise<{ producers: ProducerSummary[] }> => {
+    const data = await request<{ producers: unknown[] }>('/producers');
+    return { producers: data.producers.map(item => ProducerSummarySchema.parse(item)) };
+  },
+  createProducer: async (label: string): Promise<ProducerLink> => ProducerLinkSchema.parse(await request('/producers', { commandId: crypto.randomUUID(), label })),
+  producerLink: async (id: string): Promise<ProducerLink> => ProducerLinkSchema.parse(await request(`/producers/${encodeURIComponent(id)}/link`)),
+  revokeProducer: async (id: string): Promise<ProducerSummary> => ProducerSummarySchema.parse(await request(`/producers/${encodeURIComponent(id)}/revoke`, { commandId: crypto.randomUUID() })),
+  streamLinks: async (sessionId: string): Promise<{ links: StreamLinkSummary[] }> => {
+    const data = await request<{ links: unknown[] }>(`/sessions/${encodeURIComponent(sessionId)}/stream-links`);
+    return { links: data.links.map(item => StreamLinkSummarySchema.parse(item)) };
+  },
+  createStreamLink: async (sessionId: string, body: DistributiveOmit<CreateStreamLink, 'commandId'>): Promise<StreamLink> => StreamLinkSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/stream-links`, { commandId: crypto.randomUUID(), ...body })),
+  streamLink: async (sessionId: string, linkId: string): Promise<StreamLink> => StreamLinkSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/stream-links/${encodeURIComponent(linkId)}/link`)),
+  revokeStreamLink: async (sessionId: string, linkId: string): Promise<StreamLinkSummary> => StreamLinkSummarySchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/stream-links/${encodeURIComponent(linkId)}/revoke`, { commandId: crypto.randomUUID() })),
+  streamAccess: async (token: string): Promise<StreamAccessResponse> => StreamAccessResponseSchema.parse(await request('/stream/access', { token }, false)),
+  invites: async (sessionId: string): Promise<{ invites: InviteSummary[] }> => {
+    const data = await request<{ invites: unknown[] }>(`/sessions/${encodeURIComponent(sessionId)}/invites`);
+    return { invites: data.invites.map(item => InviteSummarySchema.parse(item)) };
+  },
+  inviteLink: async (sessionId: string, inviteId: string): Promise<InviteLink> => InviteLinkSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/invites/${encodeURIComponent(inviteId)}/link`)),
+  reissueInvite: async (sessionId: string, inviteId: string, signOutCurrent: boolean): Promise<InviteLink> => InviteLinkSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/invites/${encodeURIComponent(inviteId)}/reissue`, { commandId: crypto.randomUUID(), signOutCurrent })),
+  playback: async (sessionId: string): Promise<PlaybackSnapshot> => PlaybackSnapshotSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/playback`)),
   command: (id: string, command: Command) => request(`/sessions/${encodeURIComponent(id)}/commands`, command),
 };
 

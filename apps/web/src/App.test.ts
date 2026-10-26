@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.vue';
 import FieldGenerator from './FieldGenerator.vue';
 
-const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), login: vi.fn(), redeem: vi.fn(), create: vi.fn(), testSeat: vi.fn(), sessions: vi.fn(), library: vi.fn(), generateField: vi.fn() }));
+const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), login: vi.fn(), redeem: vi.fn(), create: vi.fn(), testSeat: vi.fn(), sessions: vi.fn(), library: vi.fn(), generateField: vi.fn(), me: vi.fn(), producers: vi.fn(), producerLink: vi.fn(), createProducer: vi.fn(), revokeProducer: vi.fn(), producerSignIn: vi.fn(), streamLinks: vi.fn(), createStreamLink: vi.fn(), streamLink: vi.fn(), revokeStreamLink: vi.fn(), streamAccess: vi.fn(), invites: vi.fn(), inviteLink: vi.fn(), reissueInvite: vi.fn(), playback: vi.fn() }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
 
 function snapshot(role = 'stage') {
@@ -40,6 +40,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   transport.subscribe.mockReturnValue(() => {});
   transport.command.mockResolvedValue({});
+  const unavailable = () => Promise.reject(new Error('Not available'));
+  transport.me.mockRejectedValue(new Error('Sign in'));
+  transport.producers.mockResolvedValue({ producers: [] });
+  transport.streamLinks.mockResolvedValue({ links: [] });
+  transport.invites.mockResolvedValue({ invites: [] });
+  for (const name of ['producerLink', 'createProducer', 'revokeProducer', 'producerSignIn', 'createStreamLink', 'streamLink', 'revokeStreamLink', 'streamAccess', 'inviteLink', 'reissueInvite', 'playback'] as const) transport[name].mockImplementation(unavailable);
   window.history.replaceState({}, '', '/sessions/show/stage');
 });
 afterEach(() => { document.body.innerHTML = ''; });
@@ -329,6 +335,19 @@ describe('public performance and player authority', () => {
       wrapper.unmount();
     }
   });
+  it('gives a player My stream view in Cast & lobby', async () => {
+    window.history.replaceState({}, '', '/sessions/show/lobby');
+    transport.snapshot.mockResolvedValue(snapshot('player'));
+    const player = mount(App); await flushPromises();
+    expect(player.find('#my-stream-view').exists()).toBe(true);
+    expect(player.findAll('button').some(button => button.text() === 'Ask for a pause')).toBe(true);
+    player.unmount();
+    transport.snapshot.mockResolvedValue(snapshot('director'));
+    const director = mount(App); await flushPromises();
+    expect(director.find('#my-stream-view').exists()).toBe(false);
+    director.unmount();
+  });
+
   it('opens independent character rehearsal tabs from the director cast lobby', async () => {
     const identity = 'a'.repeat(32);
     window.history.replaceState({}, '', `/sessions/show/lobby?identity=${identity}`);
