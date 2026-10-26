@@ -30,7 +30,9 @@ Write a failing test for a contract or behavior, implement the smallest coherent
 | Browser | `apps/web/**` | Shared contracts and fixed HTTP endpoints |
 | Integration | Root manifests/configuration, local database setup, deployment files, browser integration tests | Server and browser lanes |
 
-Parallel tickets do not edit the same file. Shared-contract changes are coordinated before consumers are changed. Kevin retains responsibility for commits; this work does not initialize Git, create branches, commit, or push. The existing `.git` entry is a placeholder rather than a working repository.
+Parallel tickets do not edit the same file. Shared-contract changes are coordinated before consumers are changed. Kevin retains responsibility for commits; agents do not create branches, commit, or push. Git tracks the project at `git@github.com:kevin-huff/twitch-ai-rpg.git`.
+
+The October 23 UI/UX sprint and its three fix passes are complete and reviewed: producers, stream links with two broadcast layouts, the guided director workspace, player status guidance, invitation reissue and in-app help. [CODEX_START_HERE.md](../CODEX_START_HERE.md) describes them, the upgrade backup and the remaining limits.
 
 The native-authoring, live-control, player-builder, correction, private-direction, coordinated-playback, private-recording, and operations-panel assignments are complete and handed back, including independent source review. Check for new assignments before starting the remaining work.
 
