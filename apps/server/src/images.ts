@@ -21,6 +21,8 @@ export interface ImageServiceOptions {
   hourlyLimit?: number;
   concurrency?: number;
   ai?: AiProvider;
+  // Called, not awaited, when a picture that belongs to a session finishes.
+  onReady?: (sessionId: string) => void;
 }
 
 type Mode = 'request' | 'automatic';
@@ -125,7 +127,7 @@ export class ImageService implements PictureEngine {
       const { moment, prompt, model } = await this.momentReservation(client, state, { beat, published }, settings);
       return this.insert(client, {
         ownerId: await this.ownerOf(client, sessionId), sessionId, builderId: null,
-        purpose: 'scene', subjectId: scene.id, beatId: null, limitKey: `scene:${sessionId}`, attach: false,
+        purpose: 'scene', subjectId: scene.id, beatId: null, showsBeatId: beatId, limitKey: `scene:${sessionId}`, attach: false,
         prompt, model, moment, ...SCENE_PICTURE_SIZE, requestedBy: requestedBy(actor),
       }, 'request');
     });
@@ -255,12 +257,12 @@ export class ImageService implements PictureEngine {
     const id = randomUUID();
     await client.query(
       `INSERT INTO images(id, owner_id, session_id, builder_id, purpose, subject_id, limit_key, attach, status, hidden, prompt, width, height,
-         provider, model, requested_by, producer_grant_id, message, beat_id, moment, finished_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb, CASE WHEN $9='failed' THEN clock_timestamp() END)`,
+         provider, model, requested_by, producer_grant_id, message, beat_id, moment, shows_beat_id, finished_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb, $21, CASE WHEN $9='failed' THEN clock_timestamp() END)`,
       [id, input.ownerId, input.sessionId, input.builderId, input.purpose, input.subjectId, input.limitKey, input.attach,
         limited ? 'failed' : 'making', hidden, input.prompt, input.width, input.height, provider.name, input.model ?? provider.model,
         input.requestedBy.actor_id, input.requestedBy.producer_grant_id ?? null, limited, input.beatId ?? null,
-        input.moment ? JSON.stringify(input.moment) : null]);
+        input.moment ? JSON.stringify(input.moment) : null, input.showsBeatId ?? null]);
     // A limit failure stays on record so the director can see why no picture came; it never counts toward a limit.
     return limited ? null : id;
   }
@@ -290,13 +292,24 @@ export class ImageService implements PictureEngine {
     return new Map(rows.map(row => [row.id, row]));
   }
 
+  private notifyReady(sessionId: string): void {
+    try {
+      const result: unknown = this.options.onReady?.(sessionId);
+      if (result instanceof Promise) result.catch(() => undefined);
+    } catch { /* a gallery hook never changes a picture's outcome */ }
+  }
+
   private start(id: string, row: JobRow | null): Promise<ImageJobOutcome> {
     const running = this.jobs.get(id);
     if (running) return running.done;
     const controller = new AbortController();
     const done = runImageJob(this.context!, id, controller.signal)
       .catch((): ImageJobOutcome => ({ status: 'skipped' }))
-      .then((outcome) => { this.jobs.delete(id); return outcome; });
+      .then((outcome) => {
+        this.jobs.delete(id);
+        if (outcome.status === 'ready' && row?.session_id) this.notifyReady(row.session_id);
+        return outcome;
+      });
     this.jobs.set(id, { controller, done, row });
     return done;
   }

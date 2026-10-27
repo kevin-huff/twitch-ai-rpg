@@ -29,6 +29,14 @@ export async function storeImage(assetDir: string, bytes: Uint8Array): Promise<{
   return { fileHash, contentType, byteLength: saved.size };
 }
 
+export function imageExtension(contentType: ImageContentType): 'jpg' | 'png' | 'webp' {
+  return EXTENSIONS[contentType] as 'jpg' | 'png' | 'webp';
+}
+
+export function imageFilePath(assetDir: string, row: { file_hash: string; content_type: ImageContentType }): string {
+  return join(assetDir, 'images', `${row.file_hash}.${imageExtension(row.content_type)}`);
+}
+
 export async function readImageFile(assetDir: string, row: { file_hash: string; content_type: ImageContentType }): Promise<Buffer> {
-  return readFile(join(assetDir, 'images', `${row.file_hash}.${EXTENSIONS[row.content_type]}`));
+  return readFile(imageFilePath(assetDir, row));
 }

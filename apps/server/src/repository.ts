@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import {
   SessionStateSchema, SessionSnapshotSchema, PublicCorrectionSchema, type SessionState, type Beat, type Submission,
-  type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection,
+  type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection, type GalleryStatus,
 } from '@rpg/contracts';
 import { actionPictureView, lastBeatInScene, portraitJobsView, scenePictureView } from './picture-views';
 import { pictureSettingsOf } from './picture-settings';
@@ -80,7 +80,8 @@ export async function corrections(client: PoolClient, sessionId: string): Promis
   }));
 }
 
-export async function project(client: PoolClient, sessionId: string, actor: Actor, requested?: Role, options: { picturesEnabled?: boolean; defaultPictureModel?: string } = {}): Promise<SessionSnapshot> {
+export interface GalleryStatusSource { status(client: PoolClient, sessionId: string, sessionStatus: string): Promise<GalleryStatus> }
+export async function project(client: PoolClient, sessionId: string, actor: Actor, requested?: Role, options: { picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource } = {}): Promise<SessionSnapshot> {
   await authorize(client, sessionId, actor);
   await client.query('SELECT id FROM sessions WHERE id=$1 FOR SHARE', [sessionId]);
   const role = requested ?? (actor.role === 'host' ? 'director' : actor.role);
@@ -120,5 +121,6 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
     actionPicture: picturesEnabled && beat?.kind === 'action' && beat.phase === 'draft_review' ? await actionPictureView(client, sessionId, beat.id) : null,
     portraitJobs: picturesEnabled ? await portraitJobsView(client, sessionId, state.npcs.map(npc => npc.id)) : [],
     pictureSettings: picturesEnabled && options.defaultPictureModel ? await pictureSettingsOf(client, state, options.defaultPictureModel) : null,
-    lastSceneBeatId: picturesEnabled ? await lastBeatInScene(client, sessionId) : null });
+    lastSceneBeatId: picturesEnabled ? await lastBeatInScene(client, sessionId) : null,
+    ...(role === 'director' ? { gallery: options.gallery ? await options.gallery.status(client, sessionId, state.session.status) : null } : {}) });
 }

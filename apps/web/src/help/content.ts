@@ -600,6 +600,19 @@ export const topics: HelpTopic[] = [
         ],
       },
       {
+        heading: 'Sharing the pictures with chat',
+        paragraphs: [
+          'After a show has ended, the director page has a Gallery panel. Press Turn on gallery to write a page of every picture from the show. Before the show ends, the panel only says: The gallery opens once the show has ended.',
+          'The panel shows the Private link. Anyone who has the link can open the gallery, and nobody else can find it. Press Copy link and paste it into chat. Ended shows that have a gallery turned on also get a tag under Resume a saved session on the host home page. That tag reads Gallery: private link, or Gallery: on the public list, and it has its own Copy link button.',
+          'To let chat browse every gallery you have shared, press Add to public list. The panel then says On the public list and shows the list\'s address after Public list. Press Remove from public list to take the show off it. The private link keeps working.',
+          'New link replaces the private link, and Turn off gallery removes the gallery. Each asks you first: This stops the link you may have posted in chat. Press Yes, make a new link or Yes, turn it off to go ahead, or Keep it to leave things as they are. Within about a minute, anyone who opens the old link sees: This gallery isn\'t available.',
+          'If a picture is still being made when you turn the gallery on, the panel tells you. It is added when it finishes. Write the gallery again is always there while the gallery is on. Press it if a page looks out of date, or after the panel shows a message that the gallery could not be written.',
+          'A gallery holds everything that was drawn. That includes hidden pictures, earlier drafts and action rounds that were never published. Those carry a tag, Not shown on stream or Hidden, so chat can tell them from what was on stream. Under each picture, How this was drawn shows the model and the prompt. The prompt is also the picture\'s alt text, the description that screen readers read aloud.',
+          'Each player character shows only the portrait you kept, so a try that was thrown away is never shown. Every non-player portrait is shown.',
+          'While the app runs only on your own computer, the panel adds a note: These links only work on this computer until the app is deployed.',
+        ],
+      },
+      {
         heading: 'Limits',
         paragraphs: [
           'Ten pictures can be made at once, which is the picture service\'s own limit for one account. Pictures made in the picture service\'s own app on the same account count toward it. Others wait for a free turn for as long as they are still wanted. If the picture service itself says it is busy, you see: Pictures are busy right now. Try again in a minute.',

@@ -10,7 +10,7 @@ import { attachPreparedAudio } from './draft-audio';
 import { finishUsageAttempt, startUsageAttempt } from './operations';
 import { draftNarration } from './picture-prompts';
 import { RELEASED } from './picture-views';
-import { AppError, authorize, conflict, corrections, currentBeat, history, project, readState, saveBeat, saveState, saveSubmission, submissions, type Actor } from './repository';
+import { AppError, authorize, conflict, corrections, currentBeat, history, project, readState, saveBeat, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering']);
@@ -30,8 +30,8 @@ async function receipt(client: PoolClient, actor: Actor, commandId: string, requ
   if (found.rows[0].request_hash !== requestHash) conflict('This command ID was already used with different input.');
   return found.rows[0].response;
 }
-async function finish(client: PoolClient, sessionId: string, actor: Actor, command: Command, requestHash: string, picturesEnabled?: boolean, defaultPictureModel?: string): Promise<CommandResponse> {
-  const snapshot = await project(client, sessionId, actor, undefined, { picturesEnabled, defaultPictureModel });
+async function finish(client: PoolClient, sessionId: string, actor: Actor, command: Command, requestHash: string, picturesEnabled?: boolean, defaultPictureModel?: string, gallery?: GalleryStatusSource): Promise<CommandResponse> {
+  const snapshot = await project(client, sessionId, actor, undefined, { picturesEnabled, defaultPictureModel, gallery });
   const response = { commandId: command.commandId, eventSeq: snapshot.eventSeq, snapshot };
   await client.query('INSERT INTO command_receipts(actor_id,command_id,request_hash,session_id,response) VALUES($1,$2,$3,$4,$5)', [actor.actor_id, command.commandId, requestHash, sessionId, response]);
   return response;
@@ -147,7 +147,7 @@ export interface CommandPictures {
   releaseActionPicture(client: PoolClient, sessionId: string, beatId: string): Promise<string | null>;
   run(imageIds: string[]): void;
 }
-export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string }
+export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource }
 export async function executeCommand(deps: CommandDependencies, sessionId: string, actor: Actor, command: Command): Promise<CommandResponse> {
   if (actor.role === 'stage' || (directorCommands.has(command.type) && actor.role !== 'host')) throw new AppError(403, 'forbidden', 'This command requires a director.');
   if (['save_character', 'set_ready', 'save_submission', 'cancel_submission'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
@@ -530,7 +530,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (beat?.kind === 'action' && command.type === 'publish_beat') await deps.pictures.releaseActionPicture(client, sessionId, beat.id);
     }
     if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor, command.commandId, command.type, state.session.stateRevision, eventData);
-    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel), pictureIds };
+    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureIds };
   });
   if (prepared.response) {
     if (prepared.pictureIds?.length) deps.pictures?.run(prepared.pictureIds);
@@ -577,7 +577,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     await recordEvent(client, sessionId, actor, command.commandId, failure ? 'job.failed' : command.type, state.session.stateRevision);
     const pictureId = deps.pictures && !failure && generation.task === 'render' && beat.kind === 'action' && narrationChanged(draftBefore, beat.draft)
       ? await deps.pictures.reserveActionPicture(client, state, beat, actor) : null;
-    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel), pictureId };
+    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureId };
   });
   if ('superseded' in completed) throw new AppError(409, 'superseded', 'The generation was superseded. Its result was discarded.');
   if ('pictureId' in completed && completed.pictureId) deps.pictures?.run([completed.pictureId]);

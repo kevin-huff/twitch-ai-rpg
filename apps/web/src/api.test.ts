@@ -432,3 +432,50 @@ describe('picture calls', () => {
     }
   });
 });
+
+describe('gallery and session list calls', () => {
+  const playerIdentity = 'b'.repeat(32);
+  const slug = 'a'.repeat(43);
+  const status = { state: 'on', listed: false, url: `https://x.test/gallery/${slug}/`, listUrl: 'https://x.test/gallery/', pictures: 3, pending: 0, writtenAt: '2026-10-25T20:14:00.000Z', message: null, local: false };
+  const ok = (body: unknown) => { const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => body }); vi.stubGlobal('fetch', fetch); return fetch; };
+
+  it('galleryAction posts the action to the encoded session with the selected identity and returns the parsed status', async () => {
+    window.history.replaceState({}, '', `/x?identity=${playerIdentity}`);
+    const fetch = ok(status);
+    expect(await api.galleryAction('show/1', 'list')).toEqual(status);
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/gallery');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(fetch.mock.calls[0][1].credentials).toBe('same-origin');
+    expect(fetch.mock.calls[0][1].headers['Content-Type']).toBe('application/json');
+    expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBe(playerIdentity);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ action: 'list' });
+    vi.unstubAllGlobals();
+  });
+
+  it('galleryAction rejects an invalid action before fetch is called', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.galleryAction('show', 'publish' as never)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('galleryAction rejects a malformed status response', async () => {
+    ok({ ...status, state: 'maybe' });
+    await expect(api.galleryAction('show', 'on')).rejects.toThrow();
+  });
+
+  it('sessions returns entries with a null gallery and with a gallery link', async () => {
+    const entries = [
+      { id: 'one', title: 'First', status: 'ended', gallery: null },
+      { id: 'two', title: 'Second', status: 'ended', gallery: { listed: true, url: `https://x.test/gallery/${slug}/` } },
+    ];
+    ok(entries);
+    expect(await api.sessions()).toEqual(entries);
+    vi.unstubAllGlobals();
+  });
+
+  it('sessions rejects an entry with an extra key', async () => {
+    ok([{ id: 'one', title: 'First', status: 'ended', gallery: null, extra: true }]);
+    await expect(api.sessions()).rejects.toThrow();
+  });
+});

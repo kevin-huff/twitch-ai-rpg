@@ -192,6 +192,14 @@ describe('help page', () => {
     expect(section.paragraphs?.some(text => text.includes('Press AI Generate beside it, then Generate, for a suggestion'))).toBe(true);
   });
 
+  it('explains sharing the pictures with chat', () => {
+    const topic = topics.find(item => item.id === 'pictures-and-portraits')!;
+    const section = topic.sections.find(item => item.heading === 'Sharing the pictures with chat')!;
+    const text = section.paragraphs?.join(' ') ?? '';
+    expect(text).toContain('Turn on gallery');
+    expect(text).toContain('Turn off gallery');
+  });
+
   it('says pictures have no count limit and keeps the old caps out of the Limits section', () => {
     const topic = topics.find(item => item.id === 'pictures-and-portraits')!;
     const section = topic.sections.find(item => item.heading === 'Limits')!;

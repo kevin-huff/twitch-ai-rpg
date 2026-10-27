@@ -32,6 +32,7 @@ export interface ImageRow {
   beat_id: string | null;
   released_at: Date | null;
   moment: PictureMoment | null;
+  shows_beat_id: string | null;
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
@@ -39,7 +40,7 @@ export interface ImageRow {
 
 export interface ImageReservation {
   ownerId: string; sessionId: string | null; builderId: string | null;
-  purpose: ImagePurpose; subjectId: string; limitKey: string; attach: boolean; beatId?: string | null;
+  purpose: ImagePurpose; subjectId: string; limitKey: string; attach: boolean; beatId?: string | null; showsBeatId?: string | null;
   model?: string; moment?: PictureMoment | null;
   prompt: string; width: number; height: number;
   requestedBy: { actor_id: string; producer_grant_id?: string | null };

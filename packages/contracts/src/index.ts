@@ -1,10 +1,12 @@
 import { z } from 'zod';
 export * from './access';
 export * from './draft-audio';
+export * from './gallery';
 export * from './images';
 export * from './operations';
 export * from './playback';
 import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
+import { GalleryStatusSchema } from './gallery';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
 import { FieldGenerationCharacterContextSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES } from './field-generation';
 export * from './field-generation';
@@ -401,6 +403,7 @@ export const DirectorSnapshotSchema = z.strictObject({
   locations: z.array(LocationSchema).max(100).default([]),
   scenePictureStatus: ScenePictureStatusSchema.nullable().default(null), actionPicture: ActionPictureStatusSchema.nullable().default(null), portraitJobs: z.array(PortraitJobSchema).max(50).default([]),
   pictureSettings: PictureSettingsSchema.nullable().default(null), lastSceneBeatId: IdSchema.nullable().default(null),
+  gallery: GalleryStatusSchema.nullable().default(null),
 });
 export type DirectorSnapshot = z.infer<typeof DirectorSnapshotSchema>;
 export const PlayerSnapshotSchema = z.strictObject({

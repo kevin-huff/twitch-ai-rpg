@@ -1,6 +1,6 @@
 import { CharacterBuilderFieldGenerationRequestSchema, FieldGenerationCharacterContextSchema, HostCardGenerationRequestSchema, BuilderCardGenerationRequestSchema, SeatCardGenerationRequestSchema, SeatFieldGenerationRequestSchema, CardGenerationResponseSchema, ScenarioGenerationRequestSchema, ScenarioDraftJobSchema, SeatPortraitRequestSchema, BuilderPortraitRequestSchema, LibraryPortraitRequestSchema, PictureIdResponseSchema, PictureSettingsSchema } from '@rpg/contracts';
-import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema } from '@rpg/contracts';
-import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot } from '@rpg/contracts';
+import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema, GalleryActionSchema, GalleryStatusSchema, SessionListEntrySchema } from '@rpg/contracts';
+import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot, GalleryAction, GalleryStatus, SessionListEntry } from '@rpg/contracts';
 import { io } from 'socket.io-client';
 import type { Command, SessionSnapshot, CreateSessionResponse, RedeemResponse, Library, ScenarioDefinition, CharacterCardDefinition, TemplateVersion, TemplateRef, SaveScenario, SaveCharacterTemplate, FieldGenerationRequest, FieldGenerationResponse, SeatChoice, HostCardGenerationRequest, BuilderCardGenerationRequest, SeatCardGenerationRequest, SeatFieldGenerationRequest, CardGenerationResponse, ScenarioGenerationRequest, ScenarioDraftJob, SeatPortraitRequest, BuilderPortraitRequest, LibraryPortraitRequest, PictureIdResponse, PictureSettings } from '@rpg/contracts';
 import type { CharacterBuilderAccess, CharacterBuilderFieldGenerationRequest, CharacterBuilderLink, CharacterBuilderSnapshot, CharacterBuilderSummary, CreateCharacterBuilder, SaveCharacterBuilder } from '@rpg/contracts';
@@ -58,7 +58,8 @@ export const api = {
   saveScenario: (value: Omit<SaveScenario, 'commandId'>) => request<TemplateVersion<ScenarioDefinition>>('/library/scenarios', { commandId: crypto.randomUUID(), ...value }),
   saveCharacterTemplate: (value: Omit<SaveCharacterTemplate, 'commandId'>) => request<TemplateVersion<CharacterCardDefinition>>('/library/characters', { commandId: crypto.randomUUID(), ...value }),
   createCustom: (title: string, scenarioRef: TemplateRef, seats: SeatChoice[]) => request<CreateSessionResponse>('/sessions', { commandId: crypto.randomUUID(), title, scenario: scenarioRef, characters: seats }),
-  sessions: () => request<Array<{ id: string; title: string }>>('/sessions'),
+  sessions: async (): Promise<SessionListEntry[]> => (await request<unknown[]>('/sessions')).map(item => SessionListEntrySchema.parse(item)),
+  galleryAction: async (sessionId: string, action: GalleryAction['action']): Promise<GalleryStatus> => GalleryStatusSchema.parse(await request(`/sessions/${encodeURIComponent(sessionId)}/gallery`, GalleryActionSchema.parse({ action }))),
   snapshot: (id: string, view?: string) => request<SessionSnapshot>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${encodeURIComponent(view)}` : ''}`),
   me: async (): Promise<Viewer> => ViewerSchema.parse(await request('/auth/me')),
   producerSignIn: async (token: string): Promise<ProducerSignInResponse> => {

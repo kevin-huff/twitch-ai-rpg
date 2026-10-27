@@ -14,6 +14,7 @@ export interface PictureRouteOptions {
   pool: Pool;
   authenticate(request: FastifyRequest, client?: PoolClient): Promise<Actor>;
   images: PictureEngine;
+  gallery?: { refreshIfOn(sessionId: string): Promise<void> };
 }
 type SessionParams = { Params: { sessionId: string } };
 type NpcParams = { Params: { sessionId: string; npcId: string } };
@@ -108,7 +109,7 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
       noBody(request);
       const original = await director(request, SCENE_ONLY);
       const { sessionId } = request.params;
-      await transaction(pool, async (client) => {
+      const result = await transaction(pool, async (client) => {
         const actor = await locked(client, request, sessionId, original, SCENE_ONLY);
         const session = (await client.query('SELECT scene, version FROM sessions WHERE id=$1', [sessionId])).rows[0];
         const sceneId = session.scene.id as string;
@@ -120,8 +121,10 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
         const changed = await client.query("UPDATE images SET hidden=$3 WHERE session_id=$1 AND purpose='scene' AND subject_id=$2", [sessionId, sceneId, hidden]);
         if (!changed.rowCount) conflict('There is no picture for this scene yet.');
         await recordEvent(client, sessionId, actor, randomUUID(), hidden ? 'picture.hidden' : 'picture.shown', session.version, { sceneId, hidden });
+        return { ok: true };
       });
-      return { ok: true };
+      await options.gallery?.refreshIfOn(sessionId);
+      return result;
     });
   }
 
@@ -160,6 +163,7 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
       await client.query("UPDATE images SET attach=false WHERE session_id=$1 AND purpose='npc' AND subject_id=$2 AND status='making'", [sessionId, npcId]);
       await recordEvent(client, sessionId, actor, randomUUID(), 'portrait.removed', session.version, { imageId: npc.rows[0].portrait_id ?? null, purpose: 'npc', subjectId: npcId });
     });
+    await options.gallery?.refreshIfOn(sessionId);
     return { ok: true };
   });
 }

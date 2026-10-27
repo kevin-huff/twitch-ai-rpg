@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
-import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role } from '@rpg/contracts';
+import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role, type SessionListEntry } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { createPool, migrate, transaction } from './database';
 import { AppError, authorize, project, saveState, type Actor } from './repository';
@@ -28,6 +28,8 @@ import { registerPlayback } from './playback';
 import { ImageService, PICTURE_MESSAGES } from './images';
 import { registerPictureRoutes } from './picture-routes';
 import { registerPortraitRoutes } from './portrait-routes';
+import { GalleryService, galleryUrl } from './galleries';
+import { registerGalleryRoutes } from './gallery-routes';
 import { registerOperations } from './operations';
 import { httpCredential, identityCookieName, selectCredential, requestIdentity } from './identity';
 
@@ -62,7 +64,8 @@ export async function buildApp(options: AppOptions) {
   const assetDir = options.assetDir ?? '.local/audio';
   const provider = options.provider ?? new FakeAiProvider();
   // Only a story AI the server was given describes pictures; without one the server describes each beat from its own text.
-  const images = new ImageService({ pool, provider: options.images, assetDir, hourlyLimit: options.imageHourlyLimit, ai: options.provider });
+  const gallery = new GalleryService({ pool, assetDir, origin: options.origin });
+  const images = new ImageService({ pool, provider: options.images, assetDir, hourlyLimit: options.imageHourlyLimit, ai: options.provider, onReady: id => { void gallery.refreshIfOn(id); } });
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   await app.register(cookie);
   const authenticate = async (request: FastifyRequest, client?: PoolClient): Promise<Actor> => {
@@ -177,14 +180,15 @@ export async function buildApp(options: AppOptions) {
   app.get('/api/sessions', async (request) => {
     const actor = await authenticate(request);
     if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the host can list sessions.');
-    return (await pool.query('SELECT id,title FROM sessions WHERE owner_id=$1 ORDER BY created_at DESC', [actor.actor_id])).rows;
+    const rows = (await pool.query('SELECT s.id,s.title,s.status,g.slug,g.listed FROM sessions s LEFT JOIN galleries g ON g.session_id=s.id WHERE s.owner_id=$1 ORDER BY s.created_at DESC', [actor.actor_id])).rows;
+    return rows.map((row): SessionListEntry => ({ id: row.id, title: row.title, status: row.status, gallery: row.slug ? { listed: row.listed, url: galleryUrl(options.origin, row.slug) } : null }));
   });
   app.get<{ Params: { sessionId: string }; Querystring: { view?: Role } }>('/api/sessions/:sessionId', async (request) => {
     const actor = await authenticate(request);
     const view = request.query.view && z.enum(['director', 'player', 'stage']).parse(request.query.view);
-    return transaction(pool, (client) => project(client, request.params.sessionId, actor, view, { picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined }));
+    return transaction(pool, (client) => project(client, request.params.sessionId, actor, view, { picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined, gallery }));
   });
-  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client), pictures: images.enabled ? images : undefined, picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
+  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client), pictures: images.enabled ? images : undefined, picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined, gallery }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
   const accessDeps: AccessRouteDeps = { pool, authenticate, hostToken: options.hostToken, origin: options.origin, persistCredential, issueCookie };
   registerLibrary(app, { pool, authenticate, picturesEnabled: images.enabled });
   registerCharacterBuilders(app, { pool, authenticate, hostToken: options.hostToken, origin: options.origin, provider, timeoutMs: options.providerTimeoutMs, picturesEnabled: images.enabled });
@@ -198,8 +202,10 @@ export async function buildApp(options: AppOptions) {
   registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir });
   registerOperations(app, { pool, authenticate, speechConfigured: Boolean(options.speech), model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices });
   registerPlayback(app, { pool, authenticate });
-  registerPictureRoutes(app, { pool, authenticate, images });
+  registerPictureRoutes(app, { pool, authenticate, images, gallery });
   registerPortraitRoutes(app, { pool, authenticate, images, assetDir });
+  if (options.assetDir !== undefined) await gallery.start();
+  await registerGalleryRoutes(app, { pool, authenticate, gallery, assetDir });
   for (const path of ['/health', '/health/ready']) app.get(path, async () => { await pool.query('SELECT 1'); return { ok: true }; });
 
   const io = new Server(app.server, { cors: { origin: options.origin, credentials: true }, maxHttpBufferSize: 1024 });
@@ -234,7 +240,7 @@ export async function buildApp(options: AppOptions) {
     finally { dispatching = false; }
   };
   const interval = setInterval(() => { void dispatch(); }, 250); interval.unref();
-  app.addHook('onClose', async () => { clearInterval(interval); io.close(); await images.close(); await pool.end(); });
+  app.addHook('onClose', async () => { clearInterval(interval); io.close(); await images.close(); await gallery.close(); await pool.end(); });
   const dist = fileURLToPath(new URL('../../web/dist/', import.meta.url));
   if (options.serveStatic !== false && existsSync(dist)) {
     await app.register(fastifyStatic, { root: dist });

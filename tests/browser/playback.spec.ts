@@ -20,7 +20,7 @@ async function seedAudio(sessionId: string, beatId: string) {
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL ?? 'postgres://rpg@127.0.0.1:55432/rpg_test' });
   try {
     const bytes = await readFile(new URL('../fixtures/silence.mp3', import.meta.url));
-    const directory = join(process.cwd(), 'test-results/audio');
+    const directory = join(process.cwd(), process.env.TEST_ASSET_DIR ?? 'test-results/audio');
     await mkdir(directory, { recursive: true });
     const publication: PublishedBeat = (await pool.query('SELECT data FROM published_beats WHERE session_id=$1 AND id=$2', [sessionId, beatId])).rows[0].data;
     const segments = [];
