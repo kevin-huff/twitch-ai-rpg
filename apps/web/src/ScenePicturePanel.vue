@@ -4,7 +4,7 @@ import type { DirectorSnapshot, PictureSettings as PictureSettingsValue } from '
 import { pictureUrl } from './pictures';
 import PictureSettings from './PictureSettings.vue';
 
-const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
+const props = withDefaults(defineProps<{ snapshot: DirectorSnapshot; busy: boolean; toggling?: boolean }>(), { toggling: false });
 defineEmits<{ 'new-picture': []; 'draw-beat': []; 'save-settings': [PictureSettingsValue]; hide: []; show: [] }>();
 
 const FAILED_DEFAULT = 'The picture could not be made. Press Draw the place to try again.';
@@ -85,12 +85,12 @@ const settingsDisabled = computed(() => props.busy || props.snapshot.session.sta
       <div class="actions">
         <button class="secondary" type="button" data-testid="scene-picture-new" :disabled="!canMake" @click="$emit('new-picture')">Draw the place</button>
         <button class="secondary" type="button" data-testid="scene-picture-beat" :disabled="!canDrawBeat" @click="$emit('draw-beat')">Draw the last beat</button>
-        <button v-if="!hidden && (making || hasPicture || actionDrawn)" class="quiet" type="button" data-testid="scene-picture-hide" :disabled="busy" @click="$emit('hide')">Hide picture</button>
-        <button v-if="hidden" class="quiet" type="button" data-testid="scene-picture-show" :disabled="busy" @click="$emit('show')">Show picture</button>
+        <button v-if="!hidden && (making || hasPicture || actionDrawn)" class="quiet" type="button" data-testid="scene-picture-hide" :disabled="toggling" @click="$emit('hide')">Hide picture</button>
+        <button v-if="hidden" class="quiet" type="button" data-testid="scene-picture-show" :disabled="toggling" @click="$emit('show')">Show picture</button>
       </div>
       <p v-if="noBeatReason" class="muted scene-picture-reason" data-testid="scene-picture-beat-reason">{{ NO_BEAT }}</p>
       <p class="muted scene-picture-help">Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pressing either one while a picture is on its way starts over. The new picture takes the old one's place when it is ready.</p>
-      <PictureSettings :settings="snapshot.pictureSettings ?? null" :premise="snapshot.session.brief?.premise" :premise-label="`Session scenario: ${snapshot.session.title}`" :disabled="settingsDisabled" @save="$emit('save-settings', $event)" />
+      <PictureSettings :settings="snapshot.pictureSettings ?? null" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" :disabled="settingsDisabled" @save="$emit('save-settings', $event)" />
     </template>
   </section>
 </template>

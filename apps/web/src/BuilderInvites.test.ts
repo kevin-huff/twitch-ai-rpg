@@ -73,9 +73,9 @@ describe('private character invitations', () => {
     await wrapper.get('[aria-label="Show link for Alex"]').trigger('click'); await flushPromises();
     expect(transport.characterBuilderLink).toHaveBeenCalledWith('builder-one');
     expect((wrapper.get('[data-testid="builder-link"]').element as HTMLInputElement).value).toContain('existing%2Ftoken');
-    await wrapper.get('[aria-label="Revoke link for Alex"]').trigger('click'); await flushPromises();
+    await wrapper.get('[aria-label="Turn off link for Alex"]').trigger('click'); await flushPromises();
     expect(transport.revokeCharacterBuilder).toHaveBeenCalledWith('builder-one', { commandId: expect.any(String) });
-    expect(wrapper.text()).toContain('Revoked');
+    expect(wrapper.text()).toContain('Turned off');
     expect(wrapper.find('[data-testid="builder-link"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Show link for Alex"]').exists()).toBe(false);
     wrapper.unmount();
@@ -99,7 +99,7 @@ describe('private character invitations', () => {
     await wrapper.setProps({ disabled: true });
     expect(wrapper.get('[data-testid="create-builder-link"]').element.matches(':disabled')).toBe(true);
     expect(wrapper.get('[data-testid="refresh-builder-submissions"]').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('[aria-label="Revoke link for Alex"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[aria-label="Turn off link for Alex"]').attributes('disabled')).toBeDefined();
     wrapper.unmount();
   });
 });

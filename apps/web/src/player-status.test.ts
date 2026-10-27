@@ -4,14 +4,15 @@ import { playerStatus } from './player-status';
 
 const beat = (over: Partial<PublicBeat> = {}): PublicBeat => ({ id: 'beat-1', kind: 'conversation', phase: 'collecting', revision: 1, stakes: [], locked: false, ...over });
 const line = (over: Partial<Submission> = {}): Submission => ({ id: 's1', sessionId: 'show', characterId: 'pc-1', contextBeatId: 'beat-1', inputEpoch: 0, revision: 1, kind: 'say', text: 'Hello', recipientNpcIds: [], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true, status: 'queued', ...over });
-const status = (over: Partial<Parameters<typeof playerStatus>[0]> = {}) => playerStatus({ sessionStatus: 'live', ready: true, beat: beat(), own: [], ...over });
+const status = (over: Partial<Parameters<typeof playerStatus>[0]> = {}) => playerStatus({ sessionStatus: 'live', beat: beat(), own: [], ...over });
 
 describe('playerStatus', () => {
-  it('asks for setup first, ahead of everything else', () => {
-    expect(status({ ready: false, sessionStatus: 'paused', beat: null })).toEqual({ headline: 'Finish setup first', detail: 'Open Cast & lobby, read your character card, tick the box and press Mark ready. You can still send the director a private note.', tone: 'act' });
+  it('goes straight to the turn status for a started seat', () => {
+    expect(status({ beat: beat() })).toMatchObject({ headline: 'What does your character say?', tone: 'act' });
+    expect(status({ beat: null })).toMatchObject({ headline: 'Waiting for the next turn', tone: 'wait' });
   });
   it('ends the show ahead of everything else', () => {
-    expect(status({ sessionStatus: 'ended', ready: false })).toEqual({ headline: 'The show is over', detail: 'Thanks for playing. You can close this page.', tone: 'wait' });
+    expect(status({ sessionStatus: 'ended' })).toEqual({ headline: 'The show is over', detail: 'Thanks for playing. You can close this page.', tone: 'wait' });
     expect(status({ sessionStatus: 'ended', beat: null }).headline).toBe('The show is over');
   });
   it('reports a paused table', () => {

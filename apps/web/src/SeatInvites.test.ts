@@ -35,12 +35,12 @@ describe('SeatInvites', () => {
     expect(transport.invites).not.toHaveBeenCalled();
   });
 
-  it('shows names and status words, hiding replaced invitations', async () => {
+  it('shows names and status words, hiding replaced and stage invitations', async () => {
     const wrapper = mountIt(); await open(wrapper);
-    expect(wrapper.findAll('article')).toHaveLength(4);
+    expect(wrapper.findAll('article')).toHaveLength(3);
     const text = wrapper.text();
-    for (const word of ['Waiting', 'Joined', 'Expired', 'Revoked', 'Signed in now', 'Aster', 'Briar', 'Stage']) expect(text).toContain(word);
-    expect(text).not.toContain('Replaced');
+    for (const word of ['Waiting', 'Joined', 'Revoked', 'Signed in now', 'Aster', 'Briar']) expect(text).toContain(word);
+    for (const word of ['Replaced', 'Stage', 'Expired']) expect(text).not.toContain(word);
   });
 
   it('shows a waiting link again', async () => {

@@ -10,12 +10,18 @@ async function api(page: Page, path: string, body?: unknown) {
   return response.data;
 }
 
+
+async function openFold(page: Page, testId: string) {
+  const fold = page.getByTestId(testId);
+  if (!(await fold.evaluate(details => (details as HTMLDetailsElement).open))) await fold.locator(':scope > summary').click();
+}
+
 test('steers a locked scene without rerolling and publishes a correction to an older beat', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
   const id = new URL(page.url()).pathname.split('/')[2]!;
   const path = `/sessions/${id}`;
   let snapshot = await api(page, path);
@@ -32,7 +38,7 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   const player = await context.newPage();
   await player.goto(`${path}/play?identity=${grant.identityId}`);
   const stage = await context.newPage();
-  await stage.goto(`${path}/stage?identity=${new URL(page.url()).searchParams.get('identity')}`);
+  await stage.goto(`${path}/stage`);
   await page.reload();
   await page.getByTestId('open-action').click();
   await expect(page.getByRole('heading', { name: 'Collecting input', exact: true })).toBeVisible();
@@ -41,15 +47,14 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   await player.getByTestId('action-input').fill('Find the archive entrance by reading the map on the club wall');
   await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(1);
-  await page.locator('.queue-item input[type=checkbox]').check();
+  await expect(page.locator('.queue-item input[type=checkbox]')).toBeChecked();
   await page.getByTestId('plan').click();
-  await page.getByTestId('approve-stakes').click();
-  await page.getByTestId('lock').click();
-  await page.getByTestId('render').click();
+  await page.getByTestId('approve-and-roll').click();
   await expect(page.getByTestId('publish')).toBeVisible();
   snapshot = await api(page, path);
   const locked = structuredClone(snapshot.activeBeat);
   expect(locked.resolution.rolls).toHaveLength(1);
+  await openFold(page, 'show-tools');
   const steering = page.getByTestId('beat-steering');
   await steering.locator(':scope > summary').click();
   await steering.getByTestId('beat-steering-text').fill('PRIVATE direction: keep Mara cautious and the pace quiet.');
@@ -90,6 +95,7 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   await api(player, `${path}/commands`, { type: 'save_submission', commandId: crypto.randomUUID(), expectedSubmissionRevision: 0, contextBeatId: null, expectedInputEpoch: snapshot.session.inputEpoch, kind: 'say', text: 'Pending words for the old facts.', recipientNpcIds: [mara.id], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true });
   await page.reload();
   await page.setViewportSize({ width: 430, height: 900 });
+  await openFold(page, 'show-tools');
   const correction = page.getByTestId('correction-controls');
   await correction.locator(':scope > summary').click();
   await correction.getByTestId('begin-correction').click();

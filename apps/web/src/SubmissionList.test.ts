@@ -91,20 +91,15 @@ describe('SubmissionList', () => {
     expect(items[1].findAll('button')).toHaveLength(0);
   });
 
-  it('needs confirmation before taking a line back', async () => {
+  it('takes a line back in one press, with no confirmation', async () => {
     const item = sub(1);
     const w = make([item]);
     await buttons(w, 'Take it back')[0].trigger('click');
-    expect(w.emitted('withdraw')).toBeUndefined();
-    expect(w.text()).toContain('Take this line back?');
-    const confirm = buttons(w, 'Take it back')[0];
-    expect(confirm.classes()).toContain('secondary');
-    await buttons(w, 'Keep it')[0].trigger('click');
-    expect(w.text()).not.toContain('Take this line back?');
-    expect(w.emitted('withdraw')).toBeUndefined();
-    await buttons(w, 'Take it back')[0].trigger('click');
-    await buttons(w, 'Take it back')[0].trigger('click');
     expect(w.emitted('withdraw')).toEqual([[item]]);
+    expect(w.text()).not.toContain('Take this line back?');
+    expect(buttons(w, 'Keep it')).toHaveLength(0);
+    expect(buttons(w, 'Change')).toHaveLength(1);
+    expect(buttons(w, 'Take it back')).toHaveLength(1);
   });
 
   it('emits edit from Change', async () => {

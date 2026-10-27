@@ -60,10 +60,12 @@ The startup log says whether pictures are on.
 
 ## Running a show
 
-1. Sign in as the host and open **Library & custom shows**. Write a scenario, or have the AI draft one from a prompt, then create a show with two to six seats.
-2. Send each player their invitation. In **Cast & lobby**, players write or check their cards, the director approves each one, and players mark themselves ready. Then the director starts the show.
-3. For the stream, make the main show link under **Stage & OBS links** in Cast & lobby and add it to OBS as a browser source. The in-app help walks through the OBS settings.
-4. In each beat, players send their lines. The director selects them, reviews the stakes, locks the beat, checks the script and publishes it.
+1. Sign in as the host. Press **Try it now** for a practice show with no setup, or **Make a show** to write or pick a story and add two to six seats (a player writes the card, you describe it in a sentence, or it comes from a saved card).
+2. In **Cast & lobby**, press **Copy all invitations** and send each player theirs. Players join, write a short card and wait on one page until the start.
+3. Open **Stream this show** and, on a link card, press **Copy overlay link** or **Copy full-scene link**. Paste it into OBS as a browser source. The in-app help walks through the OBS settings.
+4. Press **Start show** once every seat has a card. You land on the director page.
+5. Players send their lines, which arrive ticked. Press **Answer these lines** and a conversation is planned and drafted; it never rolls dice. An action round is **Open action round**, **Plan**, then **Approve and roll**, which rolls once. Check the script, then press **Publish**, which waits for the narration and starts playback.
+6. When the story is done, press **End show**. The gallery starts off. Press **Turn on gallery**, then **Gallery link** and **Copy link** appear.
 
 To try a show alone, use the **Test as** links in Cast & lobby. Each one opens a working player seat in its own tab, and whatever it sends counts as that player's input.
 

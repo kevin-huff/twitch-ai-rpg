@@ -17,7 +17,12 @@ async function signIn() {
   error.value = '';
   try {
     await api.producerSignIn(token);
-    window.location.replace(identityPath('/'));
+    let target = identityPath('/');
+    try {
+      const shows = await api.sessions();
+      if (shows.length === 1) target = identityPath(`/sessions/${shows[0].id}/director`);
+    } catch { /* go home */ }
+    window.location.replace(target);
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : 'Producer sign-in failed. Ask the host for a new link.';
     busy.value = false;
@@ -32,7 +37,7 @@ async function signIn() {
         <h1>Welcome, <em>producer.</em></h1>
         <p>You have been given producer access. You can run every show, edit the library and manage invitations until the host ends your access.</p>
         <button type="button" :disabled="busy" @click="signIn">{{ busy ? 'Signing in…' : 'Sign in as producer' }}</button>
-        <p class="muted">Keep this link private. Open it again whenever your sign-in ends, every 12 hours.</p>
+        <p class="muted">Keep this link private. Open it again if you are ever signed out.</p>
       </template>
       <template v-else>
         <h1>Producer <em>sign-in.</em></h1>

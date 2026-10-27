@@ -98,12 +98,12 @@ async function revoke(builder: CharacterBuilderSummary) {
       <ul class="builder-list">
         <li v-for="builder in builders" :key="builder.id">
           <strong>{{ builder.label }}</strong>
-          <p v-if="builder.revokedAt">Revoked {{ date(builder.revokedAt) }}</p>
+          <p v-if="builder.revokedAt">Turned off {{ date(builder.revokedAt) }}</p>
           <p v-else-if="!active(builder)">Expired {{ date(builder.expiresAt) }}</p>
           <p v-else>Active · expires {{ date(builder.expiresAt) }}</p>
           <p v-if="builder.submittedTemplate">Submitted {{ builder.submittedAt ? date(builder.submittedAt) : '' }} · version {{ builder.submittedTemplate.version }}</p>
           <p v-else class="muted">Awaiting player submission</p>
-          <div v-if="active(builder)" class="builder-actions"><button type="button" class="secondary" :aria-label="`Show link for ${builder.label}`" :disabled="locked" @click="showLink(builder)">Show link</button><button type="button" class="quiet" :aria-label="`Revoke link for ${builder.label}`" :disabled="locked" @click="revoke(builder)">Revoke link</button></div>
+          <div v-if="active(builder)" class="builder-actions"><button type="button" class="secondary" :aria-label="`Show link for ${builder.label}`" :disabled="locked" @click="showLink(builder)">Show link</button><button type="button" class="quiet" :aria-label="`Turn off link for ${builder.label}`" :disabled="locked" @click="revoke(builder)">Turn off</button></div>
         </li>
       </ul>
     </div>

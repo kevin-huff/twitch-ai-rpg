@@ -35,6 +35,9 @@ async function seedAudio(sessionId: string, beatId: string) {
   } finally { await pool.end(); }
 }
 
+const openOptions = (tab: Page) => tab.getByTestId('audio-options').evaluate(el => { (el as HTMLDetailsElement).open = true; });
+const openShowAll = (tab: Page) => tab.getByTestId('stage-show-all').evaluate(el => { (el as HTMLDetailsElement).open = true; });
+
 const mediaState = (page: Page) => page.evaluate(() => (window as any).__audio.map((audio: any) => ({ src: audio.src, paused: audio.paused, time: audio.currentTime, volume: audio.volume })) as Array<{ src: string; paused: boolean; time: number; volume: number }>);
 
 test('one stage presents shared narration while listeners join, refresh, and follow director controls', async ({ page, context, browser }) => {
@@ -59,11 +62,10 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2];
   const path = `/sessions/${sessionId}`;
-  const identity = new URL(page.url()).searchParams.get('identity');
   let state = await api(page, path);
   const grant = await api(page, `${path}/test-seat`, { characterId: state.characters[0].id });
   const player = await context.newPage();
@@ -88,8 +90,11 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   const canonicalBefore = await api(page, path);
   const stage = await context.newPage();
   const otherStage = await context.newPage();
-  await Promise.all([stage, otherStage].map(tab => tab.goto(`${path}/stage?identity=${identity}`)));
+  await Promise.all([stage, otherStage].map(tab => tab.goto(`${path}/stage`)));
   await page.reload();
+  await openShowAll(page);
+  await openOptions(stage);
+  await openOptions(otherStage);
   await stage.getByTestId('present-audio').click();
   await stage.getByTestId('confirm-present-audio').click();
   await expect(stage.getByTestId('release-audio')).toBeVisible();
@@ -101,6 +106,7 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   expect(await mediaState(page)).toHaveLength(0);
 
   await expect.poll(async () => (await api(page, `${path}/playback`)).positionMs).toBeGreaterThan(1200);
+  await player.getByTestId('sound').locator(':scope > summary').click();
   await player.getByTestId('listen-audio').click();
   await expect.poll(async () => (await mediaState(player)).at(-1)?.time ?? 0).toBeGreaterThan(1);
   await player.getByTestId('audio-volume').evaluate(input => {
@@ -109,6 +115,7 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   });
   await expect.poll(async () => (await mediaState(player)).at(-1)?.volume).toBe(0.3);
   await player.reload();
+  await player.getByTestId('sound').locator(':scope > summary').click();
   await expect(player.getByTestId('listen-audio')).toBeVisible();
   expect(await mediaState(player)).toHaveLength(0);
   await player.getByTestId('listen-audio').click();
@@ -162,7 +169,8 @@ test('one stage presents shared narration while listeners join, refresh, and fol
       };
     });
     const nativeStage = await nativeContext.newPage();
-    await nativeStage.goto(`${path}/stage?identity=${identity}`);
+    await nativeStage.goto(`${path}/stage`);
+    await openOptions(nativeStage);
     await nativeStage.getByTestId('present-audio').click();
     await nativeStage.getByTestId('confirm-present-audio').click();
     await expect(nativeStage.getByTestId('release-audio')).toBeVisible();

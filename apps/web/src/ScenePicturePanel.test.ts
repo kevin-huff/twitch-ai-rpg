@@ -107,13 +107,26 @@ describe('ScenePicturePanel', () => {
     expect(w.find('img.scene-picture-preview').exists()).toBe(true);
   });
 
-  it('disables every button while the director is busy', () => {
+  it('disables the draw buttons while the director is busy but leaves Hide picture and Show picture enabled', async () => {
     const w = mountPanel(snapshot({}, { state: 'ready', imageId }), true);
     expect(button(w, 'new').attributes('disabled')).toBeDefined();
     expect(button(w, 'beat').attributes('disabled')).toBeDefined();
-    expect(button(w, 'hide').attributes('disabled')).toBeDefined();
+    expect(button(w, 'hide').attributes('disabled')).toBeUndefined();
+    await button(w, 'hide').trigger('click');
+    expect(w.emitted('hide')).toHaveLength(1);
     const hidden = mountPanel(snapshot({}, { state: 'ready', imageId, hidden: true }), true);
+    expect(button(hidden, 'show').attributes('disabled')).toBeUndefined();
+    await button(hidden, 'show').trigger('click');
+    expect(hidden.emitted('show')).toHaveLength(1);
+  });
+
+  it('disables Hide picture and Show picture while a toggle is in flight', async () => {
+    const shown = mount(ScenePicturePanel, { props: { snapshot: snapshot({}, { state: 'ready', imageId }), busy: false, toggling: true }, global: { stubs: { FieldGenerator: FieldGeneratorStub } } });
+    expect(button(shown, 'hide').attributes('disabled')).toBeDefined();
+    const hidden = mount(ScenePicturePanel, { props: { snapshot: snapshot({}, { state: 'ready', imageId, hidden: true }), busy: false, toggling: true }, global: { stubs: { FieldGenerator: FieldGeneratorStub } } });
     expect(button(hidden, 'show').attributes('disabled')).toBeDefined();
+    await button(shown, 'hide').trigger('click');
+    expect(shown.emitted('hide')).toBeUndefined();
   });
 
   it('allows Draw the place only while the show is live or paused and has started', () => {
@@ -190,7 +203,7 @@ describe('ScenePicturePanel', () => {
       const w = mountPanel(snapshot({ pictureSettings: settings }, {}, { brief }));
       const generator = w.getComponent(FieldGeneratorStub);
       expect(generator.props('premise')).toBe('A heist at sea');
-      expect(generator.props('premiseLabel')).toBe('Session scenario: The Ledger Job');
+      expect(generator.props('premiseLabel')).toBe('Show scenario: The Ledger Job');
       expect(generator.props('disabled')).toBe(false);
       for (const [snap, busy] of [[snapshot({ pictureSettings: settings }), true], [snapshot({ pictureSettings: settings }, {}, { status: 'ended' }), false]] as const) {
         await w.setProps({ snapshot: snap, busy });

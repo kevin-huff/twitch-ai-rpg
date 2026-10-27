@@ -2,7 +2,8 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { createPlaybackController } from './playback';
 
-const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean; compact?: boolean }>();
+const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean; compact?: boolean; autoPlayBeatId?: string | null }>();
+const emit = defineEmits<{ 'playback-failed': [message: string] }>();
 const controller = createPlaybackController({ ...props });
 const state = controller.state;
 const ownershipPending = ref(false);
@@ -44,6 +45,30 @@ async function confirmPresent() {
   await changePresenter();
 }
 
+// A failed shared command reports itself in state.error rather than throwing.
+async function startAndReport(beatId?: string) {
+  await controller.command('start', beatId);
+  if (state.error) emit('playback-failed', `The narration did not start. ${state.error}`);
+}
+async function startLatest() { await startAndReport(); }
+defineExpose({ startLatest });
+
+// Starts the narration of a just-published beat once, when the shared player is free and a presenter is connected.
+let autoPlayHandled: string | null = null;
+function autoPlay() {
+  const id = props.autoPlayBeatId;
+  if (!id || id === autoPlayHandled || id !== props.beatId || !directorControls.value || props.compact) return;
+  const snapshot = state.snapshot;
+  if (!snapshot || !latestReady.value || state.manifest?.beatId !== id) return;
+  if (!snapshot.presenter.available) { autoPlayHandled = id; return; }
+  if (snapshot.playbackId && snapshot.manifest?.beatId === id) { autoPlayHandled = id; return; }
+  if (snapshot.status === 'playing' || state.commandPending) return;
+  autoPlayHandled = id;
+  void startAndReport(id);
+}
+watch(() => [props.autoPlayBeatId, props.beatId, directorControls.value, state.snapshot?.status, state.snapshot?.playbackId, state.snapshot?.presenter.available,
+  state.audioStatus, state.manifest?.beatId, state.commandPending], autoPlay, { immediate: true });
+
 watch(presenterAvailable, available => { if (available && !state.presenting) confirming.value = false; });
 
 watch(() => [props.sessionId, props.beatId, props.director, props.stage], () => controller.setContext({ ...props }));
@@ -73,7 +98,7 @@ onUnmounted(() => controller.dispose());
 
     <template v-if="directorControls">
       <p class="audio-detail">{{ latestStatus }}</p>
-      <p v-if="!presenterAvailable" class="audio-detail">No browser is playing broadcast audio yet. Load the main show link in OBS. You will find it in Cast & lobby, under Stage & OBS links.</p>
+      <p v-if="!presenterAvailable" class="audio-detail">No browser is playing broadcast audio yet. Load the main show link in OBS. You will find it in Cast & lobby, under Stream this show.</p>
       <div class="actions">
         <button v-if="beatId && !latestReady" data-testid="prepare-audio" class="secondary" :disabled="state.preparing || state.audioStatus === 'preparing'" @click="controller.prepare()">{{ state.preparing ? 'Preparing…' : 'Prepare narration' }}</button>
         <button v-if="beatId && !currentIsLatest" data-testid="start-audio" class="secondary" :disabled="!canStart" @click="controller.command('start')">Play latest reviewed beat</button>
@@ -87,7 +112,8 @@ onUnmounted(() => controller.dispose());
       </div>
     </template>
 
-    <div v-if="stage" class="audio-presenter">
+    <details v-if="stage" class="audio-presenter" data-testid="audio-options">
+      <summary>Audio options</summary>
       <p class="audio-detail">One browser is the broadcast presenter. {{ state.presenting ? 'This browser is presenting audio.' : presenterAvailable ? 'Another browser is presenting audio.' : 'The main show link in OBS supplies broadcast audio. Present audio here takes it over.' }}</p>
       <div class="actions">
         <button v-if="state.presenting" data-testid="release-audio" class="secondary" :disabled="ownershipPending || state.commandPending" @click="changePresenter(true)">Release audio</button>
@@ -100,7 +126,7 @@ onUnmounted(() => controller.dispose());
           <button class="quiet" @click="confirming = false">Cancel</button>
         </div>
       </div>
-    </div>
+    </details>
 
     <div v-if="!stage && !state.presenting" class="actions audio-listening">
       <button v-if="!state.listening || state.muted" data-testid="listen-audio" class="secondary" :disabled="!state.snapshot || state.commandPending" @click="controller.listen()">Listen in this browser</button>
@@ -127,6 +153,7 @@ onUnmounted(() => controller.dispose());
 .audio-detail { margin: .65rem 0; color: var(--muted); }
 .audio-transport, .audio-listening { margin-top: .65rem; }
 .audio-presenter { margin-top: .9rem; }
+.audio-presenter summary { cursor: pointer; font-size: .85rem; }
 .audio-volume { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-top: .9rem; }
 .audio-volume input { width: 8rem; max-width: 100%; padding: 0; accent-color: var(--gold); }
 .audio-volume-value { min-width: 2.5rem; font-variant-numeric: tabular-nums; }

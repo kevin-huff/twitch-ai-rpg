@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicCharacter } from '@rpg/contracts';
 import StreamLinks from './StreamLinks.vue';
@@ -10,271 +10,245 @@ vi.mock('./api', () => ({ api: transport }));
 const characters = [{ id: 'pc-1', displayName: 'Aster' }, { id: 'pc-2', displayName: 'Briar' }] as unknown as PublicCharacter[];
 const future = '2027-01-01T00:00:00.000Z';
 const summary = (over: Record<string, unknown> = {}) => ({ id: 'link-show', sessionId: 'show', subject: 'show', label: 'Main show link', characterId: null, producerGrantId: null, canPresent: true, createdAt: '2026-10-22T12:00:00.000Z', expiresAt: future, revokedAt: null, ...over });
+const playerLink = (n: number, over: Record<string, unknown> = {}) => summary({ id: `link-pc-${n}`, subject: 'player', label: `Player ${n}`, characterId: `pc-${n}`, canPresent: false, ...over });
 const viewer = (role: 'host' | 'producer') => ({ role, sessionId: null, characterId: null, producer: role === 'producer' ? { grantId: 'grant-me', label: 'Sam', expiresAt: future } : null, streamLinkId: null, expiresAt: future });
 const producer = { id: 'grant-1', label: 'Robin', createdAt: '2026-10-22T12:00:00.000Z', expiresAt: future, revokedAt: null, lastSignedInAt: null, activeSignIns: 0 };
 
-async function openPanel(wrapper: ReturnType<typeof mount>) {
-  await wrapper.get('button[aria-expanded]').trigger('click'); await flushPromises();
+let wrapper: VueWrapper | null = null;
+function mountPanel(props: Record<string, unknown> = {}) {
+  wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters, ...props }, attachTo: document.body });
+  return wrapper;
 }
-const button = (wrapper: ReturnType<typeof mount>, text: string) => wrapper.findAll('button').find(item => item.text() === text)!;
+async function openPanel() {
+  (wrapper!.get('details').element as HTMLDetailsElement).open = true;
+  await wrapper!.get('details').trigger('toggle'); await flushPromises();
+}
+const tid = (id: string) => wrapper!.find(`[data-testid="${id}"]`);
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-10-23T12:00:00.000Z').getTime());
   window.history.replaceState({}, '', `/sessions/show/lobby?identity=${'a'.repeat(32)}`);
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
   transport.me.mockResolvedValue(viewer('host'));
   transport.producers.mockResolvedValue({ producers: [producer] });
   transport.streamLinks.mockResolvedValue({ links: [] });
-  transport.createStreamLink.mockResolvedValue({ link: summary(), token: 'tok/en+1' });
-  transport.streamLink.mockResolvedValue({ link: summary(), token: 'existing-token' });
-  transport.revokeStreamLink.mockResolvedValue(summary({ revokedAt: '2026-10-23T12:00:00.000Z' }));
+  transport.createStreamLink.mockImplementation(async (_s: string, body: { subject: string; characterId?: string; producerGrantId?: string }) => ({
+    link: body.subject === 'player' ? playerLink(Number(body.characterId?.slice(3)), { id: `new-${body.characterId}` }) : body.subject === 'producer' ? summary({ id: 'new-own', subject: 'producer', label: 'Producer Sam', producerGrantId: body.producerGrantId, canPresent: false }) : summary({ id: 'new-show' }),
+    token: `token-${body.characterId ?? body.subject}`,
+  }));
+  transport.streamLink.mockImplementation(async (_s: string, id: string) => ({ link: summary({ id }), token: `token-of-${id}` }));
+  transport.revokeStreamLink.mockImplementation(async (_s: string, id: string) => (id.startsWith('link-pc-') ? playerLink(Number(id.slice(-1)), { revokedAt: '2026-10-23T12:00:00.000Z' }) : summary({ id, revokedAt: '2026-10-23T12:00:00.000Z' })));
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { wrapper?.unmount(); wrapper = null; window.location.hash = ''; vi.restoreAllMocks(); });
 
-describe('Stage & OBS links panel', () => {
-  it('is closed by default with no controls and no requests', async () => {
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await flushPromises();
-    expect(wrapper.attributes('id')).toBe('stage-links');
-    expect(wrapper.get('h3').text()).toBe('Stage & OBS links');
-    expect(wrapper.get('button[aria-expanded]').attributes('aria-expanded')).toBe('false');
-    expect(wrapper.get('a').text()).toBe('OBS setup guide');
-    expect(wrapper.get('a').attributes('href')).toBe(`/help?identity=${'a'.repeat(32)}#stage-and-obs`);
-    expect(wrapper.findAll('input, select, textarea')).toHaveLength(0);
+describe('Stream this show (director)', () => {
+  it('is a closed fold named Stream this show and asks for nothing until opened', async () => {
+    mountPanel(); await flushPromises();
+    expect(wrapper!.get('details').attributes('id')).toBe('stage-links');
+    expect(tid('stream-setup').exists()).toBe(true);
+    expect(wrapper!.get('summary').text()).toBe('Stream this show');
+    expect(wrapper!.get('details').attributes('open')).toBeUndefined();
+    expect(wrapper!.get('a').text()).toBe('OBS setup guide');
+    expect(wrapper!.get('a').attributes('href')).toBe(`/help?identity=${'a'.repeat(32)}#stage-and-obs`);
     for (const fn of Object.values(transport)) expect(fn).not.toHaveBeenCalled();
-    wrapper.unmount();
   });
 
-  it('loads links when opened and creates the main show link', async () => {
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    expect(transport.streamLinks).toHaveBeenCalledWith('show');
-    await button(wrapper, 'Create main show link').trigger('click'); await flushPromises();
+  it('reveals every active token and creates missing cast links on first open, but not the main show link', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [playerLink(1)] });
+    mountPanel(); await openPanel();
+    expect(transport.me).toHaveBeenCalled();
+    expect(transport.producers).toHaveBeenCalled();
+    expect(transport.streamLink).toHaveBeenCalledWith('show', 'link-pc-1');
+    expect(transport.createStreamLink).toHaveBeenCalledTimes(1);
+    expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'player', characterId: 'pc-2' });
+    expect(transport.createStreamLink).not.toHaveBeenCalledWith('show', { subject: 'show' });
+    expect(tid('stream-row-player-pc-1').text()).toContain('Aster');
+    expect(tid('stream-row-player-pc-2').text()).toContain('Briar');
+    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').attributes('data-url')).toContain('token-of-link-pc-1');
+    expect(tid('stream-row-player-pc-2').find('[data-testid="copy-overlay"]').attributes('data-url')).toContain('token-pc-2');
+  });
+
+  it('loads only the first time it opens', async () => {
+    mountPanel(); await openPanel();
+    (wrapper!.get('details').element as HTMLDetailsElement).open = false;
+    await wrapper!.get('details').trigger('toggle');
+    (wrapper!.get('details').element as HTMLDetailsElement).open = true;
+    await wrapper!.get('details').trigger('toggle'); await flushPromises();
+    expect(transport.streamLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the group headings and offers the main show link when none is active', async () => {
+    mountPanel(); await openPanel();
+    const headings = wrapper!.findAll('h4').map(item => item.text());
+    expect(headings).toEqual(['For your stream', "For a cast member's own stream"]);
+    expect(tid('stream-row-show').exists()).toBe(false);
+    await tid('make-show-link').trigger('click'); await flushPromises();
     expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'show' });
-    expect(button(wrapper, 'Create main show link')).toBeUndefined();
-    wrapper.unmount();
+    expect(tid('make-show-link').exists()).toBe(false);
+    expect(tid('stream-row-show').text()).toContain('Main show link');
   });
 
-  it('lists only active links and offers producers to the host', async () => {
-    transport.streamLinks.mockResolvedValue({ links: [summary(), summary({ id: 'old', revokedAt: '2026-10-01T00:00:00.000Z', label: 'Old link' }), summary({ id: 'late', expiresAt: '2026-10-01T00:00:00.000Z', label: 'Late link' })] });
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    expect(wrapper.text()).toContain('Main show link');
-    expect(wrapper.text()).not.toContain('Old link');
-    expect(wrapper.text()).not.toContain('Late link');
-    const options = wrapper.findAll('select')[0]!.findAll('option').map(option => option.text());
-    expect(options).toEqual(['You', 'Producer Robin', 'Aster', 'Briar']);
-    wrapper.unmount();
+  it('shows an existing main show link with its card and a canPresent sound line', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [summary(), playerLink(1), playerLink(2)] });
+    mountPanel(); await openPanel();
+    expect(tid('make-show-link').exists()).toBe(false);
+    expect(tid('stream-row-show').text()).toContain('Main show link');
+    expect(tid('stream-row-show').text()).toContain('This link carries the show audio.');
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
   });
 
-  it('offers Host to a producer and uses the producer grant for You', async () => {
-    transport.me.mockResolvedValue(viewer('producer'));
-    transport.createStreamLink.mockResolvedValue({ link: summary({ id: 'link-p', subject: 'producer', producerGrantId: 'grant-me', canPresent: false, label: 'Sam' }), token: 'p-token' });
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    expect(transport.producers).not.toHaveBeenCalled();
-    expect(wrapper.findAll('select')[0]!.findAll('option').map(option => option.text())).toEqual(['You', 'Host', 'Aster', 'Briar']);
-    await button(wrapper, 'Create link').trigger('click'); await flushPromises();
-    expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'producer', producerGrantId: 'grant-me' });
-    await wrapper.findAll('select')[0]!.setValue('host');
-    await button(wrapper, 'Create link').trigger('click'); await flushPromises();
-    expect(transport.createStreamLink).toHaveBeenLastCalledWith('show', { subject: 'host' });
-    wrapper.unmount();
+  it('lists only active links, plus host and producer personal links for the host', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [
+      summary(), playerLink(1), playerLink(2),
+      summary({ id: 'old', subject: 'player', characterId: 'pc-1', revokedAt: '2026-10-01T00:00:00.000Z', label: 'Old link' }),
+      summary({ id: 'host-link', subject: 'host', label: 'Host', canPresent: false }),
+      summary({ id: 'prod-link', subject: 'producer', label: 'Producer', producerGrantId: 'grant-1', canPresent: false }),
+    ] });
+    mountPanel(); await openPanel();
+    expect(wrapper!.text()).not.toContain('Old link');
+    expect(tid('stream-row-host').text()).toContain('Host view');
+    expect(tid('stream-row-producer-grant-1').text()).toContain('Producer Robin');
+    expect(wrapper!.findAll('h4').map(item => item.text())).not.toContain('For your own stream');
+    expect(tid('stream-row-own-producer').exists()).toBe(false);
   });
 
-  it('creates links for a producer and a character', async () => {
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await wrapper.findAll('select')[0]!.setValue('producer:grant-1');
-    await button(wrapper, 'Create link').trigger('click'); await flushPromises();
-    expect(transport.createStreamLink).toHaveBeenLastCalledWith('show', { subject: 'producer', producerGrantId: 'grant-1' });
-    await wrapper.findAll('select')[0]!.setValue('player:pc-2');
-    await button(wrapper, 'Create link').trigger('click'); await flushPromises();
-    expect(transport.createStreamLink).toHaveBeenLastCalledWith('show', { subject: 'player', characterId: 'pc-2' });
-    wrapper.unmount();
-  });
-
-  it('keeps the token after # and puts layout and audio in the query', async () => {
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await button(wrapper, 'Create main show link').trigger('click'); await flushPromises();
-    const url = () => (wrapper.get('input[readonly]').element as HTMLInputElement).value;
-    expect(url()).toBe(`${window.location.origin}/stream?layout=scene&audio=present#token=tok%2Fen%2B1`);
-    const [, layout, audio] = wrapper.findAll('select');
-    expect(audio!.findAll('option').map(option => option.text())).toEqual(['Broadcast audio', 'Listen only', 'Off']);
-    await layout!.setValue('overlay'); await audio!.setValue('listen');
-    expect(url()).toBe(`${window.location.origin}/stream?layout=overlay&audio=listen#token=tok%2Fen%2B1`);
-    wrapper.unmount();
-  });
-
-  it('offers personal links only listen and off, and shows an existing link on request', async () => {
-    transport.streamLinks.mockResolvedValue({ links: [summary({ id: 'link-pc', subject: 'player', characterId: 'pc-1', canPresent: false, label: 'Aster' })] });
-    transport.streamLink.mockResolvedValue({ link: summary({ id: 'link-pc', subject: 'player', characterId: 'pc-1', canPresent: false, label: 'Aster' }), token: 'later-token' });
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    expect(wrapper.find('input[readonly]').exists()).toBe(false);
-    expect(wrapper.findAll('select')[2]!.findAll('option').map(option => option.text())).toEqual(['Listen only', 'Off']);
-    await button(wrapper, 'Show link').trigger('click'); await flushPromises();
-    expect(transport.streamLink).toHaveBeenCalledWith('show', 'link-pc');
-    expect((wrapper.get('input[readonly]').element as HTMLInputElement).value).toContain('audio=listen#token=later-token');
-    wrapper.unmount();
-  });
-
-  it('copies the link and always previews with audio off', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await button(wrapper, 'Create main show link').trigger('click'); await flushPromises();
-    await button(wrapper, 'Copy link').trigger('click'); await flushPromises();
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/stream?layout=scene&audio=present#token=tok%2Fen%2B1`);
-    expect(wrapper.get('.copied').text()).toBe('Copied');
-    expect(wrapper.find('[role="status"]').exists()).toBe(false);
-    await button(wrapper, 'Open preview').trigger('click');
-    expect(open).toHaveBeenCalledWith(`${window.location.origin}/stream?layout=scene&audio=off#token=tok%2Fen%2B1`, '_blank', 'noopener');
-    wrapper.unmount();
-  });
-
-  it('reports a failed copy and clears it after a later success', async () => {
-    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    const exec = vi.fn().mockReturnValue(false);
-    (document as unknown as { execCommand: unknown }).execCommand = exec;
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await button(wrapper, 'Create main show link').trigger('click'); await flushPromises();
-    await button(wrapper, 'Copy link').trigger('click'); await flushPromises();
-    expect(exec).toHaveBeenCalledWith('copy');
-    expect(wrapper.get('.copied').text()).toBe('Copy failed. Select the link and copy it.');
-    expect(wrapper.text()).not.toContain('Copied');
-    exec.mockReturnValue(true);
-    await button(wrapper, 'Copy link').trigger('click'); await flushPromises();
-    expect(wrapper.get('.copied').text()).toBe('Copied');
-    wrapper.unmount();
-  });
-
-  it('opens and scrolls into view when the page address ends in #stage-links', async () => {
-    const scroll = vi.fn();
-    (HTMLElement.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scroll;
-    window.history.replaceState({}, '', `/sessions/show/lobby?identity=${'a'.repeat(32)}#stage-links`);
-    try {
-      const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await flushPromises();
-      expect(wrapper.find('.links-body').exists()).toBe(true);
-      expect(transport.streamLinks).toHaveBeenCalled();
-      expect(scroll).toHaveBeenCalledWith({ block: 'start' });
-      wrapper.unmount();
-    } finally {
-      window.history.replaceState({}, '', `/sessions/show/lobby?identity=${'a'.repeat(32)}`);
-      delete (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
-    }
-  });
-
-  it('needs a confirmation before turning a link off', async () => {
+  it('has none of the old controls', async () => {
     transport.streamLinks.mockResolvedValue({ links: [summary()] });
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await button(wrapper, 'Revoke').trigger('click');
-    expect(transport.revokeStreamLink).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('Turn off this link? OBS sources using it switch to a holding screen within seconds.');
-    await button(wrapper, 'Keep link').trigger('click');
-    expect(transport.revokeStreamLink).not.toHaveBeenCalled();
-    await button(wrapper, 'Revoke').trigger('click');
-    await button(wrapper, 'Turn off link').trigger('click'); await flushPromises();
-    expect(transport.revokeStreamLink).toHaveBeenCalledWith('show', 'link-show');
-    expect(wrapper.text()).not.toContain('Main show link');
-    wrapper.unmount();
+    mountPanel(); await openPanel();
+    const text = wrapper!.text();
+    expect(text).not.toContain('Create a personal link for');
+    expect(text).not.toContain('Show link');
+    expect(text).not.toContain('Revoke');
+    expect(wrapper!.findAll('label').some(label => label.text().startsWith('Layout'))).toBe(false);
+    expect(wrapper!.findAll('label').some(label => label.text().startsWith('Audio'))).toBe(false);
   });
 
-  it('shows a plain message when links cannot be loaded', async () => {
-    transport.streamLinks.mockRejectedValue(new Error('boom'));
-    transport.me.mockRejectedValue(new Error('Sign in'));
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    expect(wrapper.text()).toContain('The stream links could not be loaded');
-    expect(wrapper.findAll('select')).toHaveLength(0);
-    wrapper.unmount();
+  it('gives a producer viewer their own link, created on first open, and no producer list', async () => {
+    transport.me.mockResolvedValue(viewer('producer'));
+    mountPanel(); await openPanel();
+    expect(transport.producers).not.toHaveBeenCalled();
+    expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'producer', producerGrantId: 'grant-me' });
+    expect(wrapper!.findAll('h4').map(item => item.text())).toContain('For your own stream');
+    expect(tid('stream-row-own-producer').text()).toContain('Your own stream link');
+    expect(tid('stream-row-own-producer').find('[data-testid="copy-scene"]').attributes('data-url')).toContain('token-producer');
   });
 
-  it('explains every control with its own help outside the label', async () => {
-    transport.streamLinks.mockResolvedValue({ links: [summary(), summary({ id: 'link-pc', subject: 'player', characterId: 'pc-1', canPresent: false, label: 'Aster' })] });
-    const wrapper = mount(StreamLinks, { props: { sessionId: 'show', characters } }); await openPanel(wrapper);
-    await wrapper.findAll('button').filter(item => item.text() === 'Show link')[0]!.trigger('click'); await flushPromises();
-    const controls = wrapper.findAll('input, select');
-    expect(controls.length).toBeGreaterThanOrEqual(6);
-    const seen = new Set<string>();
-    for (const control of controls) {
-      const ids = control.attributes('aria-describedby')?.split(/\s+/) ?? [];
-      expect(ids, control.element.outerHTML).toHaveLength(1);
-      expect(seen.has(ids[0]!)).toBe(false); seen.add(ids[0]!);
-      const nodes = wrapper.findAll('[id]').filter(node => node.attributes('id') === ids[0]);
-      expect(nodes).toHaveLength(1);
-      expect(nodes[0]!.classes()).toContain('field-help');
-      expect(nodes[0]!.text().length).toBeGreaterThan(20);
-      expect(nodes[0]!.element.closest('label')).toBeNull();
-    }
-    wrapper.unmount();
+  it('does not make a second own link for a producer who already has one', async () => {
+    transport.me.mockResolvedValue(viewer('producer'));
+    transport.streamLinks.mockResolvedValue({ links: [summary({ id: 'mine', subject: 'producer', producerGrantId: 'grant-me', label: 'Producer Sam', canPresent: false }), playerLink(1), playerLink(2)] });
+    mountPanel(); await openPanel();
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
+    expect(tid('stream-row-own-producer').exists()).toBe(true);
   });
-  describe('player mode', () => {
-    const own = (over: Record<string, unknown> = {}) => summary({ id: 'link-own', subject: 'player', characterId: 'pc-1', canPresent: false, label: 'Aster', ...over });
-    const mountPlayer = () => mount(StreamLinks, { props: { sessionId: 'show', characters, mode: 'player', ownCharacterId: 'pc-1' } });
 
-    it('is closed by default and makes no requests', async () => {
-      const wrapper = mountPlayer(); await flushPromises();
-      expect(wrapper.attributes('id')).toBe('my-stream-view');
-      expect(wrapper.get('h3').text()).toBe('My stream view');
-      expect(wrapper.get('button[aria-expanded]').text()).toBe('Show my stream view');
-      expect(wrapper.findAll('input, select, textarea')).toHaveLength(0);
-      for (const fn of Object.values(transport)) expect(fn).not.toHaveBeenCalled();
-      wrapper.unmount();
-    });
+  it('turns a link off and leaves Turned off with Make a new link, then makes a new one', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [summary(), playerLink(1), playerLink(2)] });
+    mountPanel(); await openPanel();
+    const row = tid('stream-row-player-pc-1');
+    await row.get('[data-testid="turn-off"]').trigger('click');
+    await row.get('[data-testid="turn-off-confirm"]').trigger('click'); await flushPromises();
+    expect(transport.revokeStreamLink).toHaveBeenCalledWith('show', 'link-pc-1');
+    expect(tid('stream-row-player-pc-1').text()).toContain('Turned off.');
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
+    await tid('make-new-link-link-pc-1').trigger('click'); await flushPromises();
+    expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'player', characterId: 'pc-1' });
+    expect(tid('stream-row-player-pc-1').text()).not.toContain('Turned off.');
+    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').exists()).toBe(true);
+  });
 
-    it('shows only the own link and never offers Broadcast audio', async () => {
-      transport.streamLinks.mockResolvedValue({ links: [summary(), own(), own({ id: 'other', characterId: 'pc-2', label: 'Briar' })] });
-      const wrapper = mountPlayer(); await openPanel(wrapper);
-      expect(transport.me).not.toHaveBeenCalled();
-      expect(transport.producers).not.toHaveBeenCalled();
-      expect(wrapper.text()).not.toContain('Main show link');
-      expect(wrapper.text()).not.toContain('Briar');
-      expect(wrapper.text()).not.toContain('Broadcast audio');
-      expect(wrapper.text()).toContain('you will hear the narration twice');
-      const audio = wrapper.findAll('select')[1]!;
-      expect(audio.findAll('option').map(option => option.text())).toEqual(['Listen only', 'Off']);
-      wrapper.unmount();
-    });
+  it('turns the main show link off and offers a new one, never recreating it by itself', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [summary(), playerLink(1), playerLink(2)] });
+    mountPanel(); await openPanel();
+    const row = tid('stream-row-show');
+    await row.get('[data-testid="turn-off"]').trigger('click');
+    await row.get('[data-testid="turn-off-confirm"]').trigger('click'); await flushPromises();
+    expect(tid('stream-row-show').text()).toContain('Turned off.');
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
+    await tid('make-new-link-link-show').trigger('click'); await flushPromises();
+    expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'show' });
+  });
 
-    it('creates the player link for its own character', async () => {
-      transport.createStreamLink.mockResolvedValue({ link: own(), token: 'own-token' });
-      const wrapper = mountPlayer(); await openPanel(wrapper);
-      expect(button(wrapper, 'Create main show link')).toBeUndefined();
-      await button(wrapper, 'Create my stream link').trigger('click'); await flushPromises();
-      expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'player', characterId: 'pc-1' });
-      expect((wrapper.get('input[readonly]').element as HTMLInputElement).value).toBe(`${window.location.origin}/stream?layout=scene&audio=listen#token=own-token`);
-      expect(wrapper.find('[role="status"]').exists()).toBe(false);
-      wrapper.unmount();
-    });
+  it('says so when a link could not be turned off', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [summary(), playerLink(1), playerLink(2)] });
+    transport.revokeStreamLink.mockRejectedValue(new Error('no'));
+    mountPanel(); await openPanel();
+    const row = tid('stream-row-player-pc-1');
+    await row.get('[data-testid="turn-off"]').trigger('click');
+    await row.get('[data-testid="turn-off-confirm"]').trigger('click'); await flushPromises();
+    expect(wrapper!.get('[role="alert"]').text()).toBe('This link could not be turned off. Try again.');
+    expect(tid('stream-row-player-pc-1').text()).not.toContain('Turned off.');
+  });
 
-    it('previews with audio off and revokes after confirming', async () => {
-      transport.streamLinks.mockResolvedValue({ links: [own()] });
-      transport.streamLink.mockResolvedValue({ link: own(), token: 'own-token' });
-      transport.revokeStreamLink.mockResolvedValue(own({ revokedAt: '2026-10-23T12:00:00.000Z' }));
-      const open = vi.spyOn(window, 'open').mockReturnValue(null);
-      const wrapper = mountPlayer(); await openPanel(wrapper);
-      await button(wrapper, 'Show link').trigger('click'); await flushPromises();
-      await button(wrapper, 'Open preview').trigger('click');
-      expect(open).toHaveBeenCalledWith(`${window.location.origin}/stream?layout=scene&audio=off#token=own-token`, '_blank', 'noopener');
-      await button(wrapper, 'Revoke').trigger('click');
-      await button(wrapper, 'Turn off link').trigger('click'); await flushPromises();
-      expect(transport.revokeStreamLink).toHaveBeenCalledWith('show', 'link-own');
-      expect(button(wrapper, 'Create my stream link')).toBeDefined();
-      wrapper.unmount();
-    });
+  it('shows a load failure with a way to try again', async () => {
+    transport.streamLinks.mockRejectedValue(new Error('down'));
+    mountPanel(); await openPanel();
+    expect(wrapper!.get('[role="alert"]').text()).toContain('The stream links could not be loaded.');
+    transport.streamLinks.mockResolvedValue({ links: [] });
+    transport.streamLinks.mockClear();
+    await tid('stream-links-retry').trigger('click'); await flushPromises();
+    expect(transport.streamLinks).toHaveBeenCalledTimes(1);
+    expect(tid('stream-row-player-pc-1').exists()).toBe(true);
+  });
 
-    it('gives every control its own help', async () => {
-      transport.streamLinks.mockResolvedValue({ links: [own()] });
-      transport.streamLink.mockResolvedValue({ link: own(), token: 'own-token' });
-      const wrapper = mountPlayer(); await openPanel(wrapper);
-      await button(wrapper, 'Show link').trigger('click'); await flushPromises();
-      const seen = new Set<string>();
-      for (const control of wrapper.findAll('input, select')) {
-        const id = control.attributes('aria-describedby')!;
-        expect(seen.has(id)).toBe(false); seen.add(id);
-        const node = wrapper.findAll('[id]').find(item => item.attributes('id') === id)!;
-        expect(node.classes()).toContain('field-help');
-        expect(node.text().length).toBeGreaterThan(20);
-        expect(node.element.closest('label')).toBeNull();
-      }
-      expect(seen.size).toBe(3);
-      wrapper.unmount();
-    });
+  it('offers a retry when a cast link could not be created', async () => {
+    transport.createStreamLink.mockRejectedValueOnce(new Error('no'));
+    transport.streamLinks.mockResolvedValue({ links: [playerLink(2)] });
+    mountPanel(); await openPanel();
+    expect(tid('stream-row-player-pc-1').text()).toContain('This link could not be created.');
+    await tid('stream-row-player-pc-1').get('button').trigger('click'); await flushPromises();
+    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').exists()).toBe(true);
+  });
+
+  it('opens and scrolls into view when the page address names #stage-links, on load', async () => {
+    window.location.hash = '#stage-links';
+    mountPanel(); await flushPromises();
+    expect(wrapper!.get('details').attributes('open')).toBeDefined();
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(transport.streamLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens when the hash changes to #stage-links later', async () => {
+    mountPanel(); await flushPromises();
+    expect(wrapper!.get('details').attributes('open')).toBeUndefined();
+    window.location.hash = '#stage-links';
+    window.dispatchEvent(new HashChangeEvent('hashchange')); await flushPromises();
+    expect(wrapper!.get('details').attributes('open')).toBeDefined();
+    expect(transport.streamLinks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Stream this show (reopen by link)', () => {
+  it('reopens the closed fold when a #stage-links link is pressed with the hash unchanged', async () => {
+    window.location.hash = '#stage-links';
+    mountPanel(); await flushPromises();
+    const details = wrapper!.get('details').element as HTMLDetailsElement;
+    details.open = false;
+    vi.mocked(window.HTMLElement.prototype.scrollIntoView).mockClear();
+    const link = document.createElement('a');
+    link.href = '#stage-links';
+    document.body.appendChild(link);
+    link.click();
+    await new Promise(resolve => setTimeout(resolve, 5)); await flushPromises();
+    link.remove();
+    expect(details.open).toBe(true);
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+});
+
+describe('Stream this show (player)', () => {
+  it('renders only the player\'s own stream panel', async () => {
+    mountPanel({ mode: 'player', ownCharacterId: 'pc-1' }); await flushPromises();
+    expect(wrapper!.get('details').attributes('id')).toBe('my-stream-view');
+    expect(tid('my-stream-view').exists()).toBe(true);
+    expect(tid('stream-setup').exists()).toBe(false);
+    expect(wrapper!.get('summary').text()).toBe('Stream this show');
+    for (const fn of Object.values(transport)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('does not react to #stage-links', async () => {
+    window.location.hash = '#stage-links';
+    mountPanel({ mode: 'player', ownCharacterId: 'pc-1' }); await flushPromises();
+    expect(transport.streamLinks).not.toHaveBeenCalled();
   });
 });

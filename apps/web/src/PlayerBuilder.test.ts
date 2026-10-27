@@ -98,6 +98,23 @@ describe('private character builder', () => {
     wrapper.unmount();
   });
 
+  it('counts a typed description as unsaved and blocks closing the builder', async () => {
+    const wrapper = mount(PlayerBuilder); await flushPromises();
+    const close = () => wrapper.findAll('button').find(button => button.text() === 'Close private builder')!;
+    expect(wrapper.text()).not.toContain('Unsaved changes');
+    expect(close().attributes('disabled')).toBeUndefined();
+    await wrapper.get('[data-testid="card-description"]').setValue('A courier with a red scarf');
+    expect(wrapper.text()).toContain('Unsaved changes');
+    expect(wrapper.text()).toContain('Save your progress before closing the private builder.');
+    expect(close().attributes('disabled')).toBeDefined();
+    await close().trigger('click'); await flushPromises();
+    expect(transport.logoutCharacterBuilder).not.toHaveBeenCalled();
+    await wrapper.get('[data-testid="card-description"]').setValue('   ');
+    expect(wrapper.text()).not.toContain('Unsaved changes');
+    expect(close().attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it('saves incomplete progress with its revision and preserves blank and sparse possessions', async () => {
     const wrapper = mount(PlayerBuilder); await flushPromises();
     await wrapper.get('[data-testid="card-name"]').setValue('');
@@ -227,9 +244,8 @@ describe('private character builder', () => {
   describe('whole card generation', () => {
     const response = (pronounsSuggested = false) => ({ card: { ...card, displayName: 'Generated', pronouns: 'she/her' }, notes: [], pronounsSuggested });
     async function generateWhole(wrapper: ReturnType<typeof mount>) {
-      await wrapper.get('[data-testid="card-generator-open"]').trigger('click');
-      await wrapper.get('[data-testid="card-generator-prompt"]').setValue('A courier');
-      await wrapper.get('[data-testid="card-generator-generate"]').trigger('click'); await flushPromises();
+      await wrapper.get('[data-testid="card-description"]').setValue('A courier');
+      await wrapper.get('[data-testid="write-card"]').trigger('click'); await flushPromises();
     }
     it('sends only the allowed fields and shows the instructions note', async () => {
       transport.generateBuilderCard.mockResolvedValue(response());
@@ -250,29 +266,37 @@ describe('private character builder', () => {
       expect(wrapper.find('[data-testid="reload-builder-draft"]').exists()).toBe(true);
       wrapper.unmount();
     });
-    it('blocks submit while pronouns are pending but not save, and keeps the block after saving', async () => {
+    it('never blocks saving or submitting because the AI picked the pronouns', async () => {
       transport.generateBuilderCard.mockResolvedValue(response(true));
       const wrapper = mount(PlayerBuilder); await flushPromises();
       await generateWhole(wrapper);
-      await wrapper.get('[data-testid="card-generator-apply"]').trigger('click'); await flushPromises();
+      expect(wrapper.get('[data-testid="card-pronouns-note"]').text()).toBe('The AI picked these pronouns. Change them if you like.');
+      expect((wrapper.get('[data-testid="card-name"]').element as HTMLInputElement).value).toBe('Generated');
+      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="keep-suggested-pronouns"]').exists()).toBe(false);
       const submit = () => wrapper.get('[data-testid="submit-builder-card"]');
-      expect(submit().attributes('disabled')).toBeDefined();
-      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(true);
-      const saveButton = wrapper.get('[data-testid="save-builder-draft"]');
-      expect(saveButton.attributes('disabled')).toBeUndefined();
-      await saveButton.trigger('click'); await flushPromises();
-      expect(transport.saveCharacterBuilder).toHaveBeenCalledTimes(1);
-      expect(submit().attributes('disabled')).toBeDefined();
-      expect(wrapper.find('[data-testid="pronouns-pending-notice"]').exists()).toBe(true);
-      await wrapper.get('[data-testid="keep-suggested-pronouns"]').trigger('click'); await flushPromises();
       expect(submit().attributes('disabled')).toBeUndefined();
+      await wrapper.get('[data-testid="save-builder-draft"]').trigger('click'); await flushPromises();
+      expect(transport.saveCharacterBuilder).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ displayName: 'Generated', pronouns: 'she/her' }) }));
+      expect(submit().attributes('disabled')).toBeUndefined();
+      await submit().trigger('click'); await flushPromises();
+      expect(transport.submitCharacterBuilder).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ displayName: 'Generated', pronouns: 'she/her' }) }));
+      expect(wrapper.text()).toContain('Submitted to the director');
+      wrapper.unmount();
+    });
+    it('saves the description as the Appearance when the player never presses Write my card', async () => {
+      const wrapper = mount(PlayerBuilder); await flushPromises();
+      await wrapper.get('[data-testid="card-description"]').setValue('A courier with a red scarf');
+      await wrapper.get('[data-testid="save-builder-draft"]').trigger('click'); await flushPromises();
+      expect(transport.saveCharacterBuilder).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ appearance: 'A courier with a red scarf' }) }));
+      expect(transport.generateBuilderCard).not.toHaveBeenCalled();
       wrapper.unmount();
     });
     it('renders no card generator after submit', async () => {
       const wrapper = mount(PlayerBuilder); await flushPromises();
       await wrapper.get('[data-testid="submit-builder-card"]').trigger('click'); await flushPromises();
       expect(wrapper.findComponent(CardGenerator).exists()).toBe(false);
-      expect(wrapper.find('[data-testid="card-generator-open"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="write-card"]').exists()).toBe(false);
       wrapper.unmount();
     });
   });
@@ -288,6 +312,8 @@ describe('private character builder', () => {
       const on = mount(PlayerBuilder); await flushPromises();
       expect(on.findComponent(CharacterForm).props('picturesEnabled')).toBe(true);
       expect(on.findComponent(CharacterForm).props('portraitUrl')!('abc')).toContain('/api/character-builder/images/abc');
+      expect(on.find('[data-testid="portrait-create"]').exists()).toBe(false);
+      await on.get('[data-testid="card-description"]').setValue('Tall, with a red scarf');
       expect(on.find('[data-testid="portrait-create"]').exists()).toBe(true);
       on.unmount();
     });

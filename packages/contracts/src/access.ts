@@ -72,3 +72,10 @@ export const InviteLinkSchema = z.strictObject({ invite: InviteSummarySchema, to
 export type InviteLink = z.infer<typeof InviteLinkSchema>;
 export const ReissueInviteSchema = z.strictObject({ commandId: id, signOutCurrent: z.boolean() });
 export type ReissueInvite = z.infer<typeof ReissueInviteSchema>;
+
+export const InvitePreviewRequestSchema = z.strictObject({ token: z.string().min(1).max(1024) });
+export type InvitePreviewRequest = z.infer<typeof InvitePreviewRequestSchema>;
+export const InvitePreviewResponseSchema = z.strictObject({
+  title: z.string().min(1).max(160), role: z.enum(['player', 'stage']), characterName: z.string().min(1).max(80).optional(),
+});
+export type InvitePreviewResponse = z.infer<typeof InvitePreviewResponseSchema>;

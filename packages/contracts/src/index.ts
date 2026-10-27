@@ -117,6 +117,7 @@ export const CharacterSchema = z.strictObject({
   templateRef: TemplateRefSchema.nullable().default(null), cardRevision: RevisionSchema.default(0),
   draft: CharacterCardDefinitionSchema.nullable().default(null), ready: z.boolean().default(false),
   acceptedBoundariesRevision: RevisionSchema.nullable().default(null), portraitId: authoredCharacter.portraitId,
+  cardSource: z.enum(['host', 'player']).optional(),
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
@@ -433,7 +434,8 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reveal_npc'), ...liveCommand, npcId: IdSchema, expectedNpcVersion: z.number().int().positive(),
     source: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('secret'), index: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal('identity') })]),
     publicText: z.string().trim().min(1).max(6000), witnessNpcIds: uniqueNpcIds }),
-  z.strictObject({ type: z.literal('save_character'), ...commandBase, expectedCharacterRevision: RevisionSchema, card: CharacterCardDefinitionSchema }),
+  z.strictObject({ type: z.literal('save_character'), ...commandBase, expectedCharacterRevision: RevisionSchema, card: CharacterCardDefinitionSchema, characterId: IdSchema.optional() }),
+  z.strictObject({ type: z.literal('remove_seat'), ...commandBase, expectedStateRevision: RevisionSchema, characterId: IdSchema }),
   z.strictObject({ type: z.literal('approve_character'), ...commandBase, characterId: IdSchema, expectedCharacterRevision: RevisionSchema }),
   z.strictObject({ type: z.literal('set_ready'), ...commandBase, expectedCharacterRevision: RevisionSchema, expectedBoundariesRevision: RevisionSchema, ready: z.boolean() }),
   z.strictObject({ type: z.literal('set_boundaries'), ...commandBase, expectedStateRevision: RevisionSchema, boundaries: z.array(z.string().trim().min(1).max(500)).max(30) }),

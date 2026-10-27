@@ -33,7 +33,7 @@ async function expectFieldHelp(page: Page) {
 
 const SUGGESTION = 'Keep serious injuries off screen.';
 
-test('writes a whole scenario with AI, loads it as an unsaved draft, confirms the suggested boundaries, saves it, and starts a show', async ({ page }) => {
+test('writes a whole scenario with AI, loads it as an unsaved draft, saves it with the AI-added boundaries, and makes a show that waits for player-written cards', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
@@ -75,7 +75,7 @@ test('writes a whole scenario with AI, loads it as an unsaved draft, confirms th
   await page.getByTestId('scenario-generator-preview').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/scenario-generator-preview.png' });
 
-  // Step 3: loading makes a new unsaved template, and saving stays blocked until the boundaries are kept.
+  // Step 3: loading makes a new unsaved template; the AI's boundaries sit in the box with a note, and saving is never blocked.
   await page.getByTestId('scenario-generator-apply').click();
   await expect(page.getByTestId('scenario-generator-preview')).toHaveCount(0);
   await expect(page.getByText('New template', { exact: true })).toBeVisible();
@@ -85,17 +85,15 @@ test('writes a whole scenario with AI, loads it as an unsaved draft, confirms th
   const title = await page.getByTestId('scenario-title').inputValue();
   expect(title).not.toBe('');
   expect(title).not.toBe('New scenario');
-  await expect(page.getByTestId('suggested-boundaries-notice')).toHaveText('The AI suggested some content boundaries. Read them, change or remove any, then press Keep these boundaries.');
-  await expect(page.getByTestId('suggested-boundaries-save-notice')).toBeVisible();
-  await expect(page.getByTestId('save-scenario')).toBeDisabled();
-  await page.getByTestId('suggested-boundaries-notice').scrollIntoViewIfNeeded();
-  await page.screenshot({ path: 'test-results/scenario-generator-loaded.png' });
-  await page.getByTestId('keep-suggested-boundaries').click();
+  await expect(page.getByTestId('boundaries-ai-note')).toHaveText('Added by the AI. Edit freely.');
+  await expect(page.getByTestId('scenario-boundaries')).toHaveValue(new RegExp(SUGGESTION.replace(/\./g, '\\.')));
   await expect(page.getByTestId('suggested-boundaries-notice')).toHaveCount(0);
   await expect(page.getByTestId('suggested-boundaries-save-notice')).toHaveCount(0);
   await expect(page.getByTestId('save-scenario')).toBeEnabled();
+  await page.getByTestId('boundaries-ai-note').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'test-results/scenario-generator-loaded.png' });
 
-  // Step 4: saving stores the generated places and the kept suggestion.
+  // Step 4: saving stores the generated places and the AI-added boundaries.
   await page.getByTestId('save-scenario').click();
   await expect(page.getByText('Editing version 1', { exact: true })).toBeVisible();
   const library = await api(page, '/library');
@@ -121,12 +119,13 @@ test('writes a whole scenario with AI, loads it as an unsaved draft, confirms th
   await expect(page.getByTestId('scenario-title')).toHaveValue(edited);
   await page.screenshot({ path: 'test-results/scenario-generator-replace.png' });
 
-  // Step 6: a custom show made from the saved scenario defaults every seat to a player-written card, and the lobby shows the premise.
+  // Step 6: a custom show made from the saved scenario defaults every seat to a player-written card, lands on Cast & lobby, and shows the premise.
   await page.getByTestId('show-title').fill('Harbor night');
   await page.getByTestId('show-scenario').selectOption(`${saved.id}:${saved.version}`);
   for (const index of [0, 1]) await expect(page.getByTestId(`show-seat-${index}`)).toHaveValue('player');
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await expect(page).toHaveURL(/\/sessions\/[^/]+\/lobby/);
+  await expect(page.getByTestId('ready-strip')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.setup.started).toBe(false);

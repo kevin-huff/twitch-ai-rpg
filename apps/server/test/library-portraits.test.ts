@@ -392,22 +392,47 @@ suite('builder and library portraits', () => {
     const sessionId = created.json().sessionId as string;
 
     const view = async () => (await call(`/api/sessions/${sessionId}`)).json() as DirectorSnapshot;
+    // Creation starts an automatic portrait, in the show's style, for every other non-player character with an appearance or role.
+    const needPortraits = (await view()).npcDetails.slice(1).filter(npc => npc.appearance.trim() || npc.role.trim());
+    expect(needPortraits.length).toBeGreaterThan(0);
+    const creationPortraits = async () => (await pool.query(
+      "SELECT id, subject_id, status, prompt FROM images WHERE session_id=$1 AND purpose='npc' ORDER BY created_at, id", [sessionId])).rows as Array<{ id: string; subject_id: string; status: string; prompt: string }>;
+    await waitFor(async () => {
+      const made = await creationPortraits();
+      return made.length === needPortraits.length && made.every(row => row.status === 'ready');
+    }, 'the creation portraits to finish');
+    const made = await creationPortraits();
+    expect(made.map(row => row.subject_id).sort()).toEqual(needPortraits.map(npc => npc.id).sort());
+    for (const row of made) expect(row.prompt.startsWith('Ink wash. '), row.prompt).toBe(true);
+    await waitFor(async () => (await view()).npcDetails.slice(1).every(npc => !needPortraits.some(need => need.id === npc.id) || npc.portraitId), 'the creation portraits to attach');
     const npcs = (await view()).npcDetails;
     expect(npcs[0]!.portraitId).toBe(portrait);
-    for (const npc of npcs.slice(1)) expect(npc.portraitId).toBeUndefined();
+    for (const npc of npcs.slice(1)) {
+      const automatic = made.find(row => row.subject_id === npc.id);
+      if (automatic) expect(npc.portraitId, npc.id).toBe(automatic.id);
+      else expect(npc.portraitId, npc.id).toBeUndefined();
+    }
     expect((await pool.query('SELECT brief FROM sessions WHERE id=$1', [sessionId])).rows[0].brief).toMatchObject({ pictureStyle: 'Ink wash' });
 
     // The scene picture for the opening scene is drawn in the show's style.
-    const before = provider.requests.length;
-    for (const character of (await view()).characterDetails) {
-      await call(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), type: 'approve_character', characterId: character.id, expectedCharacterRevision: character.cardRevision });
+    // Seats from saved cards start approved, so the show can start straight away.
+    const seats = (await view()).characterDetails;
+    expect(seats.length).toBeGreaterThan(0);
+    for (const character of seats) {
+      expect(character.approved, character.id).toBe(true);
+      expect(character.draft, character.id).toBeNull();
     }
     const started = await call(`/api/sessions/${sessionId}/commands`, {
       commandId: randomUUID(), type: 'start_session', expectedStateRevision: (await view()).session.stateRevision, overrideUnreadyReason: 'Testing a started show.',
     });
     expect(started.statusCode, started.body).toBe(200);
-    await waitFor(() => provider.requests.length > before, 'the scene picture request');
-    expect(provider.requests.at(-1)!.prompt.startsWith('Ink wash. ')).toBe(true);
+    const sceneRow = async () => (await pool.query("SELECT id FROM images WHERE session_id=$1 AND purpose='scene'", [sessionId])).rows[0] as { id: string } | undefined;
+    await waitFor(async () => {
+      const scene = await sceneRow();
+      return Boolean(scene && provider.requests.some(request => request.requestId === scene.id));
+    }, 'the scene picture request');
+    const sceneId = (await sceneRow())!.id;
+    expect(provider.requests.find(request => request.requestId === sceneId)!.prompt.startsWith('Ink wash. ')).toBe(true);
     await waitFor(async () => (await pool.query("SELECT 1 FROM images WHERE session_id=$1 AND purpose='scene' AND status='ready'", [sessionId])).rowCount === 1, 'the scene picture to finish');
     // The portrait from the library is still readable through the show by the director.
     expect((await call(`/api/sessions/${sessionId}/images/${portrait}`)).statusCode).toBe(200);

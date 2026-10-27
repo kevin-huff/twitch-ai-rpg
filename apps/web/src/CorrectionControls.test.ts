@@ -132,4 +132,34 @@ describe('director corrections', () => {
     const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
     expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeDefined(); wrapper.unmount();
   });
+
+  it.each([undefined, true])('explains that a practice show before its first beat has no corrections yet (setup started: %s)', started => {
+    const current = snapshot();
+    current.session.status = 'lobby';
+    if (started !== undefined) current.setup = { started } as DirectorSnapshot['setup'];
+    const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+    expect(wrapper.get('.notice').text()).toBe("Corrections start after the show's first beat. Open a conversation or an action round first.");
+    expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).not.toMatch(/session|table/i); wrapper.unmount();
+  });
+
+  it('says the show has ended when the show is over', () => {
+    const current = snapshot();
+    current.session.status = 'ended';
+    const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+    expect(wrapper.get('.notice').text()).toBe('The show has ended.');
+    expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeDefined(); wrapper.unmount();
+  });
+
+  it('uses show wording for a not-started show and a changed-show warning', async () => {
+    const current = snapshot();
+    current.setup = { started: false } as DirectorSnapshot['setup'];
+    const notStarted = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+    expect(notStarted.get('.notice').text()).toBe('Start the show before recording corrections.'); notStarted.unmount();
+    const live = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(live);
+    await live.setProps({ snapshot: { ...snapshot(), session: { ...snapshot().session, stateRevision: 8 } } });
+    expect(live.get('.notice').text()).toContain('The show changed while you were editing.');
+    expect(live.text()).not.toMatch(/session|table/i); live.unmount();
+  });
 });

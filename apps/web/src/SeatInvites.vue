@@ -19,9 +19,9 @@ const copied = ref('');
 const copyFailed = ref('');
 const urlInputs = new Map<string, HTMLInputElement>();
 
-const rows = computed(() => invites.value.filter(item => item.status !== 'replaced'));
+const rows = computed(() => invites.value.filter(item => item.role === 'player' && item.status !== 'replaced'));
 const statusWord = (invite: InviteSummary) => ({ waiting: 'Waiting', joined: 'Joined', expired: 'Expired', revoked: 'Revoked', replaced: 'Replaced' })[invite.status];
-const seatName = (invite: InviteSummary) => invite.role === 'stage' ? 'Stage' : props.characters.find(item => item.id === invite.characterId)?.displayName ?? 'Player';
+const seatName = (invite: InviteSummary) => props.characters.find(item => item.id === invite.characterId)?.displayName ?? 'Player';
 const urlOf = (id: string) => tokens.value[id] ? `${window.location.origin}/join/${encodeURIComponent(tokens.value[id])}` : '';
 
 async function load() {

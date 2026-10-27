@@ -9,119 +9,111 @@ vi.mock('./api', () => ({ api: transport }));
 import DirectorStatusStrip from './DirectorStatusStrip.vue';
 
 const NOW = Date.parse('2026-10-28T20:00:00Z');
-const submission = (id: string, kind: 'say' | 'act' | 'ooc', status = 'queued') => ({ id, sessionId: 's', characterId: 'c', contextBeatId: null, inputEpoch: 0, revision: 1, kind, text: 'x', recipientNpcIds: [], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true, status });
+const job = (id: string, status: string, beatId = 'beat') => ({ id, beatId, task: 'render', generation: 1, status, error: null });
+const active = { id: 'beat', phase: 'collecting' };
 
 function snapshot(patch: Record<string, unknown> = {}) {
   return { role: 'director', session: { status: 'live' }, history: [], submissions: [], jobs: [], activeBeat: null, ...patch } as unknown as DirectorSnapshot;
 }
-const playback = (available: boolean, source?: 'show_link' | 'preview' | null) => ({ presenter: { available, leaseExpiresAtMs: null, ...(source === undefined ? {} : { source }) } });
+const playback = (available: boolean) => ({ presenter: { available, leaseExpiresAtMs: null } });
 const mountStrip = (patch: Record<string, unknown> = {}) => mount(DirectorStatusStrip, { props: { snapshot: snapshot(patch), sessionId: 'show one' } });
+const audioEvents = (wrapper: ReturnType<typeof mountStrip>) => (wrapper.emitted('audio') ?? []).map(args => args[0]);
 
 describe('DirectorStatusStrip', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); transport.playback.mockReset(); transport.playback.mockResolvedValue(playback(true)); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.each([['live', 'Live'], ['paused', 'Paused'], ['lobby', 'Lobby'], ['ended', 'Ended']])('names the %s state in words', async (status, text) => {
-    const wrapper = mountStrip({ session: { status } });
-    await flushPromises();
-    expect(wrapper.text()).toContain(text);
-    wrapper.unmount();
-  });
-
-  it('counts lines and questions separately, ignoring locked and published input', async () => {
-    const wrapper = mountStrip({ submissions: [submission('a', 'say'), submission('b', 'act', 'selected'), submission('c', 'ooc'), submission('d', 'say', 'locked'), submission('e', 'say', 'published')] });
-    await flushPromises();
-    expect(wrapper.text()).toContain('Queue: 2 lines · 1 question');
-    wrapper.unmount();
-  });
-
-  it('shows presenting audio without a setup link', async () => {
+  it('renders nothing when all is well', async () => {
     const wrapper = mountStrip();
     await flushPromises();
-    expect(wrapper.text()).toContain('Stage audio: presenting');
-    expect(wrapper.find('a').exists()).toBe(false);
+    expect(wrapper.find('.status-strip').exists()).toBe(false);
+    expect(wrapper.text()).toBe('');
     wrapper.unmount();
   });
 
-  it('names the OBS show link as the presenter', async () => {
-    transport.playback.mockResolvedValue(playback(true, 'show_link'));
-    const wrapper = mountStrip();
-    await flushPromises();
-    expect(wrapper.text()).toContain('Stage audio: OBS show link');
-    expect(wrapper.find('a').exists()).toBe(false);
-    wrapper.unmount();
-  });
-
-  it('names a stage preview tab as the presenter', async () => {
-    transport.playback.mockResolvedValue(playback(true, 'preview'));
-    const wrapper = mountStrip();
-    await flushPromises();
-    expect(wrapper.text()).toContain('Stage audio: a stage preview tab');
-    expect(wrapper.find('a').exists()).toBe(false);
-    wrapper.unmount();
-  });
-
-  it('links to the stage and OBS links when nobody presents, and follows the five second poll', async () => {
+  it('warns with a link to Stream this show when nobody presents, and follows the five second poll', async () => {
     transport.playback.mockResolvedValue(playback(false));
     const wrapper = mountStrip();
     await flushPromises();
-    expect(wrapper.text()).toContain('Stage audio: no presenter');
-    expect(wrapper.find('a').text()).toBe('Set up stage audio');
+    expect(wrapper.find('ul').attributes('aria-label')).toBe('Show warnings');
+    expect(wrapper.get('[data-testid="warning-no-audio"]').text()).toContain('No show audio');
+    expect(wrapper.find('a').text()).toBe('Stream this show');
     expect(wrapper.find('a').attributes('href')).toContain('/sessions/show%20one/lobby#stage-links');
     transport.playback.mockResolvedValue(playback(true));
     await vi.advanceTimersByTimeAsync(5000);
     expect(transport.playback).toHaveBeenCalledTimes(2);
-    expect(wrapper.text()).toContain('Stage audio: presenting');
+    expect(wrapper.find('[data-testid="warning-no-audio"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it('reports unknown stage audio when the lookup fails', async () => {
+  it("warns when the show audio can't be checked", async () => {
     transport.playback.mockRejectedValue(new Error('offline'));
     const wrapper = mountStrip();
     await flushPromises();
-    expect(wrapper.text()).toContain('Stage audio: unknown');
+    expect(wrapper.get('[data-testid="warning-audio-unknown"]').text()).toBe("Can't check the show audio");
     wrapper.unmount();
   });
 
-  it('shows the last publish and refreshes it every 30 seconds', async () => {
-    const wrapper = mountStrip({ history: [{ id: 'b', publishedAt: new Date(NOW - 3 * 60000).toISOString() }] });
-    await flushPromises();
-    expect(wrapper.text()).toContain('Last publish: 3 min ago');
-    await vi.advanceTimersByTimeAsync(60000);
-    expect(wrapper.text()).toContain('Last publish: 4 min ago');
-    wrapper.unmount();
-  });
-
-  it('says so when nothing has been published', async () => {
+  it('emits audio after the first poll and on every change only', async () => {
     const wrapper = mountStrip();
     await flushPromises();
-    expect(wrapper.text()).toContain('Nothing published yet');
+    expect(audioEvents(wrapper)).toEqual(['presenting']);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(audioEvents(wrapper)).toEqual(['presenting']);
+    transport.playback.mockResolvedValue(playback(false));
+    await vi.advanceTimersByTimeAsync(5000);
+    transport.playback.mockRejectedValue(new Error('offline'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(audioEvents(wrapper)).toEqual(['presenting', 'none', 'unknown']);
     wrapper.unmount();
   });
 
-  it('shows the AI chip only while a job for the active beat is waiting or running', async () => {
-    const job = (task: string, status: string, beatId = 'beat') => ({ id: `${task}${status}${beatId}`, beatId, task, generation: 1, status, error: null });
-    const active = { id: 'beat', phase: 'collecting' };
-    const planning = mountStrip({ activeBeat: active, jobs: [job('plan', 'running')] });
-    const drafting = mountStrip({ activeBeat: active, jobs: [job('render', 'queued')] });
-    const idle = mountStrip({ activeBeat: active, jobs: [job('plan', 'succeeded'), job('render', 'running', 'other')] });
+  it('shows the stuck warning only after a job of the active beat has been seen for over 60 seconds', async () => {
+    const wrapper = mountStrip({ activeBeat: active, jobs: [job('j1', 'running')] });
     await flushPromises();
-    expect(planning.text()).toContain('AI: planning…');
-    expect(drafting.text()).toContain('AI: drafting…');
-    expect(idle.text()).not.toContain('AI:');
-    for (const wrapper of [planning, drafting, idle]) wrapper.unmount();
-  });
-
-  it('uses no audio-panel or status classes', async () => {
-    const wrapper = mountStrip();
-    await flushPromises();
-    expect(wrapper.find('.audio-panel').exists()).toBe(false);
-    expect(wrapper.find('.status').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(59000);
+    expect(wrapper.find('[data-testid="warning-stuck"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-testid="warning-stuck"]').text()).toBe('The AI is taking longer than usual (61 s)');
     wrapper.unmount();
   });
 
-  it('clears both timers when it unmounts', async () => {
-    const wrapper = mountStrip();
+  it('ignores finished jobs and jobs of other beats', async () => {
+    const wrapper = mountStrip({ activeBeat: active, jobs: [job('a', 'succeeded'), job('b', 'running', 'other')] });
+    await flushPromises();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(90000);
+    expect(wrapper.find('[data-testid="warning-stuck"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('starts the clock for a new job later, counting from when it was first seen', async () => {
+    const wrapper = mountStrip({ activeBeat: active });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(100000);
+    await wrapper.setProps({ snapshot: snapshot({ activeBeat: active, jobs: [job('late', 'queued')] }) });
+    expect(wrapper.find('[data-testid="warning-stuck"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(61000);
+    expect(wrapper.find('[data-testid="warning-stuck"]').exists()).toBe(true);
+    await wrapper.setProps({ snapshot: snapshot({ activeBeat: active, jobs: [job('late', 'succeeded')] }) });
+    expect(wrapper.find('[data-testid="warning-stuck"]').exists()).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+    wrapper.unmount();
+  });
+
+  it('ticks a clock only while a job is waiting or running', async () => {
+    const idle = mountStrip();
+    await flushPromises();
+    expect(vi.getTimerCount()).toBe(1);
+    idle.unmount();
+    const busy = mountStrip({ activeBeat: active, jobs: [job('j', 'queued')] });
+    await flushPromises();
+    expect(vi.getTimerCount()).toBe(2);
+    busy.unmount();
+  });
+
+  it('clears every timer when it unmounts', async () => {
+    const wrapper = mountStrip({ activeBeat: active, jobs: [job('j', 'running')] });
     await flushPromises();
     expect(vi.getTimerCount()).toBe(2);
     wrapper.unmount();

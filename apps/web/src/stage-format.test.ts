@@ -14,7 +14,7 @@ describe('stage-format', () => {
   });
   it('names speakers', () => {
     expect(speakerName({ kind: 'npc_dialogue', speaker: { entityId: 'a', displayName: 'Bram' } })).toBe('Bram');
-    expect(speakerName({ kind: 'system', speaker: null })).toBe('The table');
+    expect(speakerName({ kind: 'system', speaker: null })).toBe('The show');
     expect(speakerName({ kind: 'narration', speaker: null })).toBe('Narrator');
   });
   it('names speaker roles', () => {

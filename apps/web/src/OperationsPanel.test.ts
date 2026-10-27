@@ -45,7 +45,7 @@ describe('director session status and usage', () => {
 
   it('shows unlimited limits, recorded attempts, coverage and unavailable billing fields honestly', async () => {
     const wrapper = panel(); await flushPromises();
-    expect(wrapper.text()).toContain('Limits: Unlimited');
+    expect(wrapper.text()).not.toContain('Limits: Unlimited');
     expect(wrapper.get('summary').text()).toContain('Recorded usage');
     expect(wrapper.get(field('ai-attempts')).text()).toBe('7');
     expect(wrapper.get(field('speech-attempts')).text()).toBe('2');

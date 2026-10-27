@@ -6,24 +6,26 @@ import { api } from './api';
 import { selectIdentity } from './identity';
 import { pictureUrl } from './pictures';
 import CharacterForm from './CharacterForm.vue';
+import { withDescription } from './card-description';
 import ErrorNotice from './ErrorNotice.vue';
 
 const snapshot = ref<CharacterBuilderSnapshot | null>(null);
 const form = ref<CharacterBuilderDraft | null>(null);
+const description = ref('');
 const baseline = ref('');
 const busy = ref(false);
 const error = ref('');
 const status = ref('');
 const conflict = ref(false);
-const pronounsPending = ref(false);
 const cardNote = computed(() => snapshot.value?.instructions?.trim() ? "The director's instructions are sent too." : undefined);
-const dirty = computed(() => form.value !== null && JSON.stringify(form.value) !== baseline.value);
+const dirty = computed(() => form.value !== null && (JSON.stringify(form.value) !== baseline.value || description.value.trim() !== ''));
 const submitted = computed(() => Boolean(snapshot.value?.submittedTemplate));
 let retryCommand: { key: string; commandId: string } | undefined;
 
 function accept(next: CharacterBuilderSnapshot) {
   snapshot.value = next;
   form.value = JSON.parse(JSON.stringify(next.draft));
+  description.value = '';
   baseline.value = JSON.stringify(form.value);
   conflict.value = false;
   retryCommand = undefined;
@@ -44,15 +46,14 @@ onMounted(async () => {
       const result = await api.accessCharacterBuilder(tokens[0]);
       selectIdentity(result.identityId);
       accept(result.builder);
-      pronounsPending.value = false;
-    } else { accept(await api.characterBuilder()); pronounsPending.value = false; }
+    } else accept(await api.characterBuilder());
   } catch (reason) { report(reason); }
   finally { busy.value = false; }
 });
 async function reload() {
   if (busy.value) return;
   busy.value = true; error.value = ''; status.value = '';
-  try { accept(await api.characterBuilder()); pronounsPending.value = false; status.value = 'Saved draft loaded.'; }
+  try { accept(await api.characterBuilder()); status.value = 'Saved draft loaded.'; }
   catch (reason) { report(reason); }
   finally { busy.value = false; }
 }
@@ -95,7 +96,7 @@ const portraitUrl = (imageId: string) => pictureUrl({ kind: 'builder' }, imageId
 async function save(submit: boolean) {
   if (!form.value || !snapshot.value || busy.value || submitted.value || conflict.value) return;
   error.value = ''; status.value = '';
-  const draft = { ...form.value, possessions: Array.from(form.value.possessions, value => value ?? '') };
+  const draft = { ...withDescription(form.value as never, description.value) as CharacterBuilderDraft, possessions: Array.from(form.value.possessions, value => value ?? '') };
   const parsed = submit
     ? CharacterCardDefinitionSchema.safeParse({ ...draft, possessions: draft.possessions.filter(value => value.trim()) })
     : CharacterBuilderDraftSchema.safeParse(draft);
@@ -145,8 +146,8 @@ async function close() {
       <p class="muted">This link opens only your character draft. Keep it private. It expires {{ new Date(snapshot.expiresAt).toLocaleString() }}.</p>
       <template v-if="submitted"><h2>Submitted to the director</h2><p>The director will review your reusable card before use in a show. Your draft is now read-only.</p><p>Available in the director’s character library · version {{ snapshot.submittedTemplate!.version }}</p></template>
       <template v-else><p>Save progress whenever you like, even with unfinished fields. Return using this same private link.</p><p v-if="conflict" class="notice">The saved draft changed. Your unsaved words are preserved. Copy any words you want to keep before loading the saved draft.<button type="button" data-testid="reload-builder-draft" :disabled="busy" @click="reload">Reload saved draft</button></p></template>
-      <CharacterForm v-model="form" :disabled="busy || submitted" :generation-enabled="!submitted && !conflict" :generation-context="`${snapshot.id}:${snapshot.revision}`" :instructions="snapshot.instructions" :generate="generate" :generate-card="generateCard" :card-generation-note="cardNote" :pictures-enabled="snapshot.picturesEnabled === true" :generate-portrait="generatePortrait" :portrait-url="portraitUrl" v-model:pronouns-pending="pronounsPending" />
-      <template v-if="!submitted"><p id="builder-submit-help">Submitting sends the current form to the director as one reusable card. You cannot edit this draft after submitting.</p><p v-if="pronounsPending" class="notice" data-testid="pronouns-pending-notice" role="status">Check the pronouns the AI suggested first. Press Keep these pronouns, or change the Pronouns box.</p><div class="builder-actions"><button type="button" class="secondary" data-testid="save-builder-draft" :disabled="busy || conflict" @click="save(false)">Save progress</button><button type="button" data-testid="submit-builder-card" aria-describedby="builder-submit-help" :disabled="busy || conflict || pronounsPending" @click="save(true)">Submit to director</button></div><p v-if="dirty" class="muted">Unsaved changes</p></template>
+      <CharacterForm v-model="form" v-model:description="description" :disabled="busy || submitted" :generation-enabled="!submitted && !conflict" :generation-context="`${snapshot.id}:${snapshot.revision}`" :instructions="snapshot.instructions" :generate="generate" :generate-card="generateCard" :card-generation-note="cardNote" :pictures-enabled="snapshot.picturesEnabled === true" :generate-portrait="generatePortrait" :portrait-url="portraitUrl" />
+      <template v-if="!submitted"><p id="builder-submit-help">Submitting sends the current form to the director as one reusable card. You cannot edit this draft after submitting.</p><div class="builder-actions"><button type="button" class="secondary" data-testid="save-builder-draft" :disabled="busy || conflict" @click="save(false)">Save progress</button><button type="button" data-testid="submit-builder-card" aria-describedby="builder-submit-help" :disabled="busy || conflict" @click="save(true)">Submit to director</button></div><p v-if="dirty" class="muted">Unsaved changes</p></template>
       <button type="button" class="quiet" :disabled="busy || dirty" @click="close">Close private builder</button>
       <p v-if="dirty" class="field-help">Save your progress before closing the private builder.</p>
     </template>

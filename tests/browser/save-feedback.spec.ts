@@ -27,6 +27,7 @@ for (const width of [1280, 390]) {
     await expect(title).not.toHaveValue('New scenario');
     const titleBefore = await title.inputValue();
     await title.fill('');
+    await page.getByTestId('fine-tune').locator(':scope > summary').click();
     const notes = page.getByLabel('Director notes', { exact: true });
     await notes.fill('Keep these unsaved notes after a failed save.');
     const save = page.getByTestId('save-scenario');

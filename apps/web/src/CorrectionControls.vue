@@ -22,8 +22,10 @@ let epoch = 0;
 let nextKey = 0;
 let retry: { key: string; commandId: string } | undefined;
 const gate = computed(() => {
-  if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the session before recording corrections.';
-  if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Corrections are available while the session is live or paused.';
+  if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the show before recording corrections.';
+  if (props.snapshot.session.status === 'ended') return 'The show has ended.';
+  if (props.snapshot.session.status === 'lobby') return "Corrections start after the show's first beat. Open a conversation or an action round first.";
+  if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Corrections are available while the show is live or paused.';
   if (props.snapshot.activeBeat) return 'Finish or abandon the current beat before recording a correction.';
   if (!props.snapshot.history.length) return 'Publish a beat before recording a correction.';
   return '';
@@ -105,7 +107,7 @@ function save() {
     <p v-if="savedNotice" class="notice" role="status">{{ savedNotice }}</p>
     <button v-if="!baseline" type="button" class="secondary" data-testid="begin-correction" :disabled="locked" @click="begin">Record a correction</button>
     <form v-else novalidate @submit.prevent="save">
-      <p v-if="stale" class="notice">The table changed while you were editing. Your unsaved words are preserved. Copy anything you want to keep before reloading.<button type="button" class="quiet" data-testid="reload-correction" :disabled="locked" @click="begin">Discard changes and reload</button></p>
+      <p v-if="stale" class="notice">The show changed while you were editing. Your unsaved words are preserved. Copy anything you want to keep before reloading.<button type="button" class="quiet" data-testid="reload-correction" :disabled="locked" @click="begin">Discard changes and reload</button></p>
       <fieldset :disabled="locked">
         <label>Published beat<select v-model="beatId" data-testid="correction-beat" :aria-describedby="helpId('beat')"><option v-for="beat in baseline.history" :key="beat.id" :value="beat.id">Beat {{ beat.beatNumber }} · {{ beat.kind }}</option></select></label>
         <p :id="helpId('beat')" class="field-help">Choose any published beat, including an older one. The correction applies to the current saved state.</p>

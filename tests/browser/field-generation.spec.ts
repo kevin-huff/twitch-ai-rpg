@@ -10,10 +10,18 @@ async function api(page: Page, path: string, body?: unknown) {
   return result.data;
 }
 
+// The name and description boxes carry no help line of their own: the short card form keeps only the lines that say more than the label.
+const LABEL_ONLY = ['card-name', 'card-description'];
+
+async function openSummary(scope: Pick<Page, 'getByTestId'>, testId: string) {
+  const fold = scope.getByTestId(testId);
+  if (!(await fold.evaluate(details => (details as HTMLDetailsElement).open))) await fold.locator(':scope > summary').click();
+}
+
 async function expectFieldHelp(page: Page) {
-  const issues = await page.locator('input, textarea, select').evaluateAll(controls => {
+  const issues = await page.locator('input, textarea, select').evaluateAll((controls, labelOnly) => {
     const nodes = [...document.querySelectorAll<HTMLElement>('[id]')];
-    return controls.filter(control => control.checkVisibility()).flatMap(control => {
+    return controls.filter(control => control.checkVisibility() && !labelOnly.includes(control.getAttribute('data-testid') ?? '')).flatMap(control => {
       const label = control.getAttribute('aria-label') || control.getAttribute('data-testid') || control.closest('label')?.textContent || control.tagName;
       const ids = control.getAttribute('aria-describedby')?.split(/\s+/).filter(Boolean) ?? [];
       if (!ids.length) return [`${label}: missing explanation`];
@@ -27,7 +35,7 @@ async function expectFieldHelp(page: Page) {
         return [];
       });
     });
-  });
+  }, LABEL_ONLY);
   expect(issues).toEqual([]);
 }
 
@@ -39,6 +47,7 @@ test('keeps field explanations visible and linked across scenario, character, an
   await page.getByTestId('library-link').click();
   await page.getByRole('button', { name: 'Use rehearsal scenario', exact: true }).click();
   await expect(page.getByLabel('Premise', { exact: true })).not.toHaveValue('');
+  await openSummary(page, 'fine-tune');
   await page.locator('details').evaluateAll(details => details.forEach(detail => detail.setAttribute('open', '')));
   for (const width of [1280, 650, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -56,7 +65,10 @@ test('keeps field explanations visible and linked across scenario, character, an
   await page.getByRole('button', { name: 'Cancel generation for Genre', exact: true }).click();
   await page.getByRole('button', { name: 'New character', exact: true }).click();
   await expectFieldHelp(page);
-  await expect(page.getByLabel('Character name', { exact: true })).toHaveAccessibleDescription(/public/i);
+  await expect(page.getByLabel('Character name', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('card-name-only')).toHaveText('Only a name is needed.');
+  await openSummary(page, 'card-more');
+  await expect(page.getByTestId('card-appearance')).toHaveAccessibleDescription(/cast/i);
   await expect(page.getByRole('combobox', { name: 'force', exact: true })).toHaveAccessibleDescription(/strength.*\+2, \+1, \+1, and \+0/i);
   await page.getByTestId('card-name').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/field-help-character-narrow.png' });
@@ -75,6 +87,7 @@ test('chooses an unsaved premise or a custom description and explicitly selects 
   await page.getByLabel('Premise', { exact: true }).fill(premise);
   const requests: unknown[] = [];
   page.on('request', request => { if (request.url().endsWith('/api/authoring/generate-field')) requests.push(request.postDataJSON()); });
+  await openSummary(page, 'fine-tune');
   await page.getByRole('button', { name: 'AI Generate Genre', exact: true }).click();
   await expect(page.getByTestId('field-generator-source')).toBeVisible({ timeout: 2000 });
   await expect(page.getByTestId('field-generator-source')).toHaveValue('description');
@@ -110,6 +123,7 @@ test('chooses an unsaved premise or a custom description and explicitly selects 
   await page.getByTestId(`edit-character-${card.id}`).click();
   await expect(page.getByTestId('character-premise-source')).toHaveValue('');
   await page.getByTestId('character-premise-source').selectOption(`${scenario.id}:2`);
+  await openSummary(page, 'card-more');
   await page.getByRole('button', { name: 'AI Generate Backstory', exact: true }).click();
   await page.getByTestId('field-generator-source').selectOption('premise');
   await expect(page.getByTestId('field-generator-premise')).toHaveValue(premise);
@@ -138,8 +152,10 @@ test('drafts from unsaved fields of only the current non-player character or cha
   const card = await api(page, '/library/characters', { commandId: crypto.randomUUID(), expectedVersion: 0, definition: { ...starter.characters[0], displayName: 'Context cartographer' } });
   await page.getByTestId('library-link').click();
   await page.getByTestId(`edit-scenario-${saved.id}`).click();
-  await page.locator('summary').filter({ hasText: 'Non-player characters ·' }).click();
-  const npc = page.locator('.editor-row').filter({ has: page.getByRole('heading', { name: 'Context keeper', exact: true }) });
+  const npcLine = page.getByTestId('npc-summary').filter({ hasText: 'Context keeper' });
+  await npcLine.click();
+  const npc = page.locator('details.row-fold').filter({ has: npcLine });
+  await openSummary(npc, 'npc-more');
   await npc.getByLabel('Role', { exact: true }).fill('Mapmaker aboard a stormship');
   await npc.getByLabel('Current goal', { exact: true }).fill('Recover a missing sky chart');
   await npc.getByLabel('Appearance', { exact: true }).fill('');
@@ -161,6 +177,7 @@ test('drafts from unsaved fields of only the current non-player character or cha
   expect((await api(page, '/library')).scenarios.find((item: { id: string }) => item.id === saved.id).version).toBe(1);
 
   await page.getByTestId(`edit-character-${card.id}`).click();
+  await openSummary(page, 'card-more');
   await page.getByTestId('card-appearance').fill('Ink-stained hands and a patched coat');
   await page.getByTestId('card-secret').fill('OWN-UNSAVED-CARD-SECRET');
   await page.getByTestId('card-backstory').fill('');
@@ -231,7 +248,8 @@ test('expands individual director fields as reviewed drafts before saving or cha
   const identity = new URL(page.url()).searchParams.get('identity');
   const before = await api(page, `/sessions/${show.sessionId}`);
   await api(page, `/sessions/${show.sessionId}/commands`, { type: 'set_status', commandId: crypto.randomUUID(), expectedStateRevision: before.session.stateRevision, status: 'live' });
-  await page.goto(`/sessions/${show.sessionId}/director?identity=${identity}`);
+  await page.goto(`/sessions/${show.sessionId}/director${identity ? `?identity=${identity}` : ''}`);
+  await openSummary(page, 'show-tools');
   const controls = page.getByTestId('live-controls');
   await controls.locator(':scope > summary').click();
   await controls.getByTestId('begin-scene').click();
@@ -251,6 +269,6 @@ test('expands individual director fields as reviewed drafts before saving or cha
   const grant = await api(page, `/sessions/${show.sessionId}/test-seat`, { characterId: original.characters[0].id });
   const player = await context.newPage();
   await player.goto(`/sessions/${show.sessionId}/lobby?identity=${grant.identityId}`);
-  await expect(player.getByRole('heading', { name: 'Meet your accomplices.', exact: true })).toBeVisible();
+  await expect(player.getByRole('heading', { name: 'Cast & lobby', exact: true })).toBeVisible();
   await expect(player.getByTestId('field-generator-open')).toHaveCount(0);
 });

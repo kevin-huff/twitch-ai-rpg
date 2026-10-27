@@ -18,7 +18,7 @@ function track(id: string, label: string, current: number) {
   return { id, label, kind: 'progress', current, max: 4, visibility: 'public', trigger: null, enabled: true, completionText: '', completionEffects: [] };
 }
 
-// Signs in as host, builds a custom show with the given tracks and facts, approves and readies both players, and
+// Signs in as host, builds a custom show from two saved cards with the given tracks and facts, and
 // opens the show's main link in the given layout before the show starts. Returns the director page, the session id
 // and the link address; the show has not started yet.
 async function prepareShow(page: Page, context: BrowserContext, layout: 'scene' | 'overlay', extra: { tracks?: unknown[]; facts?: unknown[] }) {
@@ -49,21 +49,11 @@ async function prepareShow(page: Page, context: BrowserContext, layout: 'scene' 
   await page.getByTestId('show-seat-0').selectOption(`${cards[0]!.id}:1`);
   await page.getByTestId('show-seat-1').selectOption(`${cards[1]!.id}:1`);
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/lobby/);
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const hostIdentity = new URL(page.url()).searchParams.get('identity');
   const snapshot = await api(page, `/sessions/${sessionId}`);
-  for (const character of snapshot.characterDetails) await page.getByTestId(`approve-character-${character.id}`).click();
-  for (const name of ['Nia', 'Oren']) {
-    const popup = context.waitForEvent('page');
-    await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
-    const player = await popup;
-    await player.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-    await player.getByTestId('accept-boundaries').check();
-    await player.getByTestId('ready-character').click();
-    await expect(player.getByText('You are ready for this version of the boundaries.', { exact: true })).toBeVisible();
-    await player.close();
-  }
+  expect(snapshot.characterDetails.every((character: any) => character.approved && !character.draft)).toBe(true);
   await expect(page.getByTestId('start-session')).toBeEnabled();
   const created = await api(page, `/sessions/${sessionId}/stream-links`, { commandId: randomUUID(), subject: 'show' });
   const url = `/stream?layout=${layout}&audio=off#token=${encodeURIComponent(created.token)}`;
@@ -79,6 +69,7 @@ async function openStream(context: BrowserContext, url: string) {
 
 async function startShow(page: Page, sessionId: string) {
   await page.getByTestId('start-session').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/director/);
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).setup.started).toBe(true);
 }
 
@@ -108,7 +99,7 @@ test('the stream reveals each new scene picture full-frame, shrinks it into a pa
 
   // The director's panel shows the picture; Draw the place shows the making state, keeps the old picture, then replaces it.
   const director = await context.newPage();
-  await director.goto(`/sessions/${sessionId}/director?identity=${hostIdentity}`);
+  await director.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
   await expect(director.locator('.scene-picture-preview')).toBeVisible();
   await expect(director.getByText('This picture is on the stream and the player seats.', { exact: true })).toBeVisible();
   const firstSrc = await director.locator('.scene-picture-preview').getAttribute('src');
@@ -223,7 +214,7 @@ test('an action round\'s picture stays off the stream until the round is publish
   expect(actionId).toBeTruthy();
 
   const director = await context.newPage();
-  await director.goto(`/sessions/${sessionId}/director?identity=${hostIdentity}`);
+  await director.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
   await expect(director.getByTestId('action-picture-status')).toHaveText('The picture for this action round is ready. Viewers and players see it when you publish the round.');
   await expect(director.getByTestId('action-picture-preview')).toBeVisible();
   await expect(director.getByTestId('action-picture-preview')).toHaveAttribute('src', new RegExp(actionId));

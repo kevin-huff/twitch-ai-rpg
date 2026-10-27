@@ -285,18 +285,22 @@ suite('command hooks for pictures', () => {
     expect(pictures.runs).toHaveLength(1);
   });
 
-  it('copies the portrait on approval and clears it when the approved card has none', async () => {
+  it('puts the portrait on the character when the card is saved and clears it when the saved card has none', async () => {
     await useLobbySetup();
     const portrait = await insertReady({ purpose: 'character', subjectId: characterIds[0]! });
     await run({ type: 'save_character', expectedCharacterRevision: 0, card: await cardFor(0, portrait) }, player(0));
-    const approved = directorView(await run({ type: 'approve_character', characterId: characterIds[0], expectedCharacterRevision: 1 }));
-    expect(approved.characterDetails.find(character => character.id === characterIds[0])?.portraitId).toBe(portrait);
+    const seat = (await readDirector()).characterDetails.find(character => character.id === characterIds[0]);
+    expect(seat).toMatchObject({ approved: true, portraitId: portrait, cardSource: 'player' });
+    expect(seat?.draft).toBeNull();
     expect((await characterData(0)).portraitId).toBe(portrait);
+    expect((await characterData(0)).draft).toBeNull();
 
-    await run({ type: 'save_character', expectedCharacterRevision: 2, card: await cardFor(0) }, player(0));
-    expect((await characterData(0)).portraitId).toBe(portrait);
-    await run({ type: 'approve_character', characterId: characterIds[0], expectedCharacterRevision: 3 });
+    // A saved card is already applied, so there is nothing left to approve.
+    await expect(run({ type: 'approve_character', characterId: characterIds[0], expectedCharacterRevision: 1 })).rejects.toMatchObject({ status: 409, code: 'conflict' });
+
+    await run({ type: 'save_character', expectedCharacterRevision: 1, card: await cardFor(0) }, player(0));
     expect((await characterData(0)).portraitId).toBeUndefined();
+    expect((await characterData(0)).draft).toBeNull();
     expect(pictures.calls).toEqual([]);
   });
 
@@ -317,16 +321,18 @@ suite('command hooks for pictures', () => {
       await expect(run({ type: 'save_character', expectedCharacterRevision: 0, card: await cardFor(0, portraitId) }, player(0))).rejects.toMatchObject({ status: 409, code: 'conflict', message: PORTRAIT_SENTENCE });
     }
     await run({ type: 'save_character', expectedCharacterRevision: 0, card: await cardFor(0, own) }, player(0));
-    expect((await characterData(0)).draft.portraitId).toBe(own);
+    expect((await characterData(0)).portraitId).toBe(own);
 
-    // The current draft and approved portraits stay usable even without a ready row behind them.
+    // A portrait on the seat's pending draft or on its current card stays usable even without a ready row behind it.
     const keptDraft = randomUUID();
-    await pool.query("UPDATE characters SET data = jsonb_set(data, '{draft,portraitId}', to_jsonb($3::text)) WHERE session_id=$1 AND id=$2", [sessionId, characterIds[0], keptDraft]);
+    await pool.query("UPDATE characters SET data = jsonb_set(data, '{draft}', $3::jsonb) WHERE session_id=$1 AND id=$2", [sessionId, characterIds[0], JSON.stringify(await cardFor(0, keptDraft))]);
     await run({ type: 'save_character', expectedCharacterRevision: 1, card: await cardFor(0, keptDraft) }, player(0));
+    expect((await characterData(0)).portraitId).toBe(keptDraft);
+    expect((await characterData(0)).draft).toBeNull();
     const keptApproved = randomUUID();
     await pool.query("UPDATE characters SET data = jsonb_set(data, '{portraitId}', to_jsonb($3::text)) WHERE session_id=$1 AND id=$2", [sessionId, characterIds[0], keptApproved]);
     await run({ type: 'save_character', expectedCharacterRevision: 2, card: await cardFor(0, keptApproved) }, player(0));
-    expect((await characterData(0)).draft.portraitId).toBe(keptApproved);
+    expect((await characterData(0)).portraitId).toBe(keptApproved);
   });
 
   it('reserves the opening scene picture when the lobby starts the show', async () => {

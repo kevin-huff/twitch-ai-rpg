@@ -5,22 +5,32 @@ function snapshotFor(page: Page, path: string) {
   return page.request.get(path, { headers: identity ? { 'X-RPG-Identity': identity } : {} });
 }
 
+async function openMore(page: Page) {
+  const more = page.getByTestId('beat-more');
+  if (!(await more.evaluate(node => (node as HTMLDetailsElement).open))) await more.locator('summary').first().click();
+}
+
 test('four players, two Mara exchanges, a reviewed dice action, stage and refresh', async ({ page, browser }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  const invitations = await Promise.all([1, 2, 3, 4].map(index => page.getByLabel(`Player ${index} invitation`).inputValue()));
-  const stageInvitation = await page.getByLabel('Stage invitation').inputValue();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByTestId('try-it-now').click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = page.url().split('/sessions/')[1].split('/')[0];
+  const { invites } = await (await page.request.get(`/api/sessions/${sessionId}/invites`)).json() as { invites: { id: string; role: string; status: string }[] };
+  const linkFor = async (inviteId: string) => {
+    const { token } = await (await page.request.get(`/api/sessions/${sessionId}/invites/${inviteId}/link`)).json() as { token: string };
+    return `${new URL(page.url()).origin}/join/${token}`;
+  };
+  const invitations = await Promise.all(invites.filter(row => row.role === 'player' && row.status === 'waiting').map(row => linkFor(row.id)));
+  const stageInvitation = await linkFor(invites.find(row => row.role === 'stage' && row.status === 'waiting')!.id);
+  expect(invitations).toHaveLength(4);
   const contexts = await Promise.all(invitations.map(() => browser.newContext()));
   const players = await Promise.all(contexts.map(context => context.newPage()));
   try {
     await Promise.all(players.map(async (player, index) => {
       await player.goto(invitations[index]);
-      await player.getByRole('button', { name: 'Join session' }).click();
+      await player.getByRole('button', { name: 'Join', exact: true }).click();
       await expect(player.getByTestId('submission-form')).toBeVisible();
       await expect(player.locator('.header-meta .status')).toHaveText('Connected');
     }));
@@ -28,24 +38,18 @@ test('four players, two Mara exchanges, a reviewed dice action, stage and refres
     contexts.push(stageContext);
     const stage = await stageContext.newPage();
     await stage.goto(stageInvitation);
-    await stage.getByRole('button', { name: 'Join session' }).click();
+    await stage.getByRole('button', { name: 'Join', exact: true }).click();
     await expect(stage.locator('.stage')).toBeVisible();
 
     async function direct(kind: 'conversation' | 'action', selectedNames: string[]) {
-      for (const name of selectedNames) await page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox').check();
-      await page.getByRole('button', { name: 'Plan selected input' }).click();
-      await page.getByRole('button', { name: 'Approve stakes', exact: true }).click();
-      await page.getByRole('button', { name: /Lock input/ }).click();
-      await page.getByRole('button', { name: 'Draft the scene', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Publish text-only beat' })).toBeEnabled();
-      if (kind === 'conversation') {
-        const continuity = page.getByText(/Review \d+ proposed continuity updates/);
-        if (await continuity.isVisible()) {
-          await continuity.click();
-          await page.getByRole('button', { name: 'Approve continuity updates' }).click();
-        }
+      for (const name of selectedNames) await expect(page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox')).toBeChecked();
+      if (kind === 'conversation') await page.getByRole('button', { name: 'Plan and draft', exact: true }).click();
+      else {
+        await page.getByRole('button', { name: 'Plan', exact: true }).click();
+        await page.getByRole('button', { name: 'Approve and roll', exact: true }).click();
       }
-      await page.getByRole('button', { name: 'Publish text-only beat' }).click();
+      await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeEnabled();
+      await page.getByRole('button', { name: 'Publish without voice' }).click();
     }
     async function say(player: Page, text: string) {
       await player.reload();
@@ -54,12 +58,14 @@ test('four players, two Mara exchanges, a reviewed dice action, stage and refres
       await player.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(player.getByRole('status')).toContainText('Saved');
     }
+    await openMore(page);
     await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
     await say(players[0], 'You knew the previous owner. What happened to him?');
     await direct('conversation', ['Rook']);
     await expect(stage.locator('.stage-story')).toContainText('Why are you asking?');
     await expect(stage.locator('.stage-story')).toContainText('Mara Vale');
     await expect(stage.locator('.stage-story')).toContainText('You knew the previous owner. What happened to him?');
+    await openMore(page);
     await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
     await say(players[1], 'Because someone just offered to sell it to us.');
     await direct('conversation', ['Lark']);

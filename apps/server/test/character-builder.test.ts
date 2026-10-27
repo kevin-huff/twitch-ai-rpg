@@ -108,7 +108,7 @@ suite('private reusable character builders', () => {
     expect((await request('/api/library')).json().characters).toEqual([]);
   });
 
-  it('submits the current supplied form once, trims blank slots, and keeps the resulting card unapproved in a custom session', async () => {
+  it('submits the current supplied form once, trims blank slots, and puts the resulting card on its seat as approved in a custom session', async () => {
     const link = await create();
     const identity = (await access(link.token)).identityId;
     const draft = validDraft();
@@ -131,9 +131,9 @@ suite('private reusable character builders', () => {
     const created = (await request('/api/sessions', { commandId: randomUUID(), scenario: { templateId: scenario.id, version: 1 }, characters: [snapshot.submittedTemplate, snapshot.submittedTemplate] })).json();
     const director = (await request(`/api/sessions/${created.sessionId}`)).json();
     expect(director.characterDetails).toHaveLength(2);
+    const { schemaVersion: _schemaVersion, extensions: _extensions, ...cardFields } = library.characters[0].definition;
     for (const character of director.characterDetails) {
-      expect(character.approved).toBe(false);
-      expect(character.draft).toEqual(library.characters[0].definition);
+      expect(character).toMatchObject({ approved: true, draft: null, cardSource: 'host', ...cardFields });
     }
     expect(director.setup.started).toBe(false);
   });

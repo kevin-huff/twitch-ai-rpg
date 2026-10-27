@@ -1,10 +1,11 @@
 import { CharacterBuilderFieldGenerationRequestSchema, FieldGenerationCharacterContextSchema, HostCardGenerationRequestSchema, BuilderCardGenerationRequestSchema, SeatCardGenerationRequestSchema, SeatFieldGenerationRequestSchema, CardGenerationResponseSchema, ScenarioGenerationRequestSchema, ScenarioDraftJobSchema, SeatPortraitRequestSchema, BuilderPortraitRequestSchema, LibraryPortraitRequestSchema, PictureIdResponseSchema, PictureSettingsSchema } from '@rpg/contracts';
-import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema, GalleryActionSchema, GalleryStatusSchema, SessionListEntrySchema } from '@rpg/contracts';
-import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot, GalleryAction, GalleryStatus, SessionListEntry } from '@rpg/contracts';
+import { ViewerSchema, ProducerSummarySchema, ProducerLinkSchema, ProducerSignInResponseSchema, StreamLinkSchema, StreamLinkSummarySchema, StreamAccessResponseSchema, InviteSummarySchema, InviteLinkSchema, PlaybackSnapshotSchema, GalleryActionSchema, GalleryStatusSchema, SessionListEntrySchema, InvitePreviewResponseSchema } from '@rpg/contracts';
+import type { Viewer, ProducerSummary, ProducerLink, ProducerSignInResponse, StreamLink, StreamLinkSummary, CreateStreamLink, StreamAccessResponse, InviteSummary, InviteLink, PlaybackSnapshot, GalleryAction, GalleryStatus, SessionListEntry, InvitePreviewResponse } from '@rpg/contracts';
 import { io } from 'socket.io-client';
 import type { Command, SessionSnapshot, CreateSessionResponse, RedeemResponse, Library, ScenarioDefinition, CharacterCardDefinition, TemplateVersion, TemplateRef, SaveScenario, SaveCharacterTemplate, FieldGenerationRequest, FieldGenerationResponse, SeatChoice, HostCardGenerationRequest, BuilderCardGenerationRequest, SeatCardGenerationRequest, SeatFieldGenerationRequest, CardGenerationResponse, ScenarioGenerationRequest, ScenarioDraftJob, SeatPortraitRequest, BuilderPortraitRequest, LibraryPortraitRequest, PictureIdResponse, PictureSettings } from '@rpg/contracts';
 import type { CharacterBuilderAccess, CharacterBuilderFieldGenerationRequest, CharacterBuilderLink, CharacterBuilderSnapshot, CharacterBuilderSummary, CreateCharacterBuilder, SaveCharacterBuilder } from '@rpg/contracts';
 import { getIdentity, identityHeaders, selectIdentity } from './identity';
+import { clearIdentity } from './navigate';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -41,8 +42,8 @@ export const api = {
   submitCharacterBuilder: (value: SaveCharacterBuilder) => request<CharacterBuilderSnapshot>('/character-builder/submit', value),
   logoutCharacterBuilder: () => request<{ ok: true }>('/character-builder/logout', {}),
   login: async (token: string) => {
-    const result = await request<{ role: 'host'; identityId: string }>('/auth/host', { token, tab: true });
-    selectIdentity(result.identityId);
+    const result = await request<{ role: 'host'; identityId: string }>('/auth/host', { token });
+    clearIdentity();
     return result;
   },
   redeem: async (token: string) => {
@@ -63,10 +64,11 @@ export const api = {
   snapshot: (id: string, view?: string) => request<SessionSnapshot>(`/sessions/${encodeURIComponent(id)}${view ? `?view=${encodeURIComponent(view)}` : ''}`),
   me: async (): Promise<Viewer> => ViewerSchema.parse(await request('/auth/me')),
   producerSignIn: async (token: string): Promise<ProducerSignInResponse> => {
-    const result = ProducerSignInResponseSchema.parse(await request('/auth/producer', { token, tab: true }));
-    selectIdentity(result.identityId);
+    const result = ProducerSignInResponseSchema.parse(await request('/auth/producer', { token }));
+    clearIdentity();
     return result;
   },
+  invitePreview: async (token: string): Promise<InvitePreviewResponse> => InvitePreviewResponseSchema.parse(await request('/auth/invite-preview', { token }, false)),
   producers: async (): Promise<{ producers: ProducerSummary[] }> => {
     const data = await request<{ producers: unknown[] }>('/producers');
     return { producers: data.producers.map(item => ProducerSummarySchema.parse(item)) };

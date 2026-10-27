@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { io } from 'socket.io-client';
 import { api, subscribeToSession } from './api';
+import { navigate, clearIdentity } from './navigate';
 import { streamUrl, producerUrl, readHashToken, parseStreamLocation } from './stream';
 
 const socket = vi.hoisted(() => ({ on: vi.fn(), disconnect: vi.fn() }));
@@ -214,13 +215,13 @@ describe('authorized session transport', () => {
     expect(io).toHaveBeenCalledWith(expect.objectContaining({ auth: { sessionId: 'show', identityId: hostIdentity } }));
   });
 
-  it('requests an independent login and changes only this tab selector after success', async () => {
+  it('signs in browser-wide with only the token and removes a stale identity from the address', async () => {
     window.history.replaceState({}, '', `/sessions/show/director?identity=${hostIdentity}&view=review#notes`);
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ role: 'host', identityId: playerIdentity }) });
     vi.stubGlobal('fetch', fetch);
     await api.login('host-token');
-    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'host-token', tab: true });
-    expect(window.location.search).toBe(`?identity=${playerIdentity}&view=review`);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'host-token' });
+    expect(window.location.search).toBe('?view=review');
     expect(window.location.hash).toBe('#notes');
     expect(window.localStorage.length).toBe(0);
   });
@@ -323,13 +324,14 @@ describe('stream links and producer access', () => {
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok' });
   });
 
-  it('selects the identity returned by producer sign-in', async () => {
-    window.history.replaceState({}, '', '/producer');
+  it('signs in a producer with only the token and leaves no identity in the address', async () => {
+    window.history.replaceState({}, '', `/producer?identity=${'c'.repeat(32)}#x`);
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ role: 'producer', label: 'Sam', expiresAt: 'x', identityId: identity }) });
     vi.stubGlobal('fetch', fetch);
     await api.producerSignIn('tok');
-    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok', tab: true });
-    expect(window.location.search).toBe(`?identity=${identity}`);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok' });
+    expect(window.location.search).toBe('');
+    expect(window.location.hash).toBe('#x');
   });
 
   it('sends a commandId when creating stream links and revoking producers', async () => {
@@ -477,5 +479,47 @@ describe('gallery and session list calls', () => {
   it('sessions rejects an entry with an extra key', async () => {
     ok([{ id: 'one', title: 'First', status: 'ended', gallery: null, extra: true }]);
     await expect(api.sessions()).rejects.toThrow();
+  });
+});
+
+describe('invitation preview and navigation', () => {
+  const identity = 'a'.repeat(32);
+
+  it('previews an invitation without the identity header and parses the reply', async () => {
+    window.history.replaceState({}, '', `/join/x?identity=${identity}`);
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ title: 'The Ledger Job', role: 'player', characterName: 'Mara' }) });
+    vi.stubGlobal('fetch', fetch);
+    expect(await api.invitePreview('tok')).toEqual({ title: 'The Ledger Job', role: 'player', characterName: 'Mara' });
+    expect(fetch.mock.calls[0][0]).toBe('/api/auth/invite-preview');
+    expect(fetch.mock.calls[0][1].headers['X-RPG-Identity']).toBeUndefined();
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ token: 'tok' });
+  });
+
+  it('surfaces a rejected invitation as an ApiError with the server message', async () => {
+    const message = 'This invitation is expired, already redeemed, or invalid.';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ message }) }));
+    await expect(api.invitePreview('bad')).rejects.toMatchObject({ name: 'Error', status: 401, message });
+  });
+
+  it('clearIdentity removes identity parameters and keeps the rest of the address', () => {
+    window.history.replaceState({}, '', `/a/b?x=1&identity=${identity}&y=2#h`);
+    clearIdentity();
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe('/a/b?x=1&y=2#h');
+  });
+
+  it('navigate carries the current identity and replaces or assigns', () => {
+    window.history.replaceState({}, '', `/?identity=${identity}`);
+    const replace = vi.fn();
+    const assign = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, 'location', { configurable: true, value: { origin: original.origin, search: original.search, href: original.href, replace, assign } });
+    try {
+      navigate('/sessions/s1/play', { replace: true });
+      navigate('/library');
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: original });
+    }
+    expect(replace).toHaveBeenCalledWith(`/sessions/s1/play?identity=${identity}`);
+    expect(assign).toHaveBeenCalledWith(`/library?identity=${identity}`);
   });
 });

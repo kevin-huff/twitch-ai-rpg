@@ -8,15 +8,19 @@ const summary = (over: Record<string, unknown> = {}) => ({
 });
 const token = 'tok_abcdefghijklmnopqrstuvwxyz';
 const mocks = vi.hoisted(() => ({
-  producers: vi.fn(), createProducer: vi.fn(), producerLink: vi.fn(), revokeProducer: vi.fn(),
+  producers: vi.fn(), createProducer: vi.fn(), producerLink: vi.fn(), revokeProducer: vi.fn(), producerSignIn: vi.fn(), sessions: vi.fn(),
 }));
 vi.mock('./api', () => ({ api: mocks }));
 import ProducerAccess from './ProducerAccess.vue';
+import ProducerSignIn from './ProducerSignIn.vue';
 
 enableAutoUnmount(afterEach);
 
+const writeText = vi.fn();
 beforeEach(() => {
   Object.values(mocks).forEach(m => m.mockReset());
+  writeText.mockReset(); writeText.mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   mocks.producers.mockResolvedValue({ producers: [] });
 });
 const button = (w: ReturnType<typeof mount>, text: string) => w.findAll('button').find(b => b.text() === text)!;
@@ -34,6 +38,21 @@ describe('ProducerAccess', () => {
     expect(url.split('#')[0]).toMatch(/\/producer$/);
     expect(url.split('#')[1]).toBe(`token=${encodeURIComponent(token)}`);
     expect(w.find('form').exists()).toBe(false);
+    expect(writeText).toHaveBeenCalledWith(url);
+    expect(w.find('[data-testid="producer-copied"]').text()).toBe('Copied. Send it privately. It signs them in.');
+  });
+
+  it('selects the link box and says so when the clipboard fails', async () => {
+    writeText.mockRejectedValue(new Error('denied'));
+    mocks.createProducer.mockResolvedValue({ producer: summary(), token });
+    const w = mount(ProducerAccess, { attachTo: document.body });
+    await flushPromises();
+    await w.find('input').setValue('Sam');
+    await button(w, 'Create producer link').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-testid="producer-copied"]').text()).toBe('Copy did not work. Select the link and copy it by hand.');
+    const box = w.find('input[aria-label="Producer link for Sam"]').element as HTMLInputElement;
+    expect(document.activeElement === box || box.selectionEnd! > box.selectionStart!).toBe(true);
   });
 
   it('shows an existing link again', async () => {
@@ -48,21 +67,21 @@ describe('ProducerAccess', () => {
     expect((w.find('input[aria-label="Producer link for Sam"]').element as HTMLInputElement).value).toContain('#token=');
   });
 
-  it('requires confirmation before revoking', async () => {
+  it('requires confirmation before turning off', async () => {
     mocks.producers.mockResolvedValue({ producers: [summary()] });
     mocks.revokeProducer.mockResolvedValue(summary({ revokedAt: '2026-10-02T00:00:00.000Z' }));
     const w = mount(ProducerAccess);
     await flushPromises();
-    await button(w, 'Revoke').trigger('click');
+    await button(w, 'Turn off').trigger('click');
     expect(mocks.revokeProducer).not.toHaveBeenCalled();
-    expect(w.text()).toContain('Revoke Sam? They are signed out of every tab right away.');
+    expect(w.text()).toContain("Turn off Sam's access? They are signed out of every tab right away.");
     await button(w, 'Keep access').trigger('click');
     expect(mocks.revokeProducer).not.toHaveBeenCalled();
-    await button(w, 'Revoke').trigger('click');
-    await button(w, 'Revoke access').trigger('click');
+    await button(w, 'Turn off').trigger('click');
+    await button(w, 'Turn off').trigger('click');
     await flushPromises();
     expect(mocks.revokeProducer).toHaveBeenCalledWith('p1');
-    expect(w.text()).toContain('Revoked');
+    expect(w.text()).toContain('Turned off');
   });
 
   it('ignores a reload that started before a revoke finished', async () => {
@@ -74,13 +93,13 @@ describe('ProducerAccess', () => {
     mocks.producers.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
     mocks.producers.mockResolvedValueOnce({ producers: [summary({ revokedAt: '2026-10-02T00:00:00.000Z' })] });
     window.dispatchEvent(new Event('focus'));
-    await button(w, 'Revoke').trigger('click');
-    await button(w, 'Revoke access').trigger('click');
+    await button(w, 'Turn off').trigger('click');
+    await button(w, 'Turn off').trigger('click');
     await flushPromises();
-    expect(w.text()).toContain('Revoked');
+    expect(w.text()).toContain('Turned off');
     release({ producers: [summary()] });
     await flushPromises();
-    expect(w.text()).toContain('Revoked');
+    expect(w.text()).toContain('Turned off');
     expect(w.text()).not.toContain('Active');
   });
 
@@ -133,14 +152,14 @@ describe('ProducerAccess', () => {
     await button(w, 'Create producer link').trigger('click');
     await flushPromises();
     const alex = () => w.findAll('li').find(li => li.text().includes('Alex'))!;
-    await alex().findAll('button').find(b => b.text() === 'Revoke')!.trigger('click');
-    await alex().findAll('button').find(b => b.text() === 'Revoke access')!.trigger('click');
+    await alex().findAll('button').find(b => b.text() === 'Turn off')!.trigger('click');
+    await alex().findAll('button').find(b => b.text() === 'Turn off')!.trigger('click');
     await flushPromises();
     release({ producers: [summary()] });
     await flushPromises();
     expect(mocks.producers).toHaveBeenCalledTimes(3);
     expect(w.text()).toContain('Sam');
-    expect(alex().text()).toContain('Revoked');
+    expect(alex().text()).toContain('Turned off');
   });
 
   it('gives every input its own help text', async () => {
@@ -196,5 +215,41 @@ describe('ProducerAccess', () => {
       await flushPromises();
       expect(mocks.producers).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('ProducerSignIn', () => {
+  const replace = vi.fn();
+  const original = window.location;
+  beforeEach(() => {
+    replace.mockReset();
+    window.history.replaceState(null, '', `/producer#token=${token}`);
+    Object.defineProperty(window, 'location', { value: { ...original, hash: `#token=${token}`, pathname: '/producer', search: '', replace }, configurable: true });
+    mocks.producerSignIn.mockResolvedValue(undefined);
+  });
+  afterEach(() => { Object.defineProperty(window, 'location', { value: original, configurable: true }); });
+
+  async function signIn() {
+    const w = mount(ProducerSignIn);
+    await w.find('button').trigger('click');
+    await flushPromises();
+  }
+
+  it('lands on the director page when there is exactly one show', async () => {
+    mocks.sessions.mockResolvedValue([{ id: 's1' }]);
+    await signIn();
+    expect(replace).toHaveBeenCalledWith('/sessions/s1/director');
+  });
+
+  it('goes home with two shows', async () => {
+    mocks.sessions.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    await signIn();
+    expect(replace).toHaveBeenCalledWith('/');
+  });
+
+  it('goes home when the list fails', async () => {
+    mocks.sessions.mockRejectedValue(new Error('boom'));
+    await signIn();
+    expect(replace).toHaveBeenCalledWith('/');
   });
 });

@@ -106,7 +106,7 @@ onUnmounted(() => { disposed = true; clearInterval(clock); window.removeEventLis
 
 <template>
   <section class="operations-panel" data-testid="operations-panel" aria-label="Session status and usage">
-    <div class="operations-heading"><strong>Session status</strong><span class="operations-limit">Limits: Unlimited</span></div>
+    <div class="operations-heading"><strong>Session status</strong></div>
     <p data-testid="operations-update" class="operations-update" :class="{ 'is-stale': stale }" aria-live="polite">{{ message }}</p>
     <template v-if="snapshot">
       <div data-testid="operations-progress" class="operations-progress">
@@ -166,7 +166,6 @@ onUnmounted(() => { disposed = true; clearInterval(clock); window.removeEventLis
 .operations-panel { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: .6rem; font-size: .82rem; overflow-wrap: anywhere; }
 .operations-heading { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
 .operations-heading > strong { font-size: .95rem; }
-.operations-limit { color: var(--gold); font-size: .75rem; }
 .operations-update { margin: .6rem 0 0; color: var(--muted); }
 .operations-update:empty { display: none; }
 .operations-progress { margin-top: .75rem; }

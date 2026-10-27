@@ -113,7 +113,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   const all = await submissions(client, sessionId);
   if (role === 'player') return SessionSnapshotSchema.parse({ ...base, role, activeBeat: publicBeat,
     ownCharacter: state.characters.find((character) => character.id === actor.character_id) ?? null,
-    submissions: all.filter((submission) => submission.characterId === actor.character_id), ...(state.setup ? { setup: state.setup } : {}),
+    submissions: all.filter((submission) => submission.characterId === actor.character_id), ...(state.setup ? { setup: { ...state.setup, boundaries: [] } } : {}),
   });
   const jobs = (await client.query('SELECT id,beat_id,task,generation,status,error FROM generation_jobs WHERE session_id=$1 ORDER BY created_at', [sessionId])).rows.map((row) => ({ id: row.id, beatId: row.beat_id, task: row.task, generation: row.generation, status: row.status, error: row.error }));
   return SessionSnapshotSchema.parse({ ...base, role, activeBeat: beat, submissions: all, npcDetails: state.npcs, locations: state.locations, characterDetails: state.characters, jobs, directorNotes: state.directorNotes, ...(state.setup ? { setup: state.setup } : {}),

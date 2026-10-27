@@ -28,6 +28,19 @@ export const streamLinkSummary = (row: LinkRow) => StreamLinkSummarySchema.parse
   characterId: row.character_id, producerGrantId: row.producer_grant_id, canPresent: row.can_present,
   createdAt: row.created_at.toISOString(), expiresAt: row.expires_at.toISOString(), revokedAt: row.revoked_at?.toISOString() ?? null,
 });
+interface NewStreamLink { sessionId: string; subject: LinkRow['subject']; characterId: string | null; producerGrantId: string | null; label: string; canPresent: boolean }
+// The one place a stream link row is made, so the route and show creation agree on the token and the 2160-hour life.
+async function insertStreamLink(client: PoolClient, tokenFor: (id: string) => string, link: NewStreamLink): Promise<LinkRow> {
+  const id = randomUUID();
+  return (await client.query<LinkRow>("INSERT INTO stream_links(id,session_id,subject,character_id,producer_grant_id,label,can_present,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '2160 hours') RETURNING *",
+    [id, link.sessionId, link.subject, link.characterId, link.producerGrantId, link.label, link.canPresent, hash(tokenFor(id))])).rows[0]!;
+}
+// Every new show starts with a presenting 'Main show' link; its audit row gets a fresh command id so the creation command's own rows stay as they are.
+export async function createMainShowLink(client: PoolClient, hostToken: string, sessionId: string, actor: Actor): Promise<string> {
+  const row = await insertStreamLink(client, (id) => streamToken(hostToken, id), { sessionId, subject: 'show', characterId: null, producerGrantId: null, label: 'Main show', canPresent: true });
+  await recordEvent(client, sessionId, actor, randomUUID(), 'stream_link.created', 0, { linkId: row.id, subject: 'show', characterId: null, producerGrantId: null });
+  return row.id;
+}
 const notFound = (): never => { throw new AppError(404, 'not_found', 'That stream link was not found.'); };
 const isActiveRow = (row: LinkRow) => row.revoked_at === null && row.expires_at.getTime() > Date.now();
 
@@ -127,11 +140,10 @@ export function registerStreamLinks(app: FastifyInstance, deps: AccessRouteDeps)
         row = (await client.query<LinkRow>(`SELECT * FROM stream_links WHERE session_id=$1 AND ${same} AND revoked_at IS NULL AND expires_at>clock_timestamp()`, [sessionId, command.subject, characterId, grantId])).rows[0];
       }
       if (!row) {
-        const id = randomUUID();
         const canPresent = command.subject === 'show' ? command.canPresent ?? true : false;
         const label = await defaultLabel(client, sessionId, command);
-        row = (await client.query<LinkRow>("INSERT INTO stream_links(id,session_id,subject,character_id,producer_grant_id,label,can_present,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '2160 hours') RETURNING *",
-          [id, sessionId, command.subject, characterId, grantId, label, canPresent, hash(tokenFor(id))])).rows[0]!;
+        row = await insertStreamLink(client, tokenFor, { sessionId, subject: command.subject, characterId, producerGrantId: grantId, label, canPresent });
+        const id = row.id;
         await recordEvent(client, sessionId, actor, command.commandId, 'stream_link.created', session.version, { linkId: id, subject: command.subject, characterId, producerGrantId: grantId });
       }
       await saveReceipt(client, actor.actor_id, command.commandId, requestHash, sessionId, { linkId: row.id });

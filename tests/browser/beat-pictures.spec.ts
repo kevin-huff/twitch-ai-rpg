@@ -15,7 +15,7 @@ async function api(page: Page, path: string, body?: unknown, identityOverride?: 
   return result.data;
 }
 
-// Signs in as host, builds a custom show, approves and readies both players, and returns the session id, the host
+// Signs in as host, builds a custom show from two saved cards, and returns the session id, the host
 // identity and a show link in the given layout. The show has not started yet.
 async function prepareShow(page: Page, context: BrowserContext, layout: 'scene' | 'overlay') {
   await page.goto('/');
@@ -45,21 +45,11 @@ async function prepareShow(page: Page, context: BrowserContext, layout: 'scene' 
   await page.getByTestId('show-seat-0').selectOption(`${cards[0]!.id}:1`);
   await page.getByTestId('show-seat-1').selectOption(`${cards[1]!.id}:1`);
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/lobby/);
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const hostIdentity = new URL(page.url()).searchParams.get('identity');
   const snapshot = await api(page, `/sessions/${sessionId}`);
-  for (const character of snapshot.characterDetails) await page.getByTestId(`approve-character-${character.id}`).click();
-  for (const name of ['Nia', 'Oren']) {
-    const popup = context.waitForEvent('page');
-    await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
-    const player = await popup;
-    await player.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-    await player.getByTestId('accept-boundaries').check();
-    await player.getByTestId('ready-character').click();
-    await expect(player.getByText('You are ready for this version of the boundaries.', { exact: true })).toBeVisible();
-    await player.close();
-  }
+  expect(snapshot.characterDetails.every((character: any) => character.approved && !character.draft)).toBe(true);
   await expect(page.getByTestId('start-session')).toBeEnabled();
   const created = await api(page, `/sessions/${sessionId}/stream-links`, { commandId: randomUUID(), subject: 'show' });
   const url = `/stream?layout=${layout}&audio=off#token=${encodeURIComponent(created.token)}`;
@@ -75,6 +65,7 @@ async function openStream(context: BrowserContext, url: string) {
 
 async function startShow(page: Page, sessionId: string) {
   await page.getByTestId('start-session').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/director/);
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).setup.started).toBe(true);
 }
 
@@ -92,7 +83,7 @@ test('picture settings changed mid-show survive a reload, and Draw the last beat
   expect(chosen).toBeTruthy();
 
   const director = await context.newPage();
-  await director.goto(`/sessions/${sessionId}/director?identity=${hostIdentity}`);
+  await director.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
   const settings = director.getByTestId('picture-settings');
   await expect(settings).toBeVisible();
   await settings.locator('summary').click();

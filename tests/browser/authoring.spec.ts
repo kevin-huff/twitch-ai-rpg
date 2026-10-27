@@ -13,6 +13,11 @@ async function api(page: Page, path: string, body?: unknown) {
   return result.data;
 }
 
+async function openMore(page: Page) {
+  const more = page.getByTestId('beat-more');
+  if (!(await more.evaluate(node => (node as HTMLDetailsElement).open))) await more.locator('summary').first().click();
+}
+
 test('authors a versioned show, approves two characters, and publishes their first exchange in one browser', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
@@ -48,27 +53,27 @@ test('authors a versioned show, approves two characters, and publishes their fir
   await page.getByTestId('show-seat-0').selectOption(`${cards[0].id}:2`);
   await page.getByTestId('show-seat-1').selectOption(`${cards[1].id}:1`);
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/lobby/);
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   let snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.setup.started).toBe(false);
-  for (const character of snapshot.characterDetails) await page.getByTestId(`approve-character-${character.id}`).click();
+  expect(snapshot.characterDetails.every((character: { approved: boolean; draft: unknown }) => character.approved && !character.draft)).toBe(true);
   const playerTabs: Page[] = [];
   for (const name of ['Nia Vale', 'Oren']) {
     const popup = context.waitForEvent('page');
     await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
     const player = await popup;
     playerTabs.push(player);
-    await player.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-    await expect(player.getByText('No graphic injury', { exact: true })).toBeVisible();
-    await player.getByTestId('accept-boundaries').check();
-    await player.getByTestId('ready-character').click();
+    await expect(player.getByTestId('pre-show')).toBeVisible();
   }
   await expect(page.getByTestId('start-session')).toBeEnabled();
   await page.getByTestId('start-session').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/director/);
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).setup.started).toBe(true);
-  await page.goto(`/sessions/${sessionId}/director?identity=${new URL(page.url()).searchParams.get('identity')}`);
+  const hostIdentity = new URL(page.url()).searchParams.get('identity');
+  await page.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
   await expect(page.getByTestId('director-controls')).toBeVisible();
+  await openMore(page);
   await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
   const player = playerTabs[0]!;
   const playerIdentity = new URL(player.url()).searchParams.get('identity');
@@ -76,12 +81,10 @@ test('authors a versioned show, approves two characters, and publishes their fir
   await player.getByTestId('speech-input').fill('Who activated the beacon?');
   await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
-  await page.locator('.queue-item input[type=checkbox]').first().check();
-  await page.getByTestId('plan').click();
-  await page.getByTestId('approve-stakes').click();
-  await page.getByTestId('lock').click();
-  await page.getByTestId('render').click();
-  await page.getByTestId('publish').click();
+  await expect(page.locator('.queue-item input[type=checkbox]').first()).toBeChecked();
+  await page.getByTestId('plan-and-draft').click();
+  await expect(page.getByTestId('publish-text-only')).toBeEnabled();
+  await page.getByTestId('publish-text-only').click();
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).history.length).toBe(1);
   snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.history[0].segments.some((line: { kind: string; text: string }) => line.kind === 'player_dialogue' && line.text === 'Who activated the beacon?')).toBe(true);

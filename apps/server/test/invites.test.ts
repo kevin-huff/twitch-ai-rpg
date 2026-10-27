@@ -205,4 +205,72 @@ suite('invite list, show again and reissue', () => {
     expect(replay.invites.find((seat: any) => seat.characterId === players[0].characterId).token).toBe(reissued.json().token);
     expect(replay.invites.map((seat: any) => seat.token)).not.toContain(players[0].token);
   });
+  describe('invitation preview', () => {
+    const preview = (token: string, headers: Record<string, string> = { origin }) => app.inject({ method: 'POST', url: '/api/auth/invite-preview', headers, payload: { token } });
+    const stageToken = () => seats.find((seat) => seat.role === 'stage')!.token;
+    const makeCard = (characterId: string, patch: Record<string, unknown>) =>
+      pool.query("UPDATE characters SET data=data || $2::jsonb WHERE id=$1", [characterId, JSON.stringify(patch)]);
+
+    it('previews a waiting player invite and a stage invite without signing in', async () => {
+      const title = (await pool.query('SELECT title FROM sessions WHERE id=$1', [sessionId])).rows[0].title;
+      const player = await preview(seats[0]!.token);
+      expect(player.statusCode, player.body).toBe(200);
+      expect(player.json()).toMatchObject({ title, role: 'player' });
+      const stage = await preview(stageToken());
+      expect(stage.statusCode, stage.body).toBe(200);
+      expect(stage.json()).toEqual({ title, role: 'stage' });
+    });
+
+    it('sends the character name only for a seat with a card', async () => {
+      const [first, second] = seats.filter((seat) => seat.role === 'player');
+      const name = (await pool.query('SELECT data->>\'displayName\' AS name FROM characters WHERE id=$1', [first!.characterId])).rows[0].name;
+      await makeCard(first!.characterId!, { approved: true, draft: null });
+      expect((await preview(first!.token)).json()).toMatchObject({ role: 'player', characterName: name });
+      await makeCard(second!.characterId!, { approved: false, draft: null });
+      expect((await preview(second!.token)).json()).not.toHaveProperty('characterName');
+      await makeCard(first!.characterId!, { approved: true, draft: { name: 'Pending' } });
+      expect((await preview(first!.token)).json()).not.toHaveProperty('characterName');
+      await makeCard(first!.characterId!, { approved: false, draft: null });
+      expect((await preview(first!.token)).json()).not.toHaveProperty('characterName');
+      expect((await preview(stageToken())).json()).not.toHaveProperty('characterName');
+    });
+
+    it('refuses invalid, redeemed, revoked, expired and replaced tokens with the redeem message', async () => {
+      const message = 'This invitation is expired, already redeemed, or invalid.';
+      const expectRefused = async (token: string) => {
+        const response = await preview(token);
+        expect(response.statusCode, response.body).toBe(401);
+        expect(response.json()).toMatchObject({ code: 'unauthorized', message });
+        expect(response.headers['set-cookie']).toBeUndefined();
+      };
+      await expectRefused('not-a-real-token');
+      await redeem(seats[0]!.token);
+      await expectRefused(seats[0]!.token);
+      await pool.query('UPDATE invites SET revoked_at=now() WHERE token_hash=$1', [hash(seats[1]!.token)]);
+      await expectRefused(seats[1]!.token);
+      await pool.query("UPDATE invites SET expires_at=now()-interval '1 minute' WHERE token_hash=$1", [hash(stageToken())]);
+      await expectRefused(stageToken());
+      const third = (await list()).filter((invite) => invite.role === 'player')[2];
+      expect(third).toBeDefined();
+      expect((await reissue(third!.id, false)).statusCode).toBe(200);
+      await expectRefused(seats[2]!.token);
+    });
+
+    it('does not redeem, set a cookie or need a sign-in', async () => {
+      const before = await preview(seats[0]!.token, { origin });
+      expect(before.statusCode, before.body).toBe(200);
+      expect(before.headers['set-cookie']).toBeUndefined();
+      expect((await preview(seats[0]!.token)).statusCode).toBe(200);
+      expect((await pool.query('SELECT redeemed_at FROM invites WHERE token_hash=$1', [hash(seats[0]!.token)])).rows[0].redeemed_at).toBeNull();
+      expect((await list())[0]).toMatchObject({ status: 'waiting', signedIn: false });
+      await redeem(seats[0]!.token);
+    });
+
+    it('keeps the Origin check and rejects a malformed body', async () => {
+      expect((await preview(seats[0]!.token, {})).statusCode).toBe(403);
+      const bad = await app.inject({ method: 'POST', url: '/api/auth/invite-preview', headers: { origin }, payload: { token: '' } });
+      expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+      expect(bad.statusCode).toBeLessThan(500);
+    });
+  });
 });

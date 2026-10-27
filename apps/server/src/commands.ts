@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, ImageIdSchema, type AiProvider, type Beat, type Command, type CommandResponse,
+  AiDraftSchema, ActionContractSchema, ImageIdSchema, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
   type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type ScriptSegment, type SessionState, type Submission,
 } from '@rpg/contracts';
 import { applyResolution, resolveContracts, validateContracts } from '@rpg/rules';
@@ -14,7 +14,14 @@ import { AppError, authorize, conflict, corrections, currentBeat, history, proje
 
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering']);
-const directorCommands = new Set([...liveCommands, 'approve_character', 'set_boundaries', 'start_session', 'open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
+const directorCommands = new Set([...liveCommands, 'approve_character', 'remove_seat', 'set_boundaries', 'start_session', 'open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
+
+export function applyCard(character: Character, card: CharacterCardDefinition, source: 'host' | 'player') {
+  const { schemaVersion: _schemaVersion, extensions: _extensions, ...fields } = card;
+  Object.assign(character, fields);
+  if (fields.portraitId) character.portraitId = fields.portraitId; else delete character.portraitId;
+  character.draft = null; character.approved = true; character.cardSource = source;
+}
 
 export async function recordEvent(client: PoolClient, sessionId: string, actor: string | { actor_id: string; producer_grant_id?: string | null }, commandId: string, kind: string, revision: number, data: unknown = {}, eventId = randomUUID()) {
   const actorId = typeof actor === 'string' ? actor : actor.actor_id;
@@ -150,7 +157,7 @@ export interface CommandPictures {
 export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource }
 export async function executeCommand(deps: CommandDependencies, sessionId: string, actor: Actor, command: Command): Promise<CommandResponse> {
   if (actor.role === 'stage' || (directorCommands.has(command.type) && actor.role !== 'host')) throw new AppError(403, 'forbidden', 'This command requires a director.');
-  if (['save_character', 'set_ready', 'save_submission', 'cancel_submission'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
+  if (['set_ready', 'save_submission', 'cancel_submission'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
   const requestHash = digest({ sessionId, command });
   const prepared = await transaction(deps.pool, async (client) => {
     await authorize(client, sessionId, actor);
@@ -285,7 +292,15 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       const setup = state.setup!;
       if (command.type !== 'set_ready' && (setup.started || state.session.status !== 'lobby')) conflict('Character and boundary setup is available only before the session starts.');
       if (command.type === 'save_character' || command.type === 'set_ready' || command.type === 'approve_character') {
-        const characterId = command.type === 'approve_character' ? command.characterId : actor.character_id;
+        let characterId: string | null | undefined;
+        if (command.type === 'approve_character') characterId = command.characterId;
+        else if (command.type === 'save_character' && actor.role !== 'player') {
+          if (!command.characterId) throw new AppError(400, 'invalid_input', 'Choose the seat to write this card into.');
+          characterId = command.characterId;
+        } else {
+          if (command.type === 'save_character' && command.characterId && command.characterId !== actor.character_id) throw new AppError(403, 'forbidden', 'Players can only save their own card.');
+          characterId = actor.character_id;
+        }
         const character = state.characters.find((item) => item.id === characterId);
         if (!character) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
         if (character.cardRevision !== command.expectedCharacterRevision) conflict('The character changed. Review the latest revision before continuing.');
@@ -297,14 +312,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
               conflict('That portrait is not available for this card. Create a new one.');
             }
           }
-          character.draft = command.card; character.approved = false; character.ready = false; character.acceptedBoundariesRevision = null;
+          applyCard(character, command.card, actor.role === 'player' ? 'player' : 'host');
+          state.session.stateRevision++;
           eventData = { characterId: character.id, cardRevision: character.cardRevision + 1 };
         } else if (command.type === 'approve_character') {
           if (!character.draft) conflict('There is no pending character draft to approve.');
-          const { schemaVersion: _schemaVersion, extensions: _extensions, ...approved } = character.draft!;
-          Object.assign(character, approved);
-          if (approved.portraitId) character.portraitId = approved.portraitId; else delete character.portraitId;
-          character.draft = null; character.approved = true; character.ready = false; character.acceptedBoundariesRevision = null;
+          applyCard(character, character.draft!, 'player');
+          character.ready = false; character.acceptedBoundariesRevision = null;
           state.session.stateRevision++;
           eventData = { characterId: character.id, cardRevision: character.cardRevision + 1 };
         } else {
@@ -318,22 +332,37 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       } else if (command.type === 'set_boundaries') {
         if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session changed. Review the current setup first.');
         setup.boundaries = command.boundaries; setup.boundariesRevision++;
-        for (const character of state.characters) { character.ready = false; character.acceptedBoundariesRevision = null; character.cardRevision++; }
         state.session.stateRevision++;
         eventData = { boundariesRevision: setup.boundariesRevision };
       } else {
         if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session changed. Review the current setup first.');
-        if (state.characters.some((character) => !character.approved || character.draft)) conflict('Every character must be approved before starting, including absent seats.');
-        const unreadyCharacterIds = state.characters.filter((character) => !character.ready || character.acceptedBoundariesRevision !== setup.boundariesRevision).map((character) => character.id);
-        if (unreadyCharacterIds.length && !command.overrideUnreadyReason) conflict('Every player must acknowledge the current boundaries and be ready, or the director must record an override reason.');
+        if (state.characters.some((character) => !character.approved || character.draft)) conflict('Every seat needs a card before the show can start.');
         setup.started = true; state.session.status = 'live'; state.session.stateRevision++;
-        eventData = { unreadyCharacterIds, overrideUnreadyReason: command.overrideUnreadyReason ?? null };
+        eventData = { overrideUnreadyReason: command.overrideUnreadyReason ?? null };
       }
+      await saveState(client, state);
+    } else if (command.type === 'remove_seat') {
+      if (!state.setup) throw new AppError(409, 'conflict', 'This session uses the original rehearsal cast rather than an editable lobby.');
+      if (state.setup.started || state.session.status !== 'lobby') conflict('Seats can be removed only before the session starts.');
+      if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session changed. Review the current setup first.');
+      const seat = state.characters.find((item) => item.id === command.characterId);
+      if (!seat) throw new AppError(404, 'not_found', 'That seat is not part of this session.');
+      if (state.characters.length <= 1) conflict('At least one seat must remain.');
+      // These rows point at the character without cascading, and readState would bring the seat back if the row stayed.
+      await client.query('DELETE FROM credentials WHERE stream_link_id IN (SELECT id FROM stream_links WHERE session_id=$1 AND character_id=$2)', [sessionId, seat.id]);
+      await client.query('DELETE FROM stream_links WHERE session_id=$1 AND character_id=$2', [sessionId, seat.id]);
+      await client.query('DELETE FROM credentials WHERE session_id=$1 AND character_id=$2', [sessionId, seat.id]);
+      await client.query('DELETE FROM submissions WHERE session_id=$1 AND character_id=$2', [sessionId, seat.id]);
+      await client.query('DELETE FROM invites WHERE session_id=$1 AND character_id=$2', [sessionId, seat.id]);
+      await client.query('DELETE FROM characters WHERE id=$1 AND session_id=$2', [seat.id, sessionId]);
+      state.characters = state.characters.filter((item) => item.id !== seat.id);
+      state.session.stateRevision++;
+      eventData = { characterId: seat.id, displayName: seat.displayName };
       await saveState(client, state);
     } else if (command.type === 'save_submission') {
       if (state.setup && command.kind !== 'ooc') {
         const character = state.characters.find((item) => item.id === actor.character_id);
-        if (!state.setup.started || !character?.approved || !character.ready || character.acceptedBoundariesRevision !== state.setup.boundariesRevision) conflict('Start the session and acknowledge its current boundaries before joining in-character play.');
+        if (!state.setup.started || !character?.approved) conflict('Start the session before joining in-character play.');
       }
 
       if (command.expectedInputEpoch !== state.session.inputEpoch) conflict('The input window changed. Review your input before submitting again.');
@@ -371,10 +400,11 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       await saveBeat(client, beat); await saveState(client, state);
       await client.query('UPDATE sessions SET current_beat_id=$2 WHERE id=$1', [sessionId, beat.id]);
     } else if (command.type === 'set_status') {
-      if (state.setup && !state.setup.started && command.status !== 'ended') conflict('Use the lobby start action after cast approval and boundary acknowledgement.');
+      if (state.setup && !state.setup.started && command.status !== 'ended') conflict('Start the show from Cast & lobby.');
       if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session state changed.');
-      if (beat && ['locked', 'draft_review'].includes(beat.phase) && command.status === 'ended') conflict('Publish or abort the locked beat before ending the session.');
+      if (beat && ['locked', 'draft_review'].includes(beat.phase) && command.status === 'ended') conflict('Publish or abandon the beat in progress before ending the show.');
       state.session.status = command.status; state.session.stateRevision++;
+      if (command.status === 'ended') await client.query("UPDATE credentials SET expires_at=LEAST(expires_at, clock_timestamp()+interval '12 hours') WHERE session_id=$1 AND role='player' AND revoked_at IS NULL", [sessionId]);
       if (beat && command.status !== 'ended') { beat.sourceStateRevision = state.session.stateRevision; await saveBeat(client, beat); }
       await saveState(client, state);
     } else {

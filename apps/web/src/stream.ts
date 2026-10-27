@@ -1,7 +1,7 @@
 import type { StreamAudio, StreamLayout } from '@rpg/contracts';
 
-export function streamUrl(origin: string, token: string, options: { layout: StreamLayout; audio: StreamAudio }): string {
-  return `${origin}/stream?layout=${options.layout}&audio=${options.audio}#token=${encodeURIComponent(token)}`;
+export function streamUrl(origin: string, token: string, options: { layout: StreamLayout; audio: StreamAudio; checker?: boolean }): string {
+  return `${origin}/stream?layout=${options.layout}&audio=${options.audio}${options.checker ? '&bg=checker' : ''}#token=${encodeURIComponent(token)}`;
 }
 
 export function producerUrl(origin: string, token: string): string {

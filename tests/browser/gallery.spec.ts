@@ -19,21 +19,20 @@ test('a finished show becomes a public gallery: private link, viewer, public lis
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const path = `/sessions/${sessionId}`;
 
-  const setStatus = async (status: 'live' | 'ended') => {
+  const setLive = async () => {
     const snapshot = await api(page, path);
-    await api(page, `${path}/commands`, { type: 'set_status', commandId: randomUUID(), expectedStateRevision: snapshot.session.stateRevision, status });
+    await api(page, `${path}/commands`, { type: 'set_status', commandId: randomUUID(), expectedStateRevision: snapshot.session.stateRevision, status: 'live' });
   };
   const title: string = (await api(page, path)).session.title;
   expect(title).toBeTruthy();
 
   // Two scene pictures. Hide picture covers every picture of the scene, including the one drawn afterwards.
-  await setStatus('live');
+  await setLive();
   await expect.poll(async () => (await api(page, path)).scenePictureStatus?.state, { timeout: 20000 }).toBe('ready');
   await page.reload();
   await page.getByTestId('scene-picture-hide').click();
@@ -41,15 +40,19 @@ test('a finished show becomes a public gallery: private link, viewer, public lis
   await page.getByTestId('scene-picture-new').click();
   await expect(page.getByTestId('scene-picture-status')).toContainText('Making the picture');
   await expect.poll(async () => (await api(page, path)).scenePictureStatus?.state, { timeout: 20000 }).toBe('ready');
-  await setStatus('ended');
-  await page.reload();
+  await page.getByTestId('end-show').click();
+  await page.getByTestId('end-show-confirm').click();
+  await expect(page.getByTestId('show-state')).toHaveText('Ended');
 
-  // Turn on the gallery and copy its private link.
-  const panel = page.getByTestId('gallery-panel');
+  // Turn on the gallery and copy its private link. The gallery panel sits at the top of the ended show.
+  const panel = page.getByTestId('ended-gallery').getByTestId('gallery-panel');
   await expect(panel).toBeVisible();
   await panel.getByTestId('gallery-on').click();
   await expect(panel.getByTestId('gallery-status')).toContainText('Gallery on · 2 pictures', { timeout: 20000 });
   const link = await panel.getByTestId('gallery-url').inputValue();
+  await expect(panel.getByText('Gallery link', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Copy link', exact: true })).toBeVisible();
+  await expect(panel.getByTestId('gallery-more')).not.toHaveJSProperty('open', true);
   expect(link).toMatch(/\/gallery\/[A-Za-z0-9_-]{43}\/$/);
   await panel.getByTestId('gallery-copy').click();
   const clipboard = await page.evaluate(() => navigator.clipboard.readText().catch(() => null));
@@ -103,6 +106,7 @@ test('a finished show becomes a public gallery: private link, viewer, public lis
       }
     };
     expect(await cards()).toBe(0);
+    await panel.getByText('More gallery options', { exact: true }).click();
     await panel.getByTestId('gallery-list').click();
     await expect(panel.getByTestId('gallery-listed')).toBeVisible();
     expect(await cards()).toBe(1);

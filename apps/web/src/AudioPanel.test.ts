@@ -36,7 +36,7 @@ const requests = (suffix: string) => vi.mocked(fetch).mock.calls.filter(call => 
 function active(overrides: Partial<PlaybackSnapshot> = {}) {
   shared = { ...shared, playbackId, manifest, status: 'playing', segmentIndex: 0, positionMs: 3000, anchorTimeMs: 99_000, presenter: { available: true, leaseExpiresAtMs: 110_000 }, ...overrides };
 }
-function panel(props: { director: boolean; stage?: boolean; beatId?: string; compact?: boolean } = { director: true, beatId: 'beat-1' }) {
+function panel(props: { director: boolean; stage?: boolean; beatId?: string; compact?: boolean; autoPlayBeatId?: string | null } = { director: true, beatId: 'beat-1' }) {
   const wrapper = mount(AudioPanel, { props: { sessionId: 'show', ...props } });
   wrappers.push(wrapper);
   return wrapper;
@@ -330,6 +330,83 @@ describe('coordinated reviewed audio panel', () => {
     expect(fetch).toHaveBeenCalledWith('/api/sessions/next-show/playback', expect.anything());
     expect(wrapper.get('[data-testid="present-audio"]').attributes('disabled')).toBeUndefined();
     expect(instances).toHaveLength(1);
+  });
+});
+
+describe('auto-play after a voiced publish', () => {
+  const starts = () => requests('/commands').filter(call => JSON.parse(String(call[1]?.body)).type === 'start');
+  const withPresenter = () => { shared.presenter = { available: true, leaseExpiresAtMs: 110_000 }; shared.sampleRevision++; };
+
+  it('sends one start once the manifest becomes ready', async () => {
+    withPresenter(); latest = { status: 'missing' };
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
+    expect(starts()).toHaveLength(0);
+    latest = { status: 'ready', manifest };
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(1);
+    expect(JSON.parse(String(starts()[0][1]?.body))).toMatchObject({ type: 'start', beatId: 'beat-1' });
+  });
+
+  it('waits while the previous narration plays, then starts', async () => {
+    withPresenter();
+    active({ manifest: { ...manifest, beatId: 'beat-0' } });
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(0);
+    shared = { ...shared, status: 'complete', anchorTimeMs: null, revision: shared.revision + 1, sampleRevision: shared.sampleRevision + 1 };
+    await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(starts()).toHaveLength(1);
+    expect(JSON.parse(String(starts()[0][1]?.body))).toMatchObject({ beatId: 'beat-1' });
+  });
+
+  it('does not start without a presenter, nor when one appears later', async () => {
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(0);
+    withPresenter();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(0);
+  });
+
+  it('does not start when the prop is absent or names an older beat', async () => {
+    withPresenter();
+    panel({ director: true, beatId: 'beat-1' });
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-0' });
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: null });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(0);
+  });
+
+  it('does not auto-play on the stage or in compact mode', async () => {
+    withPresenter();
+    panel({ director: false, stage: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' });
+    panel({ director: false, compact: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(0);
+  });
+
+  it('sends a single start across many polls', async () => {
+    withPresenter();
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(starts()).toHaveLength(1);
+  });
+
+  it('keeps the stage presenter controls inside a closed Audio options fold', async () => {
+    const wrapper = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    const fold = wrapper.get('[data-testid="audio-options"]');
+    expect(fold.element.tagName).toBe('DETAILS');
+    expect(fold.attributes('open')).toBeUndefined();
+    expect(fold.get('summary').text()).toBe('Audio options');
+    expect(fold.find('[data-testid="present-audio"]').exists()).toBe(true);
+  });
+
+  it('points the director to Stream this show when no browser is playing', async () => {
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.text()).toContain('You will find it in Cast & lobby, under Stream this show.');
   });
 });
 

@@ -18,7 +18,7 @@ const table = useTable();
 const { sessionId, snapshot, busy, player, latestHistory, send, work, onSnapshot } = table;
 const context = table.inputContext;
 
-const playerReady = computed(() => !player.value?.setup || Boolean(player.value.setup.started && player.value.ownCharacter?.approved && player.value.ownCharacter.ready && player.value.ownCharacter.acceptedBoundariesRevision === player.value.setup.boundariesRevision));
+const playerReady = computed(() => !player.value?.setup || Boolean(player.value.setup.started && player.value.ownCharacter?.approved));
 
 const kind = ref<LineKind>('say');
 const sayText = ref('');
@@ -27,6 +27,7 @@ const noteText = ref('');
 const recipient = ref('');
 const stageDirection = ref('');
 const receipt = ref('');
+const receiptFor = ref<string | null>(null);
 const recipientTouched = ref(false);
 const editing = ref<Submission | null>(null);
 const formPanel = ref<HTMLElement | null>(null);
@@ -107,9 +108,14 @@ function beginInput() {
   else if (!contexts.value[lineKind]) contexts.value[lineKind] = context();
 }
 
-const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', ready: playerReady.value, beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch }));
+const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch }));
 const toneLabel = computed(() => ({ wait: 'Hold on', act: 'Your turn', done: 'Sent' })[status.value.tone]);
 const presentNpcs = computed(() => snapshot.value?.npcs.filter(npc => npc.status === 'present') ?? []);
+const changingRecipient = ref(false);
+const talkingTo = computed(() => {
+  const npc = presentNpcs.value.find(candidate => candidate.id === recipient.value);
+  return npc ? `Talking to ${npc.displayName}` : 'Talking to your group';
+});
 const submitLabel = computed(() => busy.value ? 'Sending…' : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
 
 function defaultRecipient(next: SessionSnapshot) {
@@ -120,6 +126,14 @@ if (snapshot.value) defaultRecipient(snapshot.value);
 const unregister = onSnapshot(defaultRecipient);
 onUnmounted(unregister);
 
+function ownIds() { return new Set((player.value?.submissions ?? []).map(item => item.id)); }
+function newOwnId(before: Set<string>) { return (player.value?.submissions ?? []).find(item => !before.has(item.id))?.id ?? null; }
+watch(snapshot, () => {
+  if (!receipt.value || !receiptFor.value) return;
+  const item = player.value?.submissions.find(own => own.id === receiptFor.value);
+  if (!item || (item.status !== 'queued' && item.status !== 'selected')) { receipt.value = ''; receiptFor.value = null; }
+});
+
 function linePayload(lineKind: LineKind) {
   if (lineKind === 'say') return { kind: 'say' as const, text: sayText.value, intent: '', approach: '', recipientNpcIds: recipient.value ? [recipient.value] : [], stageDirection: stageDirection.value };
   if (lineKind === 'act') return { kind: 'act' as const, text: '', intent: actionText.value, approach: actionText.value, recipientNpcIds: [], stageDirection: '' };
@@ -127,19 +141,24 @@ function linePayload(lineKind: LineKind) {
 }
 
 function saveSubmission() { return work(async () => {
-  receipt.value = '';
+  receipt.value = ''; receiptFor.value = null;
   const lineKind = kind.value;
   const captured = contexts.value[lineKind] ?? context();
+  const editedId = editing.value?.id ?? null;
+  const before = ownIds();
   await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
   finishLine(lineKind);
   receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : 'Saved. The director has your line.';
+  receiptFor.value = editedId ?? newOwnId(before);
 }); }
 
 function pauseRequest() { return work(async () => {
-  receipt.value = '';
+  receipt.value = ''; receiptFor.value = null;
   const captured = context();
+  const before = ownIds();
   await send({ type: 'save_submission', commandId: crypto.randomUUID(), expectedSubmissionRevision: 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, kind: 'ooc', text: PAUSE_REQUEST_TEXT, recipientNpcIds: [], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true });
   receipt.value = 'Pause requested. Say so on the voice call too.';
+  receiptFor.value = newOwnId(before);
 }); }
 
 // Words already in a box when Change is pressed wait here, and come back when the change is saved or cancelled.
@@ -168,19 +187,37 @@ function cancel() {
   if (editing.value) finishLine(editing.value.kind);
   else kind.value = turnDefault.value;
 }
+const actionOf = (item: Submission) => !item.approach.trim() || item.approach.trim() === item.intent.trim() ? item.intent : `${item.intent}\n${item.approach}`;
+function returnWords(item: Submission) {
+  const lineKind = item.kind;
+  const words = lineKind === 'act' ? actionOf(item) : item.text;
+  const held = textOf(lineKind);
+  if (lineKind === 'say') {
+    if (!held.trim()) { recipient.value = item.recipientNpcIds[0] ?? ''; recipientTouched.value = true; }
+    if (!stageDirection.value.trim()) stageDirection.value = item.stageDirection;
+  }
+  setText(lineKind, held.trim() ? `${held}\n${words}` : words);
+  receipt.value = ''; receiptFor.value = null;
+  kind.value = lineKind;
+  contexts.value[lineKind] = context();
+}
 function editSubmission(item: Submission) {
   if (editing.value && editing.value.kind !== item.kind) finishLine(editing.value.kind);
   if (!editing.value) setAside.value = { kind: item.kind, mode: kind.value, text: textOf(item.kind), context: contexts.value[item.kind], recipient: recipient.value, recipientTouched: recipientTouched.value, stageDirection: stageDirection.value };
   kind.value = item.kind;
   if (item.kind === 'say') { sayText.value = item.text; recipient.value = item.recipientNpcIds[0] ?? ''; recipientTouched.value = true; stageDirection.value = item.stageDirection; }
-  else if (item.kind === 'act') actionText.value = !item.approach.trim() || item.approach.trim() === item.intent.trim() ? item.intent : `${item.intent}\n${item.approach}`;
+  else if (item.kind === 'act') actionText.value = actionOf(item);
   else noteText.value = item.text;
   editing.value = item;
+  receipt.value = ''; receiptFor.value = null;
   contexts.value[item.kind] = context();
 }
 function withdraw(item: Submission) { return work(async () => {
   await send({ type: 'cancel_submission', commandId: crypto.randomUUID(), submissionId: item.id, expectedSubmissionRevision: item.revision });
-  if (editing.value?.id === item.id) finishLine(item.kind);
+  if (item.kind === 'ooc' && item.text === PAUSE_REQUEST_TEXT) return;
+  // Taking back any line ends a change in progress, as Cancel would, so Save changes can never point at the wrong line.
+  if (editing.value) finishLine(editing.value.kind);
+  returnWords(item);
 }); }
 async function startEdit(item: Submission) {
   editSubmission(item);
@@ -212,8 +249,7 @@ async function askPrivately() {
         <template v-else><h2>Unassigned seat</h2><p class="notice">This seat has no character yet. Ask the director.</p></template>
       </section>
       <div class="player-status" :data-tone="status.tone" aria-live="polite"><span class="tone">{{ toneLabel }}</span><strong>{{ status.headline }}</strong><span>{{ status.detail }}</span></div>
-      <details open class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
-      <p v-if="player.ownCharacter && !playerReady" class="notice">Finish setup before you play. Open Cast & lobby, read your character card, tick the box and press Mark ready. <a :href="identityPath(`/sessions/${sessionId}/lobby`)">Open Cast & lobby</a></p>
+      <details class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
       <section ref="formPanel" class="panel form-panel">
         <form data-testid="submission-form" @submit.prevent="saveSubmission">
           <div class="modes" role="group" aria-label="What do you want to send?">
@@ -222,7 +258,8 @@ async function askPrivately() {
           </div>
           <template v-if="kind === 'say'">
             <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><p :id="helpId('say')" class="field-help">Viewers see these words on stream exactly as you type them, once the director puts them in the story.</p></div>
-            <div v-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
+            <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
+            <div v-else-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
           </template>
           <div v-else-if="kind === 'act'"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. The storyteller tells what happens, and sometimes dice decide how it goes.</p></div>
           <div v-else><label>Private note for the director<textarea :aria-describedby="helpId('note')" v-model="noteText" data-testid="note-input" rows="3" maxlength="4000" required @input="beginInput" /></label><p :id="helpId('note')" class="field-help">Only the director sees this. It never appears on stream.</p></div>
@@ -236,7 +273,7 @@ async function askPrivately() {
       </section>
       <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" @edit="startEdit" @withdraw="withdraw" />
       <div class="extras"><button type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
-      <AudioPanel compact :session-id="sessionId" :beat-id="latestHistory[0]?.id" :director="false" />
+      <details class="sound" data-testid="sound"><summary>Sound</summary><AudioPanel compact :session-id="sessionId" :beat-id="latestHistory[0]?.id" :director="false" /></details>
     </div>
   </template>
 </template>
@@ -263,8 +300,9 @@ async function askPrivately() {
 .player-status strong { font-size: 1.05rem; }
 .player-status span:last-child { color: var(--muted); font-size: .9rem; }
 .how ol { display: grid; gap: .3rem; margin: .3rem 0 0; padding-left: 1.4rem; line-height: 1.55; }
-.card > summary, .how > summary { cursor: pointer; min-height: 44px; padding-block: .6rem; box-sizing: border-box; }
+.card > summary, .how > summary, .sound > summary { cursor: pointer; min-height: 44px; padding-block: .6rem; box-sizing: border-box; }
 .notice a { display: inline-flex; align-items: center; min-height: 44px; }
+.talking { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .8rem; }
 .modes { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
 .modes button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); background: rgb(221 186 118 / 12%); background: color-mix(in srgb, var(--gold) 12%, transparent); }
 .form-panel .notice { margin: 0; }

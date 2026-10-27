@@ -25,6 +25,10 @@ suite('stream link management routes', () => {
       [hash(token), row.actor_id ?? randomUUID(), row.role, row.session_id ?? null, row.character_id ?? null, row.producer_grant_id ?? null, row.stream_link_id ?? null]);
     return token;
   }
+  async function mainShowLink() {
+    const { rows } = await pool.query("SELECT id FROM stream_links WHERE session_id=$1 AND subject='show' ORDER BY created_at, id LIMIT 1", [sessionId]);
+    return rows[0]!.id as string;
+  }
   const links = (token = hostCookie) => call(`/api/sessions/${sessionId}/stream-links`, undefined, token);
   const create = (body: Record<string, unknown>, token = hostCookie) => call(`/api/sessions/${sessionId}/stream-links`, { commandId: randomUUID(), ...body }, token);
   async function playerToken(index = 0) {
@@ -45,6 +49,11 @@ suite('stream link management routes', () => {
   afterEach(async () => { await app?.close(); await pool?.end(); });
 
   it('creates and shows the same re-derived token, stores only the hash, and lists no secrets', async () => {
+    const mainId = await mainShowLink();
+    const mainListed = (await links()).json().links;
+    expect(mainListed).toHaveLength(1);
+    expect(mainListed[0]).toMatchObject({ id: mainId, subject: 'show', label: 'Main show', canPresent: true, revokedAt: null, characterId: null, producerGrantId: null });
+    expect(Date.parse(mainListed[0].expiresAt) - Date.parse(mainListed[0].createdAt)).toBe(2160 * 3600 * 1000);
     const command = { commandId: randomUUID(), subject: 'show' };
     const response = await call(`/api/sessions/${sessionId}/stream-links`, command);
     expect(response.statusCode, response.body).toBe(200);
@@ -56,19 +65,22 @@ suite('stream link management routes', () => {
     const shown = await call(`/api/sessions/${sessionId}/stream-links/${made.link.id}/link`);
     expect(shown.json()).toEqual(made);
     const listed = await links();
-    expect(listed.json()).toEqual({ links: [made.link] });
+    expect(listed.json()).toEqual({ links: [made.link, mainListed[0]] });
     expect(listed.body).not.toContain(made.token);
     const row = (await pool.query('SELECT * FROM stream_links WHERE id=$1', [made.link.id])).rows[0];
     expect(row.token_hash).toBe(hash(made.token));
     expect(JSON.stringify(row)).not.toContain(made.token);
-    const audit = (await pool.query("SELECT data FROM audit_events WHERE session_id=$1 AND kind='stream_link.created'", [sessionId])).rows;
-    expect(audit).toHaveLength(1);
-    expect(audit[0].data).toEqual({ linkId: made.link.id, subject: 'show', characterId: null, producerGrantId: null });
+    const audit = (await pool.query("SELECT data FROM audit_events WHERE session_id=$1 AND kind='stream_link.created' ORDER BY sequence", [sessionId])).rows;
+    expect(audit).toHaveLength(2);
+    expect(audit[0].data).toEqual({ linkId: mainId, subject: 'show', characterId: null, producerGrantId: null });
+    expect(audit[1].data).toEqual({ linkId: made.link.id, subject: 'show', characterId: null, producerGrantId: null });
     expect(JSON.stringify(audit)).not.toContain(made.token);
   });
 
   it('lets directors make several show links, a listen-only show link, and one personal link each', async () => {
+    const mainId = await mainShowLink();
     const first = (await create({ subject: 'show' })).json();
+    expect(first.link.id).not.toBe(mainId);
     const second = (await create({ subject: 'show', label: 'Backup', canPresent: false })).json();
     expect(second.link).toMatchObject({ label: 'Backup', canPresent: false });
     expect(second.link.id).not.toBe(first.link.id);
@@ -80,7 +92,7 @@ suite('stream link management routes', () => {
     expect(player.link.label).toMatch(/ view$/);
     expect((await create({ subject: 'player', characterId: characters[0] })).json()).toEqual(player);
     expect((await create({ subject: 'player', characterId: randomUUID() })).statusCode).toBe(404);
-    expect((await links()).json().links.map((l: { id: string }) => l.id)).toEqual([player.link.id, host.link.id, second.link.id, first.link.id]);
+    expect((await links()).json().links.map((l: { id: string }) => l.id)).toEqual([player.link.id, host.link.id, second.link.id, first.link.id, mainId]);
   });
 
   it('replaces an expired personal link and returns an active one', async () => {
@@ -92,7 +104,7 @@ suite('stream link management routes', () => {
     expect(rows.find((r) => r.id === old.link.id).revoked_at).not.toBeNull();
     expect(rows.find((r) => r.id === fresh.link.id).revoked_at).toBeNull();
     expect((await call(`/api/sessions/${sessionId}/stream-links/${old.link.id}/link`)).statusCode).toBe(404);
-    expect((await links()).json().links).toHaveLength(2);
+    expect((await links()).json().links).toHaveLength(3);
   });
 
   it('lets a player create and see only their own link, and rejects canPresent from a player', async () => {
@@ -139,7 +151,7 @@ suite('stream link management routes', () => {
     expect((await create({ subject: 'producer', producerGrantId: grant.id })).json()).toEqual(personal.json());
     expect((await create({ subject: 'producer', producerGrantId: randomUUID() })).statusCode).toBe(404);
     const audit = (await pool.query("SELECT producer_grant_id FROM audit_events WHERE session_id=$1 AND kind='stream_link.created' ORDER BY sequence", [sessionId])).rows;
-    expect(audit.map((r) => r.producer_grant_id)).toEqual([grant.id, grant.id, grant.id]);
+    expect(audit.map((r) => r.producer_grant_id)).toEqual([null, grant.id, grant.id, grant.id]);
     await pool.query("UPDATE producer_grants SET owner_id='someone-else' WHERE id=$1", [grant.id]);
     const stranger = await create({ subject: 'producer', producerGrantId: grant.id });
     expect(stranger.statusCode).toBe(404);

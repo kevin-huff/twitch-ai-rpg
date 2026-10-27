@@ -10,6 +10,20 @@ async function api(page: Page, path: string, body?: unknown, status = 200) {
   return result.data;
 }
 
+async function openMore(page: Page) {
+  const more = page.getByTestId('card-more');
+  if (!(await more.evaluate(details => (details as HTMLDetailsElement).open))) await more.locator(':scope > summary').click();
+}
+
+async function openBuilderInvites(page: Page) {
+  const tools = page.getByTestId('advanced-tools');
+  await tools.locator(':scope > summary').click();
+  const manager = tools.locator('details').filter({ hasText: 'Invite players to build characters' });
+  await expect(manager.locator(':scope > summary')).toBeVisible({ timeout: 2000 });
+  await manager.locator(':scope > summary').click();
+  return manager;
+}
+
 test('players build private characters before a show, return later, and submit for director casting in one browser', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
@@ -20,9 +34,7 @@ test('players build private characters before a show, return later, and submit f
   const scenario = await api(page, '/library/scenarios', { commandId: crypto.randomUUID(), expectedVersion: 0, definition: starter.scenario });
   const otherCard = await api(page, '/library/characters', { commandId: crypto.randomUUID(), expectedVersion: 0, definition: starter.characters[1] });
   await page.getByTestId('library-link').click();
-  const manager = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Invite players to build characters' }) });
-  await expect(manager.locator('summary')).toBeVisible({ timeout: 2000 });
-  await manager.locator('summary').click();
+  const manager = await openBuilderInvites(page);
   const labels = [`Avery ${Date.now()}`, `Briar ${Date.now()}`];
   const links: string[] = [];
   for (const [index, label] of labels.entries()) {
@@ -34,13 +46,14 @@ test('players build private characters before a show, return later, and submit f
     links.push(await link.inputValue());
     expect(links[index]).not.toContain('identity=');
   }
-  await manager.locator('summary').scrollIntoViewIfNeeded();
+  await manager.locator(':scope > summary').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/player-builder-invitations.png' });
   const [avery, briar] = await Promise.all([context.newPage(), context.newPage()]);
   await avery.goto(links[0]!);
   await expect(avery.getByTestId('card-name')).toBeVisible();
   await expect(avery).toHaveURL(/\/build-character\?identity=[a-f0-9]{32}$/);
   await expect(avery.locator('a.brand')).toHaveCount(0);
+  await openMore(avery);
   await expect(avery.getByRole('button', { name: /AI Generate/ })).toHaveCount(12, { timeout: 2000 });
   await expect(avery.locator('.builder-instructions')).toHaveText('Build a desert courier.');
   await avery.screenshot({ path: 'test-results/player-builder-desktop.png' });
@@ -69,6 +82,7 @@ test('players build private characters before a show, return later, and submit f
   await briar.goto(links[1]!);
   await expect(briar.getByTestId('card-name')).toBeVisible();
   await briar.getByTestId('card-name').fill('Briar unfinished character');
+  await openMore(briar);
   await briar.getByTestId('card-secret').fill('Briar private draft');
   await briar.getByTestId('save-builder-draft').click();
   await expect(briar.getByRole('status')).toContainText('Progress saved');
@@ -84,6 +98,7 @@ test('players build private characters before a show, return later, and submit f
   await expect(returning.getByTestId('card-secret')).toHaveValue('Avery private saved draft');
   await returning.close();
   await avery.getByTestId('card-name').fill('Aster built by player');
+  await openMore(avery);
   await avery.getByTestId('card-secret').fill('Avery unsaved private detail');
   await avery.getByRole('button', { name: 'AI Generate Character personality', exact: true }).click();
   await avery.getByTestId('field-generator-seed').fill('A patient courier');
@@ -129,12 +144,15 @@ test('players build private characters before a show, return later, and submit f
   await page.getByTestId('show-seat-0').selectOption(`${submitted.id}:${submitted.version}`);
   await page.getByTestId('show-seat-1').selectOption(`${otherCard.id}:${otherCard.version}`);
   await page.getByTestId('create-custom').click();
-  const lobbyLink = await page.getByTestId('custom-lobby-link').getAttribute('href');
-  const sessionId = lobbyLink!.match(/\/sessions\/([^/]+)/)![1]!;
+  await expect(page).toHaveURL(/\/sessions\/[^/]+\/lobby/);
+  const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const session = await api(page, `/sessions/${sessionId}`);
   expect(session.setup.started).toBe(false);
-  expect(session.characterDetails.every((character: { approved: boolean; ready: boolean }) => !character.approved && !character.ready)).toBe(true);
-  await page.getByRole('button', { name: `Revoke link for ${labels[1]}`, exact: true }).click();
+  // A saved card picked for a seat counts as approved when the show is made.
+  expect(session.characterDetails.every((character: { approved: boolean; draft: unknown }) => character.approved && !character.draft)).toBe(true);
+  await page.goto('/library');
+  await openBuilderInvites(page);
+  await page.getByRole('button', { name: `Turn off link for ${labels[1]}`, exact: true }).click();
   await briar.reload();
   await expect(briar.getByRole('alert')).toContainText('expired, revoked, or unavailable');
   await expect(briar.getByTestId('save-builder-draft')).toHaveCount(0);

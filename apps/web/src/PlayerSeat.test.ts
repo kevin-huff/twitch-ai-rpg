@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import PlayerSeat from './PlayerSeat.vue';
+import SubmissionList from './SubmissionList.vue';
 import { saveDraft } from './drafts';
 import { createTable, PAUSE_REQUEST_TEXT, provideTable, type Table } from './table';
 
@@ -52,6 +53,9 @@ async function refreshTo(state: ReturnType<typeof snapshot>) {
 
 const buttonNamed = (w: VueWrapper, name: string) => w.findAll('button').find(button => button.text() === name)!;
 const click = async (w: VueWrapper, name: string) => { await buttonNamed(w, name).trigger('click'); await flushPromises(); };
+const changeLine = async (w: VueWrapper) => { await w.get('.sub-item').findAll('button').find(button => button.text() === 'Change')!.trigger('click'); await flushPromises(); };
+const takeBack = async (w: VueWrapper, item: Record<string, unknown>) => { w.findComponent(SubmissionList).vm.$emit('withdraw', item); await flushPromises(); };
+const value = (w: VueWrapper, id: string) => (w.get(`[data-testid="${id}"]`).element as HTMLTextAreaElement).value;
 const pressed = (w: VueWrapper, name: string) => buttonNamed(w, name).attributes('aria-pressed');
 const submit = async (w: VueWrapper) => { await w.get('[data-testid="submission-form"]').trigger('submit'); await flushPromises(); };
 const lastCommand = () => transport.command.mock.calls.at(-1)?.[1];
@@ -172,7 +176,7 @@ describe('player seat', () => {
   it('puts a sent line back in its box to change it and keeps its fields', async () => {
     const act = line({ kind: 'act', revision: 2, intent: 'Open it', approach: 'Pick the lock' });
     let w = await mountSeat(snapshot({ submissions: [act] }));
-    await click(w, 'Change');
+    await changeLine(w);
     expect((w.get('[data-testid="action-input"]').element as HTMLTextAreaElement).value).toBe('Open it\nPick the lock');
     expect(w.get('button.send').text()).toBe('Save changes');
     await submit(w);
@@ -187,7 +191,7 @@ describe('player seat', () => {
     const npcs = [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present' }];
     const say = line({ kind: 'say', text: 'Who sent you?', recipientNpcIds: ['mara'], stageDirection: 'Taps the bar' });
     w = await mountSeat(snapshot({ npcs, submissions: [say] }));
-    await click(w, 'Change');
+    await changeLine(w);
     expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('Who sent you?');
     await submit(w);
     expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', submissionId: 's1', text: 'Who sent you?', recipientNpcIds: ['mara'], stageDirection: 'Taps the bar' }));
@@ -205,12 +209,12 @@ describe('player seat', () => {
     const w = await mountSeat(snapshot({ submissions: [line({ kind: 'say', text: 'Who sent you?' })] }));
     const value = (id: string) => (w.get(`[data-testid="${id}"]`).element as HTMLTextAreaElement).value;
     await w.get('[data-testid="speech-input"]').setValue('Fresh follow-up');
-    await click(w, 'Change');
+    await changeLine(w);
     expect(value('speech-input')).toBe('Who sent you?');
     await submit(w);
     expect(lastCommand()).toEqual(expect.objectContaining({ submissionId: 's1', text: 'Who sent you?' }));
     expect(value('speech-input')).toBe('Fresh follow-up');
-    await click(w, 'Change');
+    await changeLine(w);
     await click(w, 'Cancel');
     expect(value('speech-input')).toBe('Fresh follow-up');
   });
@@ -219,7 +223,7 @@ describe('player seat', () => {
     const w = await mountSeat(snapshot({ submissions: [line({ kind: 'say', text: 'Hello' })] }));
     await click(w, 'Do something');
     await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
-    await click(w, 'Change');
+    await changeLine(w);
     expect(pressed(w, 'Say something')).toBe('true');
     await submit(w);
     expect(pressed(w, 'Do something')).toBe('true');
@@ -307,6 +311,190 @@ describe('player seat', () => {
       const w = await mountSeat(snapshot(shown, { pronouns: 'she/her', portraitId: '22222222-2222-4222-8222-222222222222' }));
       expect(w.findAll('h2').map(heading => heading.text())).toEqual(['Skooty']);
       expect(w.findAll('dt').map(term => term.text())).toEqual(['Pronouns']);
+    });
+  });
+
+  describe('a tidier seat', () => {
+    const started = { setup: { started: true, boundariesRevision: 1 } };
+    const mara = { id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present' };
+    const jo = { id: 'jo', displayName: 'Jo', role: 'Cook', status: 'present' };
+
+    it('lets a started seat with an approved card send, with no readiness notice', async () => {
+      const w = await mountSeat(snapshot({ ...started }, { approved: true, ready: false }));
+      expect(w.text()).not.toContain('Finish setup');
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+      await w.get('[data-testid="speech-input"]').setValue('Hello');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ type: 'save_submission', kind: 'say', text: 'Hello' }));
+    });
+
+    it('keeps Send off until the card is approved and the show has started', async () => {
+      const w = await mountSeat(snapshot({ ...started }, { approved: false }));
+      expect(w.get('button.send').attributes('disabled')).toBeDefined();
+      await refreshTo(snapshot({ setup: { started: false, boundariesRevision: 1 } }, { approved: true }));
+      expect(w.get('button.send').attributes('disabled')).toBeDefined();
+      await refreshTo(snapshot({ ...started }, { approved: true }));
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+    });
+
+    it('starts How this works closed and folds the sound control into a closed Sound line', async () => {
+      const w = await mountSeat(snapshot());
+      expect(w.get('details.how').attributes('open')).toBeUndefined();
+      const sound = w.get('[data-testid="sound"]');
+      expect(sound.element.tagName).toBe('DETAILS');
+      expect(sound.attributes('open')).toBeUndefined();
+      expect(sound.get('summary').text()).toBe('Sound');
+      expect(sound.find('[data-testid="audio-panel-stub"]').exists()).toBe(true);
+    });
+
+    it('names the one present character as text and reveals the choice with Change', async () => {
+      const w = await mountSeat(snapshot({ npcs: [mara] }));
+      expect(w.get('[data-testid="talking-to"]').text()).toBe('Talking to Mara');
+      expect(w.find('select').exists()).toBe(false);
+      await w.get('[data-testid="talking-to-change"]').trigger('click');
+      expect(w.find('[data-testid="talking-to"]').exists()).toBe(false);
+      const select = w.get('select');
+      expect(select.findAll('option').map(option => option.text())).toEqual(['Your group', 'Mara · Bartender']);
+      await select.setValue('');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ recipientNpcIds: [] }));
+    });
+
+    it('reads Talking to your group when the group is the current choice, and shows the select for two or more', async () => {
+      saveDraft('show', 'pc-1', { kind: 'say', speech: 'Hello all', intent: '', approach: '', note: '', stageDirection: '', recipient: '', context: { epoch: 0, beatId: null } });
+      const group = await mountSeat(snapshot({ npcs: [mara] }));
+      expect(group.get('[data-testid="talking-to"]').text()).toBe('Talking to your group');
+      group.unmount(); wrapper = undefined;
+      sessionStorage.clear();
+      const two = await mountSeat(snapshot({ npcs: [mara, jo] }));
+      expect(two.find('[data-testid="talking-to"]').exists()).toBe(false);
+      expect(two.findAll('select option').map(option => option.text())).toEqual(['Your group', 'Mara · Bartender', 'Jo · Cook']);
+      two.unmount(); wrapper = undefined;
+      const none = await mountSeat(snapshot());
+      expect(none.find('select').exists()).toBe(false);
+      expect(none.find('[data-testid="talking-to"]').exists()).toBe(false);
+    });
+
+    describe('save receipt', () => {
+      const saved = async () => {
+        const w = await mountSeat(snapshot());
+        await w.get('[data-testid="speech-input"]').setValue('Hello');
+        transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ submissions: [line({ id: 'new1', text: 'Hello' })] })); return {}; });
+        await submit(w);
+        return w;
+      };
+      it('shows after saving and stays while the line is queued', async () => {
+        const w = await saved();
+        expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+        await refreshTo(snapshot({ submissions: [line({ id: 'new1', text: 'Hello', status: 'queued' })] }));
+        expect(w.find('[role="status"]').exists()).toBe(true);
+      });
+      it('clears once the line is published', async () => {
+        const w = await saved();
+        await refreshTo(snapshot({ submissions: [line({ id: 'new1', text: 'Hello', status: 'published' })] }));
+        expect(w.find('[role="status"]').exists()).toBe(false);
+      });
+      it('clears when the line is taken back', async () => {
+        const w = await saved();
+        await refreshTo(snapshot({ submissions: [line({ id: 'new1', text: 'Hello', status: 'cancelled' })] }));
+        expect(w.find('[role="status"]').exists()).toBe(false);
+      });
+    });
+
+    it('clears the old receipt when a sent line is changed', async () => {
+      const w = await mountSeat(snapshot());
+      await w.get('[data-testid="speech-input"]').setValue('Hello');
+      await submit(w);
+      expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+      await refreshTo(snapshot({ submissions: [line({ kind: 'say', text: 'Hello' })] }));
+      await changeLine(w);
+      expect(w.find('[role="status"]').exists()).toBe(false);
+      expect(w.text()).toContain('You are changing a line you already sent.');
+    });
+
+    it('takes a line back at once, without asking, and returns the words to the box as unsent', async () => {
+      const say = line({ kind: 'say', text: 'Who sent you?', recipientNpcIds: ['mara'], stageDirection: 'Taps the bar' });
+      const w = await mountSeat(snapshot({ npcs: [mara, jo], submissions: [say] }));
+      await takeBack(w, say);
+      expect(lastCommand()).toEqual(expect.objectContaining({ type: 'cancel_submission', submissionId: 's1', expectedSubmissionRevision: 1 }));
+      expect(value(w, 'speech-input')).toBe('Who sent you?');
+      expect((w.get('select').element as HTMLSelectElement).value).toBe('mara');
+      expect(w.text()).toContain('Not sent yet');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', text: 'Who sent you?', recipientNpcIds: ['mara'], stageDirection: 'Taps the bar' }));
+    });
+
+    it('returns a taken-back action and a taken-back note to their own modes', async () => {
+      const act = line({ id: 'a1', kind: 'act', intent: 'Open it', approach: 'Pick the lock' });
+      const note = line({ id: 'n1', kind: 'ooc', text: 'Can I step out?' });
+      const w = await mountSeat(snapshot({ submissions: [act, note] }));
+      await takeBack(w, act);
+      expect(pressed(w, 'Do something')).toBe('true');
+      expect(value(w, 'action-input')).toBe('Open it\nPick the lock');
+      expect(w.text()).toContain('Not sent yet');
+      await takeBack(w, note);
+      expect(pressed(w, 'Say something')).toBe('false');
+      expect(value(w, 'note-input')).toBe('Can I step out?');
+      await click(w, 'Cancel');
+      await click(w, 'Do something');
+      expect(value(w, 'action-input')).toBe('Open it\nPick the lock');
+    });
+
+    it('adds a taken-back line under unsent words instead of replacing them', async () => {
+      const say = line({ kind: 'say', text: 'Who sent you?' });
+      const w = await mountSeat(snapshot({ submissions: [say] }));
+      await w.get('[data-testid="speech-input"]').setValue('Fresh follow-up');
+      await takeBack(w, say);
+      expect(value(w, 'speech-input')).toBe('Fresh follow-up\nWho sent you?');
+    });
+
+    it('takes back a pause request without putting its text in the note box', async () => {
+      const pause = line({ id: 'p1', kind: 'ooc', text: PAUSE_REQUEST_TEXT });
+      const w = await mountSeat(snapshot({ submissions: [pause] }));
+      await takeBack(w, pause);
+      expect(lastCommand()).toEqual(expect.objectContaining({ type: 'cancel_submission', submissionId: 'p1' }));
+      const box = w.find('[data-testid="note-input"]');
+      if (box.exists()) expect((box.element as HTMLTextAreaElement).value).not.toContain(PAUSE_REQUEST_TEXT);
+      expect(w.text()).not.toContain('Not sent yet');
+    });
+
+    it('ends a change in progress when a different kind of line is taken back', async () => {
+      const say = line({ id: 's1', kind: 'say', text: 'Spoken words X' });
+      const act = line({ id: 's2', kind: 'act', intent: 'Pick the lock', approach: 'Pick the lock' });
+      const w = await mountSeat(snapshot({ submissions: [say, act] }));
+      w.findComponent(SubmissionList).vm.$emit('edit', say); await flushPromises();
+      await takeBack(w, act);
+      expect(w.text()).not.toContain('You are changing a line');
+      expect(pressed(w, 'Do something')).toBe('true');
+      expect(value(w, 'action-input')).toBe('Pick the lock');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ type: 'save_submission', kind: 'act', intent: 'Pick the lock' }));
+      expect(lastCommand()).not.toHaveProperty('submissionId');
+    });
+
+    it('ends a change in progress when another line of the same kind is taken back, keeping words set aside', async () => {
+      const first = line({ id: 's1', kind: 'say', text: 'First line' });
+      const second = line({ id: 's2', kind: 'say', text: 'Second line' });
+      const w = await mountSeat(snapshot({ submissions: [first, second] }));
+      await w.get('[data-testid="speech-input"]').setValue('Unsent words');
+      w.findComponent(SubmissionList).vm.$emit('edit', first); await flushPromises();
+      expect(value(w, 'speech-input')).toBe('First line');
+      await takeBack(w, second);
+      expect(w.text()).not.toContain('You are changing a line');
+      expect(value(w, 'speech-input')).toBe('Unsent words\nSecond line');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ type: 'save_submission', kind: 'say', text: 'Unsent words\nSecond line' }));
+      expect(lastCommand()).not.toHaveProperty('submissionId');
+    });
+
+    it('returns a line taken back while it is being changed, keeping words set aside', async () => {
+      const say = line({ kind: 'say', text: 'Who sent you?' });
+      const w = await mountSeat(snapshot({ submissions: [say] }));
+      await w.get('[data-testid="speech-input"]').setValue('Fresh follow-up');
+      await changeLine(w);
+      await takeBack(w, say);
+      expect(w.text()).not.toContain('You are changing a line');
+      expect(value(w, 'speech-input')).toBe('Fresh follow-up\nWho sent you?');
     });
   });
 });

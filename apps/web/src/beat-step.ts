@@ -21,50 +21,109 @@ export const STEP_LABELS: Record<StepId, string> = {
   open: 'Open', select: 'Select lines', plan: 'Plan', stakes: 'Stakes', lock: 'Lock', draft: 'Draft', review: 'Review', publish: 'Publish',
 };
 
-const QUICK_LOCK_NEXT = 'Ordinary conversation. Choose Lock and draft to lock the lines and write the scene.';
-const PAUSED_REASON = 'The table is paused. Resume to continue.';
+const PAUSED_REASON = 'The show is paused.';
 
 function decide(input: BeatStepInput): BeatStepResult {
   const { beat } = input;
   if (!beat || beat.phase === 'published' || beat.phase === 'aborted') {
-    return { step: 'open', next: 'Open a conversation, or an action round when the party tries something risky.', reason: null };
+    return input.selectedCount > 0
+      ? { step: 'open', next: 'Answer the ticked lines, or open an action round for something risky.', reason: null }
+      : { step: 'open', next: 'Waiting for lines from the cast.', reason: null };
   }
   if (beat.phase === 'collecting') {
     if (beat.lastError && beat.selectedSubmissionIds.length > 0) {
-      return { step: 'stakes', next: 'Planning failed. Review the stakes by hand or abandon the beat.', reason: null };
+      return { step: 'stakes', next: "Planning failed. Set what's at risk by hand, or plan again.", reason: null };
     }
     if (input.selectedCount === 0) {
-      return { step: 'select', next: 'Tick the lines from the queue that belong in this beat.', reason: 'Select at least one line to plan.' };
+      return { step: 'select', next: 'Tick the lines this beat should answer.', reason: 'Select at least one line to plan.' };
     }
-    return { step: 'plan', next: 'Plan the selected lines so the AI can suggest the stakes.', reason: null };
+    return {
+      step: 'plan',
+      next: usesActionSteps(beat) ? "Plan the ticked actions to see what's at risk." : 'Plan and draft the ticked lines.',
+      reason: null,
+    };
   }
   if (beat.phase === 'stakes_review') {
-    if (input.contractsDirty) {
-      return { step: 'stakes', next: 'Review the stakes, then approve them.', reason: 'Stakes changed since approval. Approve them again.' };
+    if (input.contractsDirty && beat.stakesApproved) {
+      return { step: 'stakes', next: "Read what's at risk, then approve and roll.", reason: 'Stakes changed since approval. Approve them again.' };
     }
     if (!beat.stakesApproved) {
-      return { step: 'stakes', next: 'Review the stakes, then approve them.', reason: null };
+      return { step: 'stakes', next: "Read what's at risk, then approve and roll.", reason: null };
     }
-    return { step: 'lock', next: 'Lock the input. The dice roll once and stay fixed.', reason: null };
+    return { step: 'lock', next: 'Approve and roll to lock the lines. The dice roll once and never change.', reason: null };
   }
   const hasDraft = Boolean(beat.draft);
-  if (beat.phase === 'locked' && !hasDraft) {
-    return { step: 'draft', next: 'Draft the scene from the locked input.', reason: input.rendering ? 'The script is being drafted.' : null };
-  }
-  if (beat.phase === 'draft_review' && !hasDraft) {
-    return { step: 'draft', next: 'Draft the scene from the locked input.', reason: input.rendering ? 'The script is being drafted.' : null };
+  if ((beat.phase === 'locked' || beat.phase === 'draft_review') && !hasDraft) {
+    return {
+      step: 'draft',
+      next: beat.lastError ? 'The script could not be written. Try again, or write it yourself.' : 'Draft the scene from the locked lines.',
+      reason: input.rendering ? 'The script is being drafted.' : null,
+    };
   }
   if (input.scriptDirty) {
-    return { step: 'review', next: 'Review the script and fix anything you want changed.', reason: 'Save script edits before publishing.' };
+    return { step: 'review', next: 'Save your edits under More before publishing.', reason: null };
   }
-  if (input.continuityPending > 0) {
-    return { step: 'review', next: 'Approve the continuity updates, then publish.', reason: null };
-  }
-  return { step: 'publish', next: 'Publish the beat when the script reads right.', reason: null };
+  return { step: 'publish', next: 'Read the script, then publish.', reason: null };
 }
 
 export function beatStep(input: BeatStepInput): BeatStepResult {
   let result = decide(input);
-  if (input.quickLock && result.step === 'stakes') result = { ...result, next: QUICK_LOCK_NEXT };
+  if (input.quickLock && (result.step === 'stakes' || result.step === 'lock')) result = { ...result, next: 'Ordinary conversation. Lock and draft writes the script.' };
   return input.paused ? { ...result, reason: PAUSED_REASON } : result;
 }
+
+export type StageId = 'lines' | 'plan' | 'stakes' | 'script' | 'publish';
+
+export function usesActionSteps(beat: Beat | null, reviewClassification?: 'ordinary' | 'action'): boolean {
+  return beat?.kind === 'action' || beat?.classification === 'needs_action' || beat?.classification === 'action' || reviewClassification === 'action';
+}
+
+export function stepPosition(step: StepId, action: boolean): { stage: StageId; n: number; m: number } {
+  const stages: StageId[] = action ? ['lines', 'plan', 'stakes', 'script', 'publish'] : ['lines', 'script', 'publish'];
+  let stage: StageId;
+  if (step === 'open' || step === 'select') stage = 'lines';
+  else if (step === 'plan') stage = action ? 'plan' : 'lines';
+  else if (step === 'stakes' || step === 'lock') stage = action ? 'stakes' : 'lines';
+  else if (step === 'draft' || step === 'review') stage = 'script';
+  else stage = 'publish';
+  return { stage, n: stages.indexOf(stage) + 1, m: stages.length };
+}
+
+export type GoldAction = 'answer' | 'plan-and-draft' | 'plan' | 'lock-and-draft' | 'approve-and-roll' | 'draft' | 'try-again' | 'publish' | 'resume';
+
+export function goldAction(input: { step: StepId; beat: Beat | null; paused: boolean; ordinary: boolean }): GoldAction {
+  if (input.paused) return 'resume';
+  switch (input.step) {
+    case 'open': return 'answer';
+    case 'select':
+    case 'plan': return input.beat?.kind === 'action' ? 'plan' : 'plan-and-draft';
+    case 'stakes':
+    case 'lock': return input.ordinary ? 'lock-and-draft' : 'approve-and-roll';
+    case 'draft': return input.beat?.lastError ? 'try-again' : 'draft';
+    default: return 'publish';
+  }
+}
+
+export const GOLD_LABELS: Record<GoldAction, string> = {
+  answer: 'Answer these lines',
+  'plan-and-draft': 'Plan and draft',
+  plan: 'Plan',
+  'lock-and-draft': 'Lock and draft',
+  'approve-and-roll': 'Approve and roll',
+  draft: 'Draft the scene',
+  'try-again': 'Try again',
+  publish: 'Publish',
+  resume: 'Resume show',
+};
+
+export const GOLD_TEST_IDS: Record<GoldAction, string> = {
+  answer: 'answer-lines',
+  'plan-and-draft': 'plan-and-draft',
+  plan: 'plan',
+  'lock-and-draft': 'lock-and-draft',
+  'approve-and-roll': 'approve-and-roll',
+  draft: 'render',
+  'try-again': 'render',
+  publish: 'publish',
+  resume: 'resume-show',
+};

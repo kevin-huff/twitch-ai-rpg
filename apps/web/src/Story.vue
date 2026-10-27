@@ -16,7 +16,7 @@ const bandLabel = (band: Roll['band']) => ({ clean: 'Clean success', costly: 'Su
         </div>
       </div>
       <div v-for="segment in beat.segments" :key="segment.id" class="segment" :class="segment.kind">
-        <div class="speaker">{{ segment.speaker?.displayName ?? (segment.kind === 'system' ? 'The table' : 'Narrator') }}</div>
+        <div class="speaker">{{ segment.speaker?.displayName ?? (segment.kind === 'system' ? 'The show' : 'Narrator') }}</div>
         <p>{{ segment.text }}</p>
       </div>
     </article>

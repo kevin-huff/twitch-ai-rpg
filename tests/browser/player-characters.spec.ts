@@ -13,28 +13,7 @@ async function api(page: Page, path: string, body?: unknown) {
   return result.data;
 }
 
-async function expectFieldHelp(page: Page) {
-  const issues = await page.locator('input, textarea, select').evaluateAll(controls => {
-    const nodes = [...document.querySelectorAll<HTMLElement>('[id]')];
-    return controls.filter(control => control.checkVisibility()).flatMap(control => {
-      const label = control.getAttribute('aria-label') || control.getAttribute('data-testid') || control.closest('label')?.textContent || control.tagName;
-      const ids = control.getAttribute('aria-describedby')?.split(/\s+/).filter(Boolean) ?? [];
-      if (!ids.length) return [`${label}: missing explanation`];
-      return ids.flatMap(id => {
-        const matches = nodes.filter(node => node.id === id);
-        if (matches.length !== 1) return [`${label}: description ${id} is missing or duplicated`];
-        const help = matches[0]!;
-        const bounds = help.getBoundingClientRect();
-        if (!help.checkVisibility() || !help.textContent?.trim() || help.closest('label')) return [`${label}: explanation is hidden, empty, or changes its label`];
-        if (bounds.left < 0 || bounds.right > window.innerWidth + 1) return [`${label}: explanation extends beyond the window`];
-        return [];
-      });
-    });
-  });
-  expect(issues).toEqual([]);
-}
-
-test('players write their own cards in the lobby, the director approves them, and the show can start', async ({ page, context }) => {
+test('players write their own short cards on the pre-show page, they apply at once, and the show can start', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
@@ -45,7 +24,7 @@ test('players write their own cards in the lobby, the director approves them, an
     definition: { ...starter.scenario, title: `Player cards ${Date.now()}`, boundaries: ['No graphic injury'] },
   });
 
-  // Step 1: both seats default to a player-written card, and the director sees them waiting.
+  // Step 1: both seats default to a player-written card. Creating the show lands on Cast & lobby, with both seats waiting.
   await page.getByTestId('library-link').click();
   await page.getByTestId('show-title').fill('Friday at the Lighthouse');
   await page.getByTestId('show-scenario').selectOption(`${scenario.id}:1`);
@@ -61,87 +40,72 @@ test('players write their own cards in the lobby, the director approves them, an
   expect(removeSeat!.y).toBeGreaterThanOrEqual(seatSelect!.y + seatSelect!.height - 1);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await expect(page).toHaveURL(/\/sessions\/[^/]+\/lobby/);
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.setup.started).toBe(false);
   const ids: string[] = snapshot.characterDetails.map((character: { id: string }) => character.id);
   expect(ids).toHaveLength(2);
   for (const id of ids) await expect(page.getByTestId(`waiting-for-card-${id}`)).toHaveText("Waiting for this player's card");
-  await expect(page.getByTestId('absent-player-hint')).toBeVisible();
+  await expect(page.getByTestId('seats-with-card')).toHaveText('Seats with a card: 0 of 2');
   await expect(page.getByTestId('start-session')).toBeDisabled();
 
-  // Step 2: seat 1 opens the empty form and sees the whole-card writer.
+  // Step 2: seat 1 opens the pre-show page, which shows the short card: a name, a description, and the rest folded away.
   const popup1 = context.waitForEvent('page');
   await page.getByRole('link', { name: 'Test as Seat 1 ↗', exact: true }).click();
   const seat1 = await popup1;
-  await seat1.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-  await expect(seat1.getByRole('heading', { name: 'Write your character', exact: true })).toBeVisible();
-  await expect(seat1.getByTestId('write-character-guidance')).toBeVisible();
+  await expect(seat1.getByTestId('pre-show')).toBeVisible();
+  await expect(seat1.getByRole('heading', { name: 'Your character', exact: true })).toBeVisible();
+  await expect(seat1.getByText('The show will start soon.', { exact: true })).toBeVisible();
   await expect(seat1.getByTestId('card-name')).toHaveValue('');
-  await expect(seat1.getByRole('button', { name: /AI Generate/ })).toHaveCount(12);
-  await expect(seat1.getByRole('button', { name: 'Create the whole card with AI', exact: true })).toBeVisible();
+  await expect(seat1.getByTestId('card-name-only')).toHaveText('Only a name is needed.');
+  await expect(seat1.getByTestId('card-more')).not.toHaveAttribute('open', '');
+  await expect(seat1.getByTestId('write-card')).toBeVisible();
 
-  // Step 3: generate from a prompt with no pronouns, so the pronouns are only a suggestion.
-  await seat1.getByTestId('card-generator-open').click();
+  // Step 3: write the card from a description with no pronouns, so the pronouns are only a suggestion.
   await seat1.setViewportSize({ width: 390, height: 844 });
-  await expect(seat1.getByTestId('card-generator-prompt')).toBeVisible();
-  await expectFieldHelp(seat1);
-  await seat1.getByTestId('card-generator-prompt').scrollIntoViewIfNeeded();
-  await seat1.screenshot({ path: 'test-results/player-characters-lobby-narrow.png' });
-  await seat1.getByTestId('card-generator-prompt').fill('A clever archivist who hides a debt');
-  await seat1.getByTestId('card-generator-generate').click();
-  await expect(seat1.getByTestId('card-generator-preview')).toContainText('Pronouns (suggested): they/them');
-  await expect(seat1.getByTestId('card-name')).toHaveValue('');
-  await seat1.screenshot({ path: 'test-results/player-characters-lobby-preview.png' });
-  await seat1.getByTestId('card-generator-apply').click();
+  await seat1.getByTestId('card-description').fill('A clever archivist who hides a debt');
+  await seat1.getByTestId('write-card').scrollIntoViewIfNeeded();
+  await seat1.screenshot({ path: 'test-results/player-characters-pre-show-narrow.png' });
+  await seat1.getByTestId('write-card').click();
+  await expect(seat1.getByTestId('card-summary')).toBeVisible();
+  await expect(seat1.getByTestId('card-pronouns-note')).toHaveText('The AI picked these pronouns. Change them if you like.');
   await expect(seat1.getByTestId('card-name')).not.toHaveValue('');
+  await seat1.getByTestId('card-more').getByText('More about your character', { exact: true }).click();
   await expect(seat1.getByLabel('Pronouns', { exact: true })).toHaveValue('they/them');
-  await expect(seat1.getByTestId('suggested-pronouns-notice')).toBeVisible();
-  await expect(seat1.getByTestId('pronouns-pending-notice')).toBeVisible();
-  await expect(seat1.getByTestId('save-character-draft')).toBeDisabled();
-  await seat1.getByTestId('save-character-draft').scrollIntoViewIfNeeded();
-  await seat1.screenshot({ path: 'test-results/player-characters-lobby-pending.png' });
-  await seat1.getByTestId('keep-suggested-pronouns').click();
-  await expect(seat1.getByTestId('suggested-pronouns-notice')).toHaveCount(0);
-  await expect(seat1.getByTestId('pronouns-pending-notice')).toHaveCount(0);
   await expect(seat1.getByTestId('save-character-draft')).toBeEnabled();
+  await seat1.screenshot({ path: 'test-results/player-characters-pre-show-written.png' });
   await seat1.getByTestId('save-character-draft').click();
+  await expect(seat1.getByTestId('player-card').getByRole('heading', { level: 3 })).not.toHaveText('');
+  await expect(seat1.getByTestId('change-my-card')).toBeVisible();
 
-  // Step 4: the director opens seat 2's tab and writes with stated pronouns, so nothing needs confirming.
+  // Step 4: the director sees seat 1 has a card at once, with nothing to approve. Seat 2 states pronouns, so no pronoun note appears.
   await expect(page.getByTestId(`waiting-for-card-${ids[0]}`)).toHaveCount(0);
   await expect(page.getByTestId(`waiting-for-card-${ids[1]}`)).toBeVisible();
+  await expect(page.getByTestId('seats-with-card')).toHaveText('Seats with a card: 1 of 2');
   const popup2 = context.waitForEvent('page');
   await page.getByRole('link', { name: /^Test as Seat 2/ }).click();
   const seat2 = await popup2;
-  await seat2.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-  await expect(seat2.getByRole('heading', { name: 'Write your character', exact: true })).toBeVisible();
-  await seat2.getByTestId('card-generator-open').click();
-  await seat2.getByTestId('card-generator-prompt').fill('A charming singer, she/her, who owes a debt');
-  await seat2.getByTestId('card-generator-generate').click();
-  await expect(seat2.getByTestId('card-generator-preview')).toContainText('Pronouns: she/her');
-  await expect(seat2.getByTestId('card-generator-preview')).not.toContainText('suggested');
-  await seat2.getByTestId('card-generator-apply').click();
+  await expect(seat2.getByTestId('pre-show')).toBeVisible();
+  await seat2.getByTestId('card-description').fill('A charming singer, she/her, who owes a debt');
+  await seat2.getByTestId('write-card').click();
+  await expect(seat2.getByTestId('card-summary')).toBeVisible();
+  await expect(seat2.getByTestId('card-pronouns-note')).toHaveCount(0);
   await expect(seat2.getByTestId('card-name')).not.toHaveValue('');
+  await seat2.getByTestId('card-more').getByText('More about your character', { exact: true }).click();
   await expect(seat2.getByLabel('Pronouns', { exact: true })).toHaveValue('she/her');
-  await expect(seat2.getByTestId('suggested-pronouns-notice')).toHaveCount(0);
-  await expect(seat2.getByTestId('pronouns-pending-notice')).toHaveCount(0);
   await expect(seat2.getByTestId('save-character-draft')).toBeEnabled();
   await seat2.getByTestId('save-character-draft').click();
 
-  // Step 5: the director approves both cards, both players accept the boundaries, and the show can start.
-  await expect(page.getByTestId('absent-player-hint')).toHaveCount(0);
+  // Step 5: every seat has a card, so the director can start. No approval, no pronoun check, no ready step.
   await page.setViewportSize({ width: 1280, height: 900 });
-  for (const id of ids) await page.getByTestId(`approve-character-${id}`).click();
-  for (const player of [seat1, seat2]) {
-    await expect(player.getByText('Your card is approved.', { exact: true })).toBeVisible();
-    await player.getByTestId('accept-boundaries').check();
-    await player.getByTestId('ready-character').click();
-    await expect(player.getByText('You are ready for this version of the boundaries.', { exact: true })).toBeVisible();
-  }
+  await expect(page.getByTestId('seats-with-card')).toHaveText('Seats with a card: 2 of 2');
   await expect(page.getByTestId('start-session')).toBeEnabled();
   await page.screenshot({ path: 'test-results/player-characters-director-ready.png', fullPage: true });
   const final = await api(page, `/sessions/${sessionId}`);
   expect(final.characterDetails.every((character: { approved: boolean; draft?: unknown }) => character.approved && !character.draft)).toBe(true);
   expect(final.characterDetails.map((character: { pronouns: string }) => character.pronouns).sort()).toEqual(['she/her', 'they/them']);
+  await page.getByTestId('start-session').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/director/);
+  await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).setup.started).toBe(true);
 });

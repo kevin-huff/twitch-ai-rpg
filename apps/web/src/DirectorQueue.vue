@@ -11,6 +11,9 @@ const helpId = (id: string) => `${helpPrefix}-help-${encodeURIComponent(JSON.str
 const pending = computed(() => props.snapshot.submissions.filter(item => ['queued', 'selected'].includes(item.status)));
 const inCharacter = computed(() => pending.value.filter(item => item.kind !== 'ooc'));
 const questions = computed(() => pending.value.filter(item => item.kind === 'ooc'));
+const lineCount = computed(() => inCharacter.value.length === 0 ? 'No lines waiting' : inCharacter.value.length === 1 ? '1 line waiting' : `${inCharacter.value.length} lines waiting`);
+const questionCount = computed(() => questions.value.length === 0 ? '' : questions.value.length === 1 ? ' · 1 question' : ` · ${questions.value.length} questions`);
+const countText = computed(() => `${lineCount.value}${questionCount.value}`);
 const activeBeatId = computed(() => props.snapshot.activeBeat?.id ?? null);
 const phaseAllows = computed(() => ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat?.phase ?? 'collecting'));
 const canSelect = (item: Submission) => item.kind !== 'ooc' && phaseAllows.value;
@@ -38,10 +41,10 @@ const toggle = (id: string, checked: boolean) => {
 
 <template>
   <section class="panel">
-    <div class="panel-heading"><h2>At the table</h2><span class="status">{{ pending.length }} queued</span></div>
+    <div class="panel-heading"><h2>Lines from the cast</h2><span class="status">{{ countText }}</span></div>
     <div v-if="!pending.length" class="empty">No pending submissions. Invite your cast to speak or act.</div>
     <template v-else>
-      <p class="muted queue-hint"><small>Tick the lines to plan. Questions and pause requests cannot become dialogue.</small></p>
+      <p class="muted queue-hint"><small>Lines arrive ticked. Untick any you want to leave for later. Questions and pause requests are never ticked.</small></p>
       <div class="queue-tools">
         <button type="button" class="quiet" :disabled="!selectable.length" @click="selectAll">Select all lines</button>
         <button type="button" class="quiet" :disabled="!modelValue.length" @click="clear">Clear</button>

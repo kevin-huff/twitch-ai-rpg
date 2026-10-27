@@ -10,7 +10,7 @@ export function initials(name: string): string {
 
 export function speakerName(segment: Pick<ScriptSegment, 'kind' | 'speaker'>): string {
   if (segment.speaker) return segment.speaker.displayName;
-  return segment.kind === 'system' ? 'The table' : 'Narrator';
+  return segment.kind === 'system' ? 'The show' : 'Narrator';
 }
 
 export function speakerRole(segment: Pick<ScriptSegment, 'kind'>): 'Narrator' | 'Character' | 'Player' {

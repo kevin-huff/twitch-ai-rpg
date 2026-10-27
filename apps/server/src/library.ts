@@ -9,7 +9,7 @@ import {
 import { createLedgerState } from '@rpg/test-fixtures';
 import { transaction } from './database';
 import { AppError, conflict, type Actor } from './repository';
-import { digest } from './commands';
+import { applyCard, digest } from './commands';
 import { scenarioPictureSettings } from './picture-settings';
 
 type LibraryKind = 'scenarios' | 'characters';
@@ -87,7 +87,11 @@ export async function materializeSession(client: PoolClient, ownerId: string, se
       scene: { ...scenario.openingScene, id: remap(scenario.openingScene.id), locationId: remap(scenario.openingScene.locationId) },
       brief: { premise: scenario.premise, genre: scenario.genre, tone: scenario.tone, objectives: scenario.objectives, playerHooks: scenario.playerHooks, pacing: scenario.pacing, ...(scenario.pictureStyle ? { pictureStyle: scenario.pictureStyle } : {}) },
     },
-    characters: definitions.map((definition, index) => CharacterSchema.parse({ id: randomUUID(), displayName: `Seat ${index + 1}`, traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 0, approved: false, draft: definition, templateRef: characterRefs[index] })),
+    characters: definitions.map((definition, index) => {
+      const character = CharacterSchema.parse({ id: randomUUID(), displayName: `Seat ${index + 1}`, traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 0, approved: false, draft: null, templateRef: characterRefs[index] });
+      if (definition) applyCard(character, definition, 'host');
+      return character;
+    }),
     locations: scenario.locations.map(location => ({ ...location, id: remap(location.id) })),
     npcs: scenario.npcs.map(({ knowledge, partyRelationship, ...npc }) => NpcSchema.parse({
       ...npc, id: remap(npc.id), locationId: remap(npc.locationId),

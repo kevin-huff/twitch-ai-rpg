@@ -137,7 +137,7 @@ describe('StageView', () => {
     expect(wrapper.findAll('.audio-panel')).toHaveLength(1);
     expect(wrapper.find('[data-testid="broadcast-audio"]').exists()).toBe(false);
     expect(wrapper.find('.stage-frame').exists()).toBe(true);
-    expect(wrapper.text()).toContain('Operator controls stay below the picture.');
+    expect(wrapper.get('[data-testid="preview-strip"]').text()).toContain('Preview only, not for OBS. For OBS, use a link from Stream this show.');
     expect(wrapper.find('.stage-frame button, .stage-frame input, .stage-frame select, .stage-frame img').exists()).toBe(false);
     expect(mocks.create).toHaveBeenCalledTimes(1);
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ stage: true, director: false }));
@@ -151,7 +151,7 @@ describe('StageView', () => {
     expect(wrapper.find('[data-testid="broadcast-audio"]').exists()).toBe(true);
     expect(wrapper.find('.audio-panel').exists()).toBe(false);
     expect(wrapper.find('.operator-bar').exists()).toBe(false);
-    expect(wrapper.text()).not.toContain('Operator controls');
+    expect(wrapper.find('[data-testid="preview-strip"]').exists()).toBe(false);
     expect(mocks.create).toHaveBeenCalledWith({ sessionId: 'show', beatId: 'beat-1', director: false, stage: true });
     wrapper.unmount();
   });

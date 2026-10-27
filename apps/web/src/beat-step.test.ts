@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import type { Beat } from '@rpg/contracts';
-import { beatStep, type BeatStepInput } from './beat-step';
+import { beatStep, goldAction, GOLD_LABELS, GOLD_TEST_IDS, stepPosition, STEP_ORDER, usesActionSteps, type BeatStepInput, type StepId } from './beat-step';
 import BeatStepper from './BeatStepper.vue';
 
 const beatOf = (patch: Partial<Beat>): Beat => ({
@@ -18,63 +18,114 @@ const run = (beat: Beat | null, patch: Partial<BeatStepInput> = {}) =>
 describe('beatStep', () => {
   it('opens when there is no beat, or it is published or aborted', () => {
     for (const beat of [null, beatOf({ phase: 'published' }), beatOf({ phase: 'aborted' })]) {
-      const result = run(beat);
-      expect(result.step).toBe('open');
-      expect(result.next).toBe('Open a conversation, or an action round when the party tries something risky.');
-      expect(result.reason).toBeNull();
+      expect(run(beat, { selectedCount: 2 })).toEqual({ step: 'open', next: 'Answer the ticked lines, or open an action round for something risky.', reason: null });
+      expect(run(beat)).toEqual({ step: 'open', next: 'Waiting for lines from the cast.', reason: null });
     }
   });
-  it('asks to select lines, then plan', () => {
-    expect(run(beatOf({}))).toMatchObject({ step: 'select', reason: 'Select at least one line to plan.' });
-    expect(run(beatOf({}), { selectedCount: 2 })).toMatchObject({ step: 'plan', reason: null });
+  it('asks to tick lines, then plan', () => {
+    expect(run(beatOf({}))).toMatchObject({ step: 'select', next: 'Tick the lines this beat should answer.' });
+    expect(run(beatOf({}), { selectedCount: 2 })).toMatchObject({ step: 'plan', next: 'Plan and draft the ticked lines.', reason: null });
+    expect(run(beatOf({ kind: 'action' }), { selectedCount: 2 })).toMatchObject({ step: 'plan', next: "Plan the ticked actions to see what's at risk." });
   });
   it('checks the planning-failed case first', () => {
-    const result = run(beatOf({ lastError: 'boom', selectedSubmissionIds: ['x'] }));
-    expect(result).toMatchObject({ step: 'stakes', next: 'Planning failed. Review the stakes by hand or abandon the beat.' });
+    expect(run(beatOf({ lastError: 'boom', selectedSubmissionIds: ['x'] })))
+      .toMatchObject({ step: 'stakes', next: "Planning failed. Set what's at risk by hand, or plan again." });
     expect(run(beatOf({ lastError: 'boom' })).step).toBe('select');
   });
-  it('handles stakes review', () => {
-    expect(run(beatOf({ phase: 'stakes_review' })).step).toBe('stakes');
-    expect(run(beatOf({ phase: 'stakes_review', stakesApproved: true }), { contractsDirty: true }))
-      .toMatchObject({ step: 'stakes', reason: 'Stakes changed since approval. Approve them again.' });
-    expect(run(beatOf({ phase: 'stakes_review', stakesApproved: true })).step).toBe('lock');
+  it('gives the stakes-changed reason only after approved stakes were edited', () => {
+    const unapproved = beatOf({ phase: 'stakes_review', classification: 'needs_action' });
+    expect(run(unapproved, { contractsDirty: true }).reason).toBeNull();
+    expect(run(beatOf({ phase: 'stakes_review', stakesApproved: true }), { contractsDirty: true }).reason).toBe('Stakes changed since approval. Approve them again.');
   });
-  it('drafts when locked without a draft', () => {
-    expect(run(beatOf({ phase: 'locked' }))).toMatchObject({ step: 'draft', reason: null });
+  it('names Lock and draft at the lock step for ordinary stakes', () => {
+    const approved = beatOf({ phase: 'stakes_review', stakesApproved: true });
+    expect(run(approved, { quickLock: true })).toMatchObject({ step: 'lock', next: 'Ordinary conversation. Lock and draft writes the script.' });
+  });
+  it('handles stakes review and lock', () => {
+    const stakes = beatOf({ phase: 'stakes_review' });
+    expect(run(stakes)).toMatchObject({ step: 'stakes', next: "Read what's at risk, then approve and roll." });
+    expect(run(stakes, { quickLock: true })).toMatchObject({ step: 'stakes', next: 'Ordinary conversation. Lock and draft writes the script.' });
+    const approved = beatOf({ phase: 'stakes_review', stakesApproved: true });
+    expect(run(approved, { contractsDirty: true })).toMatchObject({ step: 'stakes', reason: 'Stakes changed since approval. Approve them again.' });
+    expect(run(approved)).toMatchObject({ step: 'lock', next: 'Approve and roll to lock the lines. The dice roll once and never change.' });
+  });
+  it('drafts when locked without a draft, with a retry sentence after an error', () => {
+    expect(run(beatOf({ phase: 'locked' }))).toMatchObject({ step: 'draft', next: 'Draft the scene from the locked lines.', reason: null });
     expect(run(beatOf({ phase: 'locked' }), { rendering: true })).toMatchObject({ step: 'draft', reason: 'The script is being drafted.' });
+    expect(run(beatOf({ phase: 'locked', lastError: 'x' }))).toMatchObject({ step: 'draft', next: 'The script could not be written. Try again, or write it yourself.' });
   });
-  it('reviews then publishes', () => {
+  it('reviews unsaved edits, otherwise publishes, whatever the continuity', () => {
     const beat = beatOf({ phase: 'draft_review', draft });
-    expect(run(beat, { scriptDirty: true })).toMatchObject({ step: 'review', reason: 'Save script edits before publishing.' });
-    expect(run(beat, { continuityPending: 2 })).toMatchObject({ step: 'review', next: 'Approve the continuity updates, then publish.' });
+    expect(run(beat, { scriptDirty: true })).toMatchObject({ step: 'review', next: 'Save your edits under More before publishing.' });
+    expect(run(beat, { continuityPending: 2 })).toMatchObject({ step: 'publish', next: 'Read the script, then publish.' });
     expect(run(beat)).toMatchObject({ step: 'publish', reason: null });
   });
   it('overrides the reason while paused and keeps the step', () => {
-    const result = run(beatOf({}), { paused: true });
-    expect(result).toMatchObject({ step: 'select', reason: 'The table is paused. Resume to continue.' });
-    expect(run(null, { paused: true }).reason).toBe('The table is paused. Resume to continue.');
+    expect(run(beatOf({}), { paused: true })).toMatchObject({ step: 'select', reason: 'The show is paused.' });
+    expect(run(null, { paused: true }).reason).toBe('The show is paused.');
   });
-  it('gives every result a plain next sentence', () => {
-    const beats = [null, beatOf({}), beatOf({ phase: 'stakes_review' }), beatOf({ phase: 'locked' }), beatOf({ phase: 'draft_review', draft })];
-    for (const beat of beats) expect(run(beat, { selectedCount: 1 }).next.length).toBeGreaterThan(10);
+});
+
+describe('usesActionSteps', () => {
+  it('is true for action beats, action classifications and an action review', () => {
+    expect(usesActionSteps(null)).toBe(false);
+    expect(usesActionSteps(beatOf({}))).toBe(false);
+    expect(usesActionSteps(beatOf({ kind: 'action' }))).toBe(true);
+    expect(usesActionSteps(beatOf({ classification: 'needs_action' }))).toBe(true);
+    expect(usesActionSteps(beatOf({ classification: 'action' as Beat['classification'] }))).toBe(true);
+    expect(usesActionSteps(beatOf({}), 'action')).toBe(true);
+    expect(usesActionSteps(beatOf({}), 'ordinary')).toBe(false);
+  });
+});
+
+describe('stepPosition', () => {
+  it('counts three stages in a conversation', () => {
+    const got = STEP_ORDER.map(step => [step, stepPosition(step, false).n, stepPosition(step, false).m]);
+    expect(got).toEqual([['open', 1, 3], ['select', 1, 3], ['plan', 1, 3], ['stakes', 1, 3], ['lock', 1, 3], ['draft', 2, 3], ['review', 2, 3], ['publish', 3, 3]]);
+    expect(stepPosition('lock', false).stage).toBe('lines');
+  });
+  it('counts five stages in an action round', () => {
+    const got = STEP_ORDER.map(step => [step, stepPosition(step, true).stage, stepPosition(step, true).n, stepPosition(step, true).m]);
+    expect(got).toEqual([
+      ['open', 'lines', 1, 5], ['select', 'lines', 1, 5], ['plan', 'plan', 2, 5], ['stakes', 'stakes', 3, 5],
+      ['lock', 'stakes', 3, 5], ['draft', 'script', 4, 5], ['review', 'script', 4, 5], ['publish', 'publish', 5, 5],
+    ]);
+  });
+});
+
+describe('goldAction', () => {
+  const g = (step: StepId, patch: Partial<{ beat: Beat | null; paused: boolean; ordinary: boolean }> = {}) =>
+    goldAction({ step, beat: beatOf({}), paused: false, ordinary: false, ...patch });
+  it('picks one action per step', () => {
+    expect(g('open', { beat: null })).toBe('answer');
+    expect(g('select')).toBe('plan-and-draft');
+    expect(g('plan')).toBe('plan-and-draft');
+    expect(g('select', { beat: beatOf({ kind: 'action' }) })).toBe('plan');
+    expect(g('plan', { beat: beatOf({ kind: 'action' }) })).toBe('plan');
+    for (const step of ['stakes', 'lock'] as const) {
+      expect(g(step, { ordinary: true })).toBe('lock-and-draft');
+      expect(g(step)).toBe('approve-and-roll');
+    }
+    expect(g('draft')).toBe('draft');
+    expect(g('draft', { beat: beatOf({ lastError: 'x' }) })).toBe('try-again');
+    expect(g('review')).toBe('publish');
+    expect(g('publish')).toBe('publish');
+  });
+  it('resumes when paused, at every step', () => {
+    for (const step of STEP_ORDER) expect(g(step, { paused: true })).toBe('resume');
+  });
+  it('has a label and test id for every action', () => {
+    expect(Object.values(GOLD_LABELS)).toEqual(['Answer these lines', 'Plan and draft', 'Plan', 'Lock and draft', 'Approve and roll', 'Draft the scene', 'Try again', 'Publish', 'Resume show']);
+    expect(Object.values(GOLD_TEST_IDS)).toEqual(['answer-lines', 'plan-and-draft', 'plan', 'lock-and-draft', 'approve-and-roll', 'render', 'render', 'publish', 'resume-show']);
   });
 });
 
 describe('BeatStepper', () => {
-  it('marks the current step, earlier steps done, and links to help with the identity', () => {
+  it('shows the step count and links to help with the identity', () => {
     const identity = 'a'.repeat(32);
     window.history.replaceState(null, '', `/?identity=${identity}`);
-    const wrapper = mount(BeatStepper, { props: { step: 'lock', next: 'Lock the input.', reason: 'Because.' } });
-    const items = wrapper.findAll('ol[aria-label="Beat steps"] > li');
-    expect(items.map(item => item.find('.step-label').text())).toEqual(['Open', 'Select lines', 'Plan', 'Stakes', 'Lock', 'Draft', 'Review', 'Publish']);
-    expect(wrapper.findAll('[aria-current="step"]')).toHaveLength(1);
-    expect(items[4].attributes('aria-current')).toBe('step');
-    expect(items.filter(item => item.text().includes('Done'))).toHaveLength(4);
-    expect(items[5].text()).not.toContain('Done');
-    expect(wrapper.find('h1,h2,h3,h4,h5,h6').exists()).toBe(false);
-    expect(wrapper.find('button,input,select,textarea').exists()).toBe(false);
-    expect(wrapper.find('[aria-live="polite"]').text()).toContain('Lock the input.');
-    expect(wrapper.find('[role="status"]').exists()).toBe(false);
+    const wrapper = mount(BeatStepper, { props: { n: 2, m: 5 } });
+    expect(wrapper.get('[data-testid="beat-step-count"]').text()).toBe('Step 2 of 5');
     const link = wrapper.get('a');
     expect(link.text()).toBe('How a beat works');
     expect(link.attributes('href')).toContain(`identity=${identity}`);

@@ -23,8 +23,7 @@ async function setUpShow(page: Page, browser: Browser, lines: string[], script: 
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const path = `/sessions/${sessionId}`;
@@ -84,13 +83,17 @@ async function setUpShow(page: Page, browser: Browser, lines: string[], script: 
     await expect.poll(async () => (await api(page, `${path}/playback`)).body.presenter.source, { timeout: 30000 }).toBe('show_link');
     await page.reload();
 
-    // Prepare the narration with the real director buttons, ready to publish.
-    const panel = page.getByTestId('draft-audio-panel');
-    await expect(panel).toBeVisible();
-    await panel.getByRole('button', { name: 'Prepare draft narration', exact: true }).click();
-    const publishAudio = panel.getByRole('button', { name: 'Publish with narration', exact: true });
-    await expect(publishAudio).toBeEnabled({ timeout: 30000 });
-    return { obs, obsContext, publishAudio, latest: async () => (await api(page, path)).body.history.at(-1) };
+    // The narration prepares by itself; the bar's Publish sends it once the voice is ready. The director's playback controls sit under Show all.
+    await expect(page.getByTestId('draft-audio-panel')).toBeVisible();
+    await page.getByTestId('stage-show-all').evaluate(el => { (el as HTMLDetailsElement).open = true; });
+    const publishAudio = page.getByTestId('publish');
+    await expect(page.getByTestId('beat-status')).toHaveText('Voice ready', { timeout: 30000 });
+    await expect(publishAudio).toBeEnabled();
+    const latest = async () => {
+      await expect.poll(async () => (await api(page, path)).body.history.length).toBeGreaterThan(0);
+      return (await api(page, path)).body.history.at(-1);
+    };
+    return { obs, obsContext, publishAudio, latest, path };
   } catch (error) {
     await obsContext.close();
     throw error;
@@ -104,7 +107,7 @@ test('the overlay shows every line of the latest beat after narration, players i
   const reply = 'Previous is a strong word. Nobody has sold the place out from under him yet. He is missing. If anything says why, it will be his ledger, and he kept it close.';
   expect(narration.split(/\s+/).length).toBeGreaterThanOrEqual(28);
   expect(reply.split(/\s+/).length).toBeGreaterThanOrEqual(28);
-  const { obs, obsContext, publishAudio, latest } = await setUpShow(page, browser, lines, { narration, reply });
+  const { obs, obsContext, publishAudio, latest, path } = await setUpShow(page, browser, lines, { narration, reply });
   try {
     // From here the overlay page records which caption lines are on screen every 100 ms.
     await obs.evaluate(() => {
@@ -117,10 +120,9 @@ test('the overlay shows every line of the latest beat after narration, players i
     });
     const start = Date.now();
     await publishAudio.click();
-    const play = page.getByTestId('start-audio');
-    await expect(play).toBeEnabled({ timeout: 20000 });
-    await page.waitForTimeout(900);
-    await play.click();
+    // The main show link presents audio, so a voiced publish starts the shared playback by itself.
+    await expect.poll(async () => (await api(page, `${path}/playback`)).body.status, { timeout: 20000 }).toBe('playing');
+    await expect(page.getByTestId('start-audio')).toHaveCount(0);
 
     const published = await latest();
     expect(published.textOnly).toBe(false);
@@ -156,7 +158,7 @@ test('short player lines that share a chunk with a short first narration line st
   const lines = ['Mara, where did the old owner go?', 'And what about the ledger he kept?'];
   const narration = 'She laughs.';
   const reply = 'Gone north, if you believe the dock talk. The ledger went with him, or so he wants us to think.';
-  const { obs, obsContext, publishAudio, latest } = await setUpShow(page, browser, lines, { narration, reply });
+  const { obs, obsContext, publishAudio, latest, path } = await setUpShow(page, browser, lines, { narration, reply });
   try {
     // From here the overlay page records, every 100 ms, which caption lines are shown, which are at full opacity, and which one is spoken.
     await obs.evaluate(() => {
@@ -180,11 +182,8 @@ test('short player lines that share a chunk with a short first narration line st
     await expect.poll(async () => obs.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.stage-story .line'))
       .filter(line => !line.classList.contains('off-chunk')).map(line => line.dataset.segmentId))).toEqual([first, second, laugh]);
 
-    // Play about a second after publishing. The narrator voices the short line briefly, then the director skips to the reply and stops.
-    const play = page.getByTestId('start-audio');
-    await expect(play).toBeEnabled({ timeout: 20000 });
-    await page.waitForTimeout(900);
-    await play.click();
+    // Playback starts by itself after publishing. The narrator voices the short line briefly, then the director skips to the reply and stops.
+    await expect.poll(async () => (await api(page, `${path}/playback`)).body.status, { timeout: 20000 }).toBe('playing');
     await expect.poll(async () => obs.evaluate(() => document.querySelector<HTMLElement>('.stage-story .line.speaking')?.dataset.segmentId ?? null)).toBe(laugh);
     await page.waitForTimeout(1500);
     await page.getByTestId('skip-audio').click();

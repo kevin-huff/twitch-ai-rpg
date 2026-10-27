@@ -75,7 +75,7 @@ describe('native authoring and lobby contracts', () => {
   });
   it('separates own draft edits, approval, acknowledgment and intentional missing-seat overrides', () => {
     expect(CommandSchema.safeParse({ type: 'save_character', commandId: 'save', expectedCharacterRevision: 0, card }).success).toBe(true);
-    expect(CommandSchema.safeParse({ type: 'save_character', commandId: 'save', expectedCharacterRevision: 0, card, characterId: 'someone-else' }).success).toBe(false);
+    expect(CommandSchema.safeParse({ type: 'save_character', commandId: 'save', expectedCharacterRevision: 0, card, characterId: 'seat' }).success).toBe(true);
     expect(CommandSchema.safeParse({ type: 'approve_character', commandId: 'approve', characterId: 'seat', expectedCharacterRevision: 1 }).success).toBe(true);
     expect(CommandSchema.safeParse({ type: 'set_ready', commandId: 'ready', expectedCharacterRevision: 1, expectedBoundariesRevision: 0, ready: true }).success).toBe(true);
     expect(CommandSchema.safeParse({ type: 'start_session', commandId: 'start', expectedStateRevision: 0, overrideUnreadyReason: ' ' }).success).toBe(false);

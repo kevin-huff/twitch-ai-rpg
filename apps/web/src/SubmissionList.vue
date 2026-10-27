@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import type { PublicNpc, Submission } from '@rpg/contracts';
 
 const props = defineProps<{ submissions: Submission[]; npcs: PublicNpc[]; busy: boolean }>();
 const emit = defineEmits<{ edit: [item: Submission]; withdraw: [item: Submission] }>();
-
-const confirming = ref<string | null>(null);
 
 // The director never picks private notes, so they stay queued. Show only the newest note, beside the newest
 // finished line, so neither can push the other out.
@@ -45,7 +43,6 @@ const extraApproach = (item: Submission) => {
   const approach = (item.approach ?? '').trim();
   return approach && approach !== (item.intent ?? '').trim() ? item.approach : '';
 };
-function confirmWithdraw(item: Submission) { confirming.value = null; emit('withdraw', item); }
 </script>
 
 <template>
@@ -60,15 +57,8 @@ function confirmWithdraw(item: Submission) { confirming.value = null; emit('with
       <p v-else>{{ item.text }}</p>
       <p class="sentence">{{ sentence(item) }}</p>
       <div v-if="canChange(item)" class="actions">
-        <template v-if="confirming === item.id">
-          <span class="confirm-text">Take this line back?</span>
-          <button type="button" class="secondary" :disabled="busy" @click="confirmWithdraw(item)">Take it back</button>
-          <button type="button" class="quiet" @click="confirming = null">Keep it</button>
-        </template>
-        <template v-else>
-          <button type="button" class="secondary" :disabled="busy" @click="emit('edit', item)">Change</button>
-          <button type="button" class="quiet" :disabled="busy" @click="confirming = item.id">Take it back</button>
-        </template>
+        <button type="button" class="secondary" :disabled="busy" @click="emit('edit', item)">Change</button>
+        <button type="button" class="quiet" :disabled="busy" @click="emit('withdraw', item)">Take it back</button>
       </div>
     </article>
   </section>
@@ -78,5 +68,4 @@ function confirmWithdraw(item: Submission) { confirming.value = null; emit('with
 .sub-item { border-top: 1px solid var(--line); padding: .7rem 0; display: grid; gap: .3rem; }
 .sub-item p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .sentence { color: var(--muted); font-size: .9rem; }
-.confirm-text { align-self: center; }
 </style>

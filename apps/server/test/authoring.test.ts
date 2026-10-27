@@ -122,8 +122,12 @@ suite('custom session casting and approval', () => {
     await refresh();
     return response.json().snapshot as DirectorSnapshot | PlayerSnapshot;
   }
-  async function approveAll() {
-    for (const character of [...state.characterDetails]) await succeed({ type: 'approve_character', characterId: character.id, expectedCharacterRevision: character.cardRevision });
+  async function producerCredential() {
+    const grant = await request('/api/producers', { commandId: crypto.randomUUID(), label: 'Night producer' });
+    expect(grant.statusCode, grant.body).toBe(200);
+    const signedIn = await app.inject({ method: 'POST', url: '/api/auth/producer', headers: { origin }, payload: { token: grant.json().token } });
+    expect(signedIn.statusCode, signedIn.body).toBe(200);
+    return cookie(signedIn.headers);
   }
   async function ready(index: number) {
     const own = (await request(`/api/sessions/${sessionId}`, undefined, players[index]!)).json() as PlayerSnapshot;
@@ -180,29 +184,65 @@ suite('custom session casting and approval', () => {
     } finally { await pool.end(); }
   });
 
-  it('keeps unapproved and edited card bodies private until exact-version director approval', async () => {
-    expect(state.characterDetails[0]!.displayName).toBe('Seat 1');
-    expect(state.characterDetails[0]!.draft!.displayName).toBe(starter.characters[0]!.displayName);
-    const publicBefore = (await request(`/api/sessions/${sessionId}`, undefined, stage)).json();
-    expect(publicBefore.characters).toEqual([]);
-    expect(publicBefore).not.toHaveProperty('setup');
-    expect(JSON.stringify(publicBefore)).not.toContain(starter.characters[0]!.secret);
+  it('starts seats that came from saved cards approved, with the card applied and no draft', async () => {
+    const seat = state.characterDetails[0]!;
+    expect(seat).toMatchObject({ displayName: starter.characters[0]!.displayName, secret: starter.characters[0]!.secret, approved: true, draft: null, cardRevision: 0, cardSource: 'host' });
+    expect(state.characterDetails[1]).toMatchObject({ displayName: starter.characters[1]!.displayName, approved: true, draft: null });
+    const publicView = (await request(`/api/sessions/${sessionId}`, undefined, stage)).json();
+    expect(publicView).not.toHaveProperty('setup');
+    expect(JSON.stringify(publicView)).not.toContain(starter.characters[0]!.secret);
+  });
+
+  it('applies a player save at once, keeps the secret private and counts one revision on the card and the show', async () => {
     const card = { ...starter.characters[0]!, displayName: 'Private draft name', secret: 'only-the-owner-and-director-see-this', backstory: '<script>not executed</script>' };
+    const revision = state.session.stateRevision;
     const saved = await succeed({ type: 'save_character', expectedCharacterRevision: 0, card }, players[0]);
     expect(saved.role).toBe('player');
-    expect(state.characterDetails[0]!.displayName).toBe('Seat 1');
-    expect(state.characterDetails[0]!.approved).toBe(false);
-    expect(state.session.stateRevision).toBe(0);
+    expect(state.characterDetails[0]).toMatchObject({ displayName: card.displayName, secret: card.secret, approved: true, draft: null, cardRevision: 1, cardSource: 'player' });
+    expect(state.session.stateRevision).toBe(revision + 1);
     const other = (await request(`/api/sessions/${sessionId}`, undefined, players[1]!)).json();
-    expect(JSON.stringify(other)).not.toContain(card.displayName);
     expect(JSON.stringify(other)).not.toContain(card.secret);
-    expect((await command({ type: 'save_character', expectedCharacterRevision: 1, card: { ...card, approved: true } }, players[0])).statusCode).toBe(400);
-    expect((await command({ type: 'approve_character', characterId: state.characterDetails[0]!.id, expectedCharacterRevision: 0 })).statusCode).toBe(409);
-    await succeed({ type: 'approve_character', characterId: state.characterDetails[0]!.id, expectedCharacterRevision: 1 });
-    expect(state.characterDetails[0]).toMatchObject({ displayName: card.displayName, secret: card.secret, approved: true, draft: null, cardRevision: 2 });
     const publicAfter = (await request(`/api/sessions/${sessionId}`, undefined, stage)).json();
     expect(publicAfter.characters[0].displayName).toBe(card.displayName);
     expect(JSON.stringify(publicAfter)).not.toContain(card.secret);
+    expect(JSON.stringify(publicAfter)).not.toContain('cardSource');
+    expect((await command({ type: 'save_character', expectedCharacterRevision: 1, card: { ...card, approved: true } }, players[0])).statusCode).toBe(400);
+  });
+
+  it('lets a host save a card into any seat with characterId and marks it as the host card', async () => {
+    const target = state.characterDetails[1]!;
+    const card = { ...starter.characters[1]!, displayName: 'Written by the host' };
+    const revision = state.session.stateRevision;
+    await succeed({ type: 'save_character', characterId: target.id, expectedCharacterRevision: target.cardRevision, card });
+    expect(state.characterDetails[1]).toMatchObject({ displayName: card.displayName, approved: true, draft: null, cardRevision: target.cardRevision + 1, cardSource: 'host' });
+    expect(state.session.stateRevision).toBe(revision + 1);
+    expect((await command({ type: 'save_character', characterId: target.id, expectedCharacterRevision: target.cardRevision, card })).statusCode).toBe(409);
+    expect((await command({ type: 'save_character', characterId: crypto.randomUUID(), expectedCharacterRevision: 0, card })).statusCode).toBe(404);
+  });
+
+  it('lets a producer save a card into a seat as the host card', async () => {
+    const producer = await producerCredential();
+    const target = state.characterDetails[0]!;
+    await succeed({ type: 'save_character', characterId: target.id, expectedCharacterRevision: target.cardRevision, card: { ...starter.characters[0]!, displayName: 'Written by a producer' } }, producer);
+    expect(state.characterDetails[0]).toMatchObject({ displayName: 'Written by a producer', approved: true, draft: null, cardSource: 'host' });
+    const missing = await command({ type: 'save_character', expectedCharacterRevision: 1, card: starter.characters[0] }, producer);
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json().message).toBe('Choose the seat to write this card into.');
+  });
+
+  it('refuses a host save without a seat, stage saves and a player saving into another seat', async () => {
+    const withoutSeat = await command({ type: 'save_character', expectedCharacterRevision: 0, card: starter.characters[0] });
+    expect(withoutSeat.statusCode).toBe(400);
+    expect(withoutSeat.json().code).toBe('invalid_input');
+    expect(withoutSeat.json().message).toBe('Choose the seat to write this card into.');
+    const other = await command({ type: 'save_character', characterId: state.characterDetails[1]!.id, expectedCharacterRevision: 0, card: starter.characters[0] }, players[0]);
+    expect(other.statusCode).toBe(403);
+    expect(other.json().message).toBe('Players can only save their own card.');
+    const own = await command({ type: 'save_character', characterId: state.characterDetails[0]!.id, expectedCharacterRevision: 0, card: starter.characters[0] }, players[0]);
+    expect(own.statusCode, own.body).toBe(200);
+    expect((await command({ type: 'save_character', characterId: state.characterDetails[0]!.id, expectedCharacterRevision: 1, card: starter.characters[0] }, stage)).statusCode).toBe(403);
+    await refresh();
+    expect(state.characterDetails[1]!.cardRevision).toBe(0);
   });
 
   it('allows independent seat edits while rejecting ownership and stale revision changes', async () => {
@@ -210,25 +250,64 @@ suite('custom session casting and approval', () => {
     expect(saved.map((response) => response.statusCode)).toEqual([200, 200]);
     await refresh();
     expect(state.characterDetails.map((character) => character.cardRevision)).toEqual([1, 1]);
-    expect(state.session.stateRevision).toBe(0);
+    expect(state.characterDetails.map((character) => character.displayName)).toEqual(['Draft 0', 'Draft 1']);
+    expect(state.session.stateRevision).toBe(2);
     expect((await command({ type: 'save_character', expectedCharacterRevision: 0, card: starter.characters[0] }, players[0])).statusCode).toBe(409);
-    expect((await command({ type: 'save_character', expectedCharacterRevision: 1, characterId: state.characterDetails[1]!.id, card: starter.characters[0] }, players[0])).statusCode).toBe(400);
     expect((await command({ type: 'approve_character', characterId: state.characterDetails[1]!.id, expectedCharacterRevision: 1 }, players[0])).statusCode).toBe(403);
   });
 
-  it('requires approval and current boundary acknowledgement, and invalidates readiness when boundaries change', async () => {
-    expect((await command({ type: 'start_session', expectedStateRevision: 0, overrideUnreadyReason: 'An absent player is holding.' })).statusCode).toBe(409);
-    expect((await command({ type: 'set_ready', expectedCharacterRevision: 0, expectedBoundariesRevision: state.setup!.boundariesRevision, ready: true }, players[0])).statusCode).toBe(409);
-    await approveAll(); await ready(0); await ready(1);
+  it('keeps approve_character working for a pending draft and refuses it when there is none', async () => {
+    const seat = state.characterDetails[0]!;
+    expect((await command({ type: 'approve_character', characterId: seat.id, expectedCharacterRevision: seat.cardRevision })).statusCode).toBe(409);
+  });
+
+  it('approve_character makes a pending draft the card', async () => {
+    const seat = state.characterDetails[0]!;
+    const draft = { ...starter.characters[1]!, displayName: 'Pending Draft Name', appearance: 'Drawn from the pending draft.' };
+    const pool = createPool(databaseUrl!);
+    try {
+      await pool.query("UPDATE characters SET data=jsonb_set(data,'{draft}',$2::jsonb) WHERE id=$1", [seat.id, JSON.stringify(draft)]);
+    } finally { await pool.end(); }
+    await refresh();
+    expect(state.characterDetails[0]!.draft).not.toBeNull();
+    const response = await command({ type: 'approve_character', characterId: seat.id, expectedCharacterRevision: seat.cardRevision });
+    expect(response.statusCode, response.body).toBe(200);
+    await refresh();
+    expect(state.characterDetails[0]).toMatchObject({ approved: true, draft: null, displayName: 'Pending Draft Name', appearance: 'Drawn from the pending draft.', secret: draft.secret });
+  });
+
+  it('sends players an empty boundaries list while the director keeps the saved list, with the same revision', async () => {
+    const boundaries = ['No permanent death.', 'Pause whenever a player asks.'];
+    await succeed({ type: 'set_boundaries', expectedStateRevision: state.session.stateRevision, boundaries });
+    const player = (await request(`/api/sessions/${sessionId}`, undefined, players[0]!)).json() as PlayerSnapshot;
+    expect(state.setup!.boundaries).toEqual(boundaries);
+    expect(player.setup!.boundaries).toEqual([]);
+    expect(player.setup!.boundariesRevision).toBe(state.setup!.boundariesRevision);
+    expect(JSON.stringify(player)).not.toContain('No permanent death.');
+  });
+
+  it('starts without any readiness once every seat has a card, and set_boundaries leaves readiness and card revisions alone', async () => {
+    await ready(0);
+    await refresh();
+    const before = state.characterDetails.map(({ ready: isReady, acceptedBoundariesRevision, cardRevision }) => ({ isReady, acceptedBoundariesRevision, cardRevision }));
+    expect(before[0]!.isReady).toBe(true);
     const previousBoundaryRevision = state.setup!.boundariesRevision;
     await succeed({ type: 'set_boundaries', expectedStateRevision: state.session.stateRevision, boundaries: ['No permanent death.', 'Pause whenever a player asks.'] });
     expect(state.setup!.boundariesRevision).toBe(previousBoundaryRevision + 1);
-    expect(state.characterDetails.every((character) => !character.ready && character.acceptedBoundariesRevision === null)).toBe(true);
-    expect((await command({ type: 'set_ready', expectedCharacterRevision: state.characterDetails[0]!.cardRevision, expectedBoundariesRevision: previousBoundaryRevision, ready: true }, players[0])).statusCode).toBe(409);
-    expect((await command({ type: 'start_session', expectedStateRevision: state.session.stateRevision })).statusCode).toBe(409);
-    await ready(0); await ready(1);
+    expect(state.setup!.boundaries).toEqual(['No permanent death.', 'Pause whenever a player asks.']);
+    expect(state.characterDetails.map(({ ready: isReady, acceptedBoundariesRevision, cardRevision }) => ({ isReady, acceptedBoundariesRevision, cardRevision }))).toEqual(before);
+    expect(state.characterDetails[1]!.ready).toBe(false);
     await succeed({ type: 'start_session', expectedStateRevision: state.session.stateRevision });
     expect(state.setup!.started).toBe(true); expect(state.session.status).toBe('live');
+  });
+
+  it('refuses to start while a seat still has no card', async () => {
+    players = await createSeats([{ playerWritten: true }, characterRefs[0]]);
+    const refused = await command({ type: 'start_session', expectedStateRevision: state.session.stateRevision, overrideUnreadyReason: 'Start anyway.' });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().message).toBe('Every seat needs a card before the show can start.');
+    await refresh();
+    expect(state.setup!.started).toBe(false);
   });
 
   it('blocks gameplay and status bypasses before start while allowing out-of-character pause requests', async () => {
@@ -242,20 +321,15 @@ suite('custom session casting and approval', () => {
     expect(state.setup!.started).toBe(false);
   });
 
-  it('audits an explicit missing-seat override and lets that seat acknowledge boundaries before joining play', async () => {
-    await approveAll(); await ready(0);
-    const absentId = state.characterDetails[1]!.id;
+  it('records an optional start note and lets a seat that never marked ready join in-character play', async () => {
     const reason = 'The second player will arrive after the introduction.';
     await succeed({ type: 'start_session', expectedStateRevision: state.session.stateRevision, overrideUnreadyReason: reason });
-    const speech = { type: 'save_submission', expectedSubmissionRevision: 0, expectedInputEpoch: state.session.inputEpoch, contextBeatId: null, kind: 'say', text: 'I have arrived.' };
-    expect((await command(speech, players[1])).statusCode).toBe(409);
-    await ready(1);
-    await succeed(speech, players[1]);
+    expect(state.characterDetails.every((character) => !character.ready && character.acceptedBoundariesRevision === null)).toBe(true);
+    await succeed({ type: 'save_submission', expectedSubmissionRevision: 0, expectedInputEpoch: state.session.inputEpoch, contextBeatId: null, kind: 'say', text: 'I have arrived.' }, players[1]);
     const pool = createPool(databaseUrl!);
     try {
       const audit = (await pool.query("SELECT data FROM audit_events WHERE session_id=$1 AND kind='start_session'", [sessionId])).rows[0].data;
       expect(audit.overrideUnreadyReason).toBe(reason);
-      expect(audit.unreadyCharacterIds).toEqual([absentId]);
     } finally { await pool.end(); }
   });
 
@@ -276,14 +350,16 @@ suite('custom session casting and approval', () => {
     } finally { await pool.end(); }
   });
 
-  it('rejects character and boundary edits after starting even when the table is paused', async () => {
-    await approveAll(); await ready(0); await ready(1);
+  it('keeps cards fixed after starting, even when the table is paused', async () => {
     await succeed({ type: 'start_session', expectedStateRevision: state.session.stateRevision });
     await succeed({ type: 'set_status', status: 'paused', expectedStateRevision: state.session.stateRevision });
-    expect((await command({ type: 'save_character', expectedCharacterRevision: state.characterDetails[0]!.cardRevision, card: starter.characters[0] }, players[0])).statusCode).toBe(409);
-    expect((await command({ type: 'approve_character', characterId: state.characterDetails[0]!.id, expectedCharacterRevision: state.characterDetails[0]!.cardRevision })).statusCode).toBe(409);
+    const target = state.characterDetails[0]!;
+    expect((await command({ type: 'save_character', expectedCharacterRevision: target.cardRevision, card: starter.characters[0] }, players[0])).statusCode).toBe(409);
+    expect((await command({ type: 'save_character', characterId: target.id, expectedCharacterRevision: target.cardRevision, card: starter.characters[0] })).statusCode).toBe(409);
+    expect((await command({ type: 'approve_character', characterId: target.id, expectedCharacterRevision: target.cardRevision })).statusCode).toBe(409);
     expect((await command({ type: 'set_boundaries', expectedStateRevision: state.session.stateRevision, boundaries: [] })).statusCode).toBe(409);
     await refresh(); expect(state.setup!.started).toBe(true);
+    expect(state.characterDetails[0]!.cardRevision).toBe(target.cardRevision);
   });
 
   async function createSeats(seats: unknown[]) {
@@ -300,7 +376,7 @@ suite('custom session casting and approval', () => {
     return credentials;
   }
 
-  it('creates an empty seat for a player-written choice that must be written, submitted and approved before the show starts', async () => {
+  it('creates an empty seat for a player-written choice that the player writes, which applies at once, before the show starts', async () => {
     players = await createSeats([{ playerWritten: true }, characterRefs[0]]);
     expect(state.characterDetails).toHaveLength(2);
     const seat = state.characterDetails[0]!;
@@ -308,14 +384,15 @@ suite('custom session casting and approval', () => {
     expect(seat.draft).toBeNull();
     expect(seat.templateRef).toBeNull();
     expect(seat.approved).toBe(false);
+    expect(seat.cardSource).toBeUndefined();
     expect(state.characterDetails[1]!.templateRef).toEqual(characterRefs[0]);
+    expect(state.characterDetails[1]).toMatchObject({ approved: true, draft: null, cardSource: 'host' });
     expect((await command({ type: 'approve_character', characterId: seat.id, expectedCharacterRevision: seat.cardRevision })).statusCode).toBe(409);
     expect((await command({ type: 'start_session', expectedStateRevision: state.session.stateRevision })).statusCode).toBe(409);
     await succeed({ type: 'save_character', expectedCharacterRevision: seat.cardRevision, card: { ...starter.characters[0]!, displayName: 'Written at the table' } }, players[0]);
-    const written = state.characterDetails[0]!;
-    expect(written.draft).not.toBeNull();
-    await succeed({ type: 'approve_character', characterId: written.id, expectedCharacterRevision: written.cardRevision });
-    expect(state.characterDetails[0]!.approved).toBe(true);
+    expect(state.characterDetails[0]).toMatchObject({ displayName: 'Written at the table', approved: true, draft: null, cardSource: 'player' });
+    await succeed({ type: 'start_session', expectedStateRevision: state.session.stateRevision });
+    expect(state.setup!.started).toBe(true);
   });
 
   it('lets a show use only player-written seats without any saved cards and stores null snapshots for them', async () => {

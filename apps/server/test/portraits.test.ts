@@ -37,6 +37,7 @@ suite('seat portraits and picture access', () => {
   let sessionId: string;
   let seats: Seat[];
   let stageInvite: Credential;
+  let baseline = 0;
   const open: App[] = [];
 
   const cookieOf = (headers: Record<string, unknown>) => {
@@ -61,6 +62,8 @@ suite('seat portraits and picture access', () => {
   const stageView = async (credential: Credential) => (await call(`/api/sessions/${sessionId}?view=stage`, undefined, credential)).json() as StageSnapshot;
   const revisionOf = async (index: number) => (await own(index)).ownCharacter!.cardRevision;
   const imageRows = async (id = sessionId) => (await pool.query('SELECT id, purpose, subject_id, status FROM images WHERE session_id=$1 ORDER BY created_at', [id])).rows;
+  // Creating a custom show also draws the non-player portraits, so the seat tests look only at character pictures.
+  const characterImages = async (id = sessionId) => (await imageRows(id)).filter(row => row.purpose === 'character');
   const characterData = async (index: number) => (await pool.query('SELECT data FROM characters WHERE session_id=$1 AND id=$2', [sessionId, seats[index]!.characterId])).rows[0].data;
   const saveCard = (index: number, revision: number, portraitId?: string) => command({
     type: 'save_character', expectedCharacterRevision: revision,
@@ -113,11 +116,7 @@ suite('seat portraits and picture access', () => {
   const withIdentity = (url: string, credential: Credential) => credential.identity ? `${url}?identity=${credential.identity}` : url;
   const image = (imageId: string, credential: Credential, id = sessionId) => call(withIdentity(`/api/sessions/${id}/images/${imageId}`, credential), undefined, { cookie: credential.cookie });
   async function startShow() {
-    for (const character of (await director()).characterDetails) {
-      if (character.approved && !character.draft) continue;
-      await succeed({ type: 'approve_character', characterId: character.id, expectedCharacterRevision: character.cardRevision });
-    }
-    await succeed({ type: 'start_session', expectedStateRevision: (await director()).session.stateRevision, overrideUnreadyReason: 'Testing a started show.' });
+    await succeed({ type: 'start_session', expectedStateRevision: (await director()).session.stateRevision });
   }
 
   beforeAll(async () => {
@@ -139,6 +138,12 @@ suite('seat portraits and picture access', () => {
     starter = (await call('/api/library/starter')).json();
     const created = await createSession(app, starter.scenario, host);
     sessionId = created.sessionId; seats = created.players; stageInvite = created.stage;
+    // The non-player portraits start after the show is created. Let them finish so each test counts only its own requests.
+    await waitFor(async () => {
+      const rows = await imageRows();
+      return rows.length > 0 && rows.every(row => row.status !== 'making');
+    }, 'the creation portraits');
+    baseline = provider.requests.length;
   });
   afterEach(async () => {
     gate = null;
@@ -146,7 +151,8 @@ suite('seat portraits and picture access', () => {
   });
 
   it('lets only the seat player ask for a portrait, before the show starts, and answers with the picture id', async () => {
-    const before = provider.requests.length;
+    const before = baseline;
+    expect(before).toBeGreaterThan(0);
     expect((await portrait(seatBody(0), { cookie: '' })).statusCode).toBe(401);
     for (const other of [host, stageInvite]) {
       const refused = await portrait(seatBody(0), other);
@@ -158,12 +164,12 @@ suite('seat portraits and picture access', () => {
     expect((await portrait({ details: details() })).statusCode).toBe(400);
     expect((await portrait(seatBody(0, { surprise: 'x' }))).statusCode).toBe(400);
     expect(provider.requests).toHaveLength(before);
-    expect(await imageRows()).toEqual([]);
+    expect(await characterImages()).toEqual([]);
 
     const made = await portrait(seatBody(0, { role: 'Breaks codes', name: 'Ada Quill', appearance: 'Ada Quill wears a grey coat.' }));
     expect(made.statusCode, made.body).toBe(200);
     expect(Object.keys(made.json())).toEqual(['imageId']);
-    const [row] = await imageRows();
+    const [row] = await characterImages();
     expect(row).toMatchObject({ id: made.json().imageId, purpose: 'character', subject_id: seats[0]!.characterId, status: 'ready' });
     expect(provider.requests).toHaveLength(before + 1);
     const prompt = provider.requests.at(-1)!.prompt;
@@ -177,7 +183,7 @@ suite('seat portraits and picture access', () => {
     expect(bare.statusCode, bare.body).toBe(400);
     expect(bare.json()).toMatchObject({ code: 'invalid_input', message: NEEDS_LOOK });
     expect(provider.requests).toHaveLength(before + 2);
-    expect(await imageRows()).toHaveLength(2);
+    expect(await characterImages()).toHaveLength(2);
 
     // Drawing never changes the card or the show.
     expect(await revisionOf(0)).toBe(0);
@@ -232,8 +238,8 @@ suite('seat portraits and picture access', () => {
     const stale = await portrait(seatBody(3));
     expect(stale.statusCode, stale.body).toBe(409);
     expect(stale.json()).toMatchObject({ code: 'conflict', message: STALE_BEFORE });
-    expect(provider.requests).toHaveLength(0);
-    expect(await imageRows()).toEqual([]);
+    expect(provider.requests).toHaveLength(baseline);
+    expect(await characterImages()).toEqual([]);
 
     const rehearsal = await createSession(app, null, host);
     const noLobby = await portrait(seatBody(0), rehearsal.players[0]!, rehearsal.sessionId);
@@ -245,15 +251,15 @@ suite('seat portraits and picture access', () => {
     expect(started.statusCode, started.body).toBe(409);
     expect(started.json().message).toBe('Cards can only change before the show starts.');
     // The only picture the show has is its opening scene.
-    expect((await imageRows()).filter(row => row.purpose === 'character')).toEqual([]);
-    expect(provider.requests.every(request => !request.prompt.includes('Head-and-shoulders'))).toBe(true);
+    expect(await characterImages()).toEqual([]);
+    expect(provider.requests.slice(baseline).every(request => !request.prompt.includes('Head-and-shoulders'))).toBe(true);
   });
 
   it('checks the card again after the picture is made and refuses if it changed meanwhile', async () => {
     let release!: () => void;
     gate = new Promise<void>(resolve => { release = resolve; });
     const pending = portrait(seatBody(0));
-    await waitFor(() => provider.requests.length === 1, 'the held portrait to reach the provider');
+    await waitFor(() => provider.requests.length === baseline + 1, 'the held portrait to reach the provider');
     expect((await saveCard(0, 0)).statusCode).toBe(200);
     release();
     const response = await pending;
@@ -261,7 +267,7 @@ suite('seat portraits and picture access', () => {
     expect(response.json()).toMatchObject({ code: 'conflict', message: STALE_AFTER });
     expect(await revisionOf(0)).toBe(1);
     // The picture was still made, so a retry on the new card can ask again and gets its own.
-    expect((await imageRows()).map(row => row.status)).toEqual(['ready']);
+    expect((await characterImages()).map(row => row.status)).toEqual(['ready']);
     gate = null;
     const retry = await portrait(seatBody(1));
     expect(retry.statusCode, retry.body).toBe(200);
@@ -277,36 +283,35 @@ suite('seat portraits and picture access', () => {
     }
     expect(await revisionOf(0)).toBe(0);
     expect((await saveCard(0, 0, mine)).statusCode).toBe(200);
-    expect((await characterData(0)).draft.portraitId).toBe(mine);
+    expect((await characterData(0)).portraitId).toBe(mine);
+    expect((await characterData(0)).draft).toBeNull();
     expect(await revisionOf(0)).toBe(1);
-    // The saved draft keeps it, so saving the card again with the same portrait stays allowed.
+    // The saved card keeps it, so saving the card again with the same portrait stays allowed.
     expect((await saveCard(0, 1, mine)).statusCode).toBe(200);
-    expect((await characterData(0)).draft.portraitId).toBe(mine);
+    expect((await characterData(0)).portraitId).toBe(mine);
   });
 
-  it('copies the portrait to the public character on approval and clears it when the card is saved without one', async () => {
+  it('puts the portrait on the public character when the card is saved and removes it when the card is saved without one', async () => {
     const made = (await portrait(seatBody(0))).json().imageId as string;
+    const snapshot = async () => (await stageView(stageInvite)).characters.find(item => item.id === seats[0]!.characterId);
+    // The seat's starting card is already approved, so the stage lists it without a portrait.
+    expect(await snapshot()).toMatchObject({ approved: true });
+    expect((await snapshot())!.portraitId).toBeUndefined();
+
     await succeed({ type: 'save_character', expectedCharacterRevision: 0, card: { ...starter.characters[0]!, portraitId: made } }, seats[0]);
     const card = (await director()).characterDetails.find(item => item.id === seats[0]!.characterId)!;
-    expect(card.draft?.portraitId).toBe(made);
-    expect(card.portraitId).toBeUndefined();
-    // The stage lists only approved characters, so a draft portrait is not there at all.
-    const snapshot = async () => (await stageView(stageInvite)).characters.find(item => item.id === seats[0]!.characterId);
-    expect(await snapshot()).toBeUndefined();
-
-    await succeed({ type: 'approve_character', characterId: card.id, expectedCharacterRevision: card.cardRevision });
+    expect(card).toMatchObject({ approved: true, portraitId: made, cardSource: 'player' });
+    expect(card.draft).toBeNull();
     expect((await characterData(0)).portraitId).toBe(made);
     expect((await characterData(0)).draft).toBeNull();
     expect((await snapshot())!.portraitId).toBe(made);
 
-    // A card saved without a portrait removes it once approved again; the old one stays on the character until then.
-    const approved = (await director()).characterDetails.find(item => item.id === card.id)!;
-    await succeed({ type: 'save_character', expectedCharacterRevision: approved.cardRevision, card: starter.characters[0]! }, seats[0]);
-    expect((await characterData(0)).portraitId).toBe(made);
-    const redraft = (await director()).characterDetails.find(item => item.id === card.id)!;
-    expect(redraft.draft).not.toBeNull();
-    expect(redraft.draft?.portraitId).toBeUndefined();
-    await succeed({ type: 'approve_character', characterId: card.id, expectedCharacterRevision: redraft.cardRevision });
+    // Nothing is left to approve once a card is saved.
+    const refused = await command({ type: 'approve_character', characterId: card.id, expectedCharacterRevision: card.cardRevision });
+    expect(refused.statusCode, refused.body).toBe(409);
+
+    // A card saved without a portrait removes it at once.
+    await succeed({ type: 'save_character', expectedCharacterRevision: card.cardRevision, card: starter.characters[0]! }, seats[0]);
     expect(await characterData(0)).not.toHaveProperty('portraitId');
     expect(await snapshot()).toMatchObject({ approved: true });
     expect((await snapshot())!.portraitId).toBeUndefined();
@@ -326,20 +331,15 @@ suite('seat portraits and picture access', () => {
       expect(hidden.json()).toMatchObject({ message: NOT_FOUND });
     }
 
-    // A saved draft is still private to its player and the director.
+    // Saving the card makes its portrait public to the whole table and the stage. A portrait that was not saved stays private.
     expect((await saveCard(0, 0, first)).statusCode).toBe(200);
-    expect((await saveCard(1, 0, second)).statusCode).toBe(200);
-    expect((await image(first, seats[0]!)).statusCode).toBe(200);
+    for (const viewer of [stage, stageInvite, seats[1]!, seats[0]!, host]) expect((await image(first, viewer)).statusCode).toBe(200);
     expect((await image(second, seats[1]!)).statusCode).toBe(200);
-    expect((await image(first, seats[1]!)).statusCode).toBe(404);
-    expect((await image(second, seats[0]!)).statusCode).toBe(404);
-    expect((await image(first, stage)).statusCode).toBe(404);
+    expect((await image(second, host)).statusCode).toBe(200);
+    for (const outsider of [seats[0]!, stage, stageInvite]) expect((await image(second, outsider)).statusCode).toBe(404);
 
-    // Approval makes it public to the whole table and the stage.
-    const card = (await director()).characterDetails.find(item => item.id === seats[0]!.characterId)!;
-    await succeed({ type: 'approve_character', characterId: card.id, expectedCharacterRevision: card.cardRevision });
-    for (const viewer of [stage, stageInvite, seats[1]!, seats[0]!]) expect((await image(first, viewer)).statusCode).toBe(200);
-    expect((await image(second, stage)).statusCode).toBe(404);
+    expect((await saveCard(1, 0, second)).statusCode).toBe(200);
+    for (const viewer of [stage, stageInvite, seats[0]!, seats[1]!, host]) expect((await image(second, viewer)).statusCode).toBe(200);
 
     const served = await image(first, stage);
     expect(served.headers['content-type']).toBe('image/png');

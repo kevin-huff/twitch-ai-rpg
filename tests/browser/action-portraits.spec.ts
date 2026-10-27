@@ -66,36 +66,27 @@ test('an action round with portrait-bearing characters stays off the stream unti
   await page.getByTestId('show-seat-0').selectOption(`${cards[0]!.id}:1`);
   await page.getByTestId('show-seat-1').selectOption(`${cards[1]!.id}:1`);
   await page.getByTestId('create-custom').click();
-  await page.getByTestId('custom-lobby-link').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/lobby/);
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const hostIdentity = new URL(page.url()).searchParams.get('identity');
   const path = `/sessions/${sessionId}`;
   const lobby = await api(page, path);
-  for (const character of lobby.characterDetails) await page.getByTestId(`approve-character-${character.id}`).click();
+  expect(lobby.characterDetails.every((character: any) => character.approved && !character.draft)).toBe(true);
 
-  // Approving the cards copies their library portraits onto the show's characters.
+  // Seats made from saved cards start approved, with their library portraits copied onto the show's characters.
   await expect.poll(async () => (await api(page, path)).characters.map((character: any) => character.portraitId ?? null).sort())
     .toEqual([...portraits].sort());
   const approved = await api(page, path);
   const byName = Object.fromEntries(approved.characters.map((character: any) => [character.displayName, character.portraitId]));
   expect(byName).toEqual({ Nia: portraits[0], Oren: portraits[1] });
 
-  for (const name of ['Nia', 'Oren']) {
-    const popup = context.waitForEvent('page');
-    await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
-    const player = await popup;
-    await player.getByRole('link', { name: 'Cast & lobby', exact: true }).first().click();
-    await player.getByTestId('accept-boundaries').check();
-    await player.getByTestId('ready-character').click();
-    await expect(player.getByText('You are ready for this version of the boundaries.', { exact: true })).toBeVisible();
-    await player.close();
-  }
   await expect(page.getByTestId('start-session')).toBeEnabled();
   const created = await api(page, `${path}/stream-links`, { commandId: randomUUID(), subject: 'show' });
   const stream = await openStream(context, `/stream?layout=scene&audio=off#token=${encodeURIComponent(created.token)}`);
   await expect(stream.locator('.stage')).toBeVisible();
 
   await page.getByTestId('start-session').click();
+  await page.waitForURL(/\/sessions\/[^/]+\/director/);
   await expect.poll(async () => (await api(page, path)).setup.started).toBe(true);
   await expect.poll(async () => (await api(page, path)).scenePictureStatus?.state, { timeout: 20000 }).toBe('ready');
   await expect(stream.locator('.scene-picture.revealing')).toBeVisible({ timeout: 15000 });
@@ -129,7 +120,7 @@ test('an action round with portrait-bearing characters stays off the stream unti
   expect(portraits).not.toContain(actionId);
 
   const director = await context.newPage();
-  await director.goto(`/sessions/${sessionId}/director?identity=${hostIdentity}`);
+  await director.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
   await expect(director.getByTestId('action-picture-status')).toHaveText('The picture for this action round is ready. Viewers and players see it when you publish the round.');
   await expect(director.getByTestId('action-picture-preview')).toHaveAttribute('src', new RegExp(actionId));
   await expect(stream.locator(`img[src*="${actionId}"]`)).toHaveCount(0);

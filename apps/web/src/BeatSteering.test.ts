@@ -12,16 +12,16 @@ const field = (name: string) => `[data-testid="${name}"]`;
 function command(wrapper: ReturnType<typeof mount>, index = 0) { return wrapper.emitted('command')![index]![0] as Command; }
 
 describe('private beat direction', () => {
-  it('loads saved direction, explains privacy and review consequences, and saves only on explicit action', async () => {
+  it('loads the saved note, explains who sees it and what saving changes, and saves only on explicit action', async () => {
     const wrapper = mount(BeatSteering, { props: { snapshot: snapshot(), busy: false } });
-    expect(wrapper.get('summary').text()).toBe('Private AI direction');
+    expect(wrapper.get('summary').text()).toBe('Note for the AI');
     expect((wrapper.get(field('beat-steering-text')).element as HTMLTextAreaElement).value).toBe('Keep the mood hopeful.');
-    expect(wrapper.text()).toMatch(/only.*director.*AI receives/i);
-    expect(wrapper.text()).toMatch(/fresh stakes review/i);
-    expect(wrapper.text()).toMatch(/new script review.*dice.*fixed/i);
-    expect(wrapper.text()).toMatch(/discards.*generated draft.*unsaved script or stakes edits/i);
-    expect(wrapper.text()).toMatch(/does not.*canon|does not.*reveal/i);
+    expect(wrapper.find('label').text()).toBe('Note for this beat');
+    expect(wrapper.text()).toContain('Only you see this. The AI reads it the next time it plans or writes this beat; saving clears the current draft, and the dice stay the same.');
+    expect(wrapper.get(field('save-beat-steering')).text()).toBe('Save note');
+    expect(wrapper.get(field('clear-beat-steering')).text()).toBe('Clear note');
     await wrapper.get(field('beat-steering-text')).setValue('  Ask about the broken beacon.  ');
+    expect(wrapper.text()).toContain('Unsaved note');
     expect(wrapper.emitted('command')).toBeUndefined();
     await wrapper.get(field('save-beat-steering')).trigger('click');
     expect(command(wrapper)).toEqual({ type: 'set_beat_steering', commandId: expect.any(String), beatId: 'beat-one', expectedBeatRevision: 3, text: 'Ask about the broken beacon.' });
@@ -76,7 +76,7 @@ describe('private beat direction', () => {
     const saved = snapshot(); saved.activeBeat!.steering = ''; saved.activeBeat!.revision = 4;
     await wrapper.setProps({ snapshot: saved });
     (wrapper.emitted('command')![0]![1] as () => void)(); await wrapper.vm.$nextTick();
-    expect(wrapper.get('[role="status"]').text()).toContain('Private direction cleared');
+    expect(wrapper.get('[role="status"]').text()).toBe('Note cleared.');
     expect((wrapper.get(field('beat-steering-text')).element as HTMLTextAreaElement).value).toBe('');
     expect(wrapper.find(field('reload-beat-steering')).exists()).toBe(false); wrapper.unmount();
   });
@@ -98,7 +98,28 @@ describe('private beat direction', () => {
     const saved = snapshot(); saved.activeBeat!.revision = 4;
     await wrapper.setProps({ snapshot: saved });
     (wrapper.emitted('command')![0]![1] as () => void)(); await wrapper.vm.$nextTick();
-    expect(wrapper.get('[role="status"]').text()).toContain('Private direction saved'); wrapper.unmount();
+    expect(wrapper.get('[role="status"]').text()).toBe('Note saved for the next plan or script.'); wrapper.unmount();
+  });
+
+  it('shows the note gates in plain words', () => {
+    const noSetup = snapshot(); noSetup.setup = { started: false } as DirectorSnapshot['setup'];
+    const wrapper = mount(BeatSteering, { props: { snapshot: noSetup, busy: false } });
+    expect(wrapper.text()).toContain('Start the show before saving a note for the AI.');
+    wrapper.unmount();
+    const ended = snapshot(); ended.session.status = 'ended';
+    const endedWrapper = mount(BeatSteering, { props: { snapshot: ended, busy: false } });
+    expect(endedWrapper.text()).toContain('Notes for the AI work while the show is live or paused.');
+    endedWrapper.unmount();
+    const noBeat = snapshot(); noBeat.activeBeat = null;
+    const noBeatWrapper = mount(BeatSteering, { props: { snapshot: noBeat, busy: false } });
+    expect(noBeatWrapper.text()).toContain('Open a beat to save a note for the AI.');
+    noBeatWrapper.unmount();
+  });
+
+  it('uses no session or private direction wording in the panel', () => {
+    const wrapper = mount(BeatSteering, { props: { snapshot: snapshot(), busy: false } });
+    expect(wrapper.text()).not.toMatch(/session|private direction/i);
+    wrapper.unmount();
   });
 
   it.each(['missing', 'ended', 'not-started'])('does not allow direction when the session is %s', state => {

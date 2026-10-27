@@ -20,7 +20,7 @@ import { registerSeatGeneration } from './seat-generation';
 import { registerScenarioDrafts } from './scenario-drafts';
 import { registerCharacterBuilders } from './character-builder';
 import { registerProducers } from './producers';
-import { registerStreamLinks } from './stream-links';
+import { createMainShowLink, registerStreamLinks } from './stream-links';
 import { invitationToken as deriveInvitationToken, registerInvites } from './invites';
 import { registerAudio, type SpeechEngine } from './audio';
 import { registerDraftAudio } from './draft-audio';
@@ -32,6 +32,7 @@ import { GalleryService, galleryUrl } from './galleries';
 import { registerGalleryRoutes } from './gallery-routes';
 import { registerOperations } from './operations';
 import { httpCredential, identityCookieName, selectCredential, requestIdentity } from './identity';
+import { renewSignIn } from './sign-in-renewal';
 
 export interface AppOptions {
   databaseUrl: string;
@@ -68,10 +69,14 @@ export async function buildApp(options: AppOptions) {
   const images = new ImageService({ pool, provider: options.images, assetDir, hourlyLimit: options.imageHourlyLimit, ai: options.provider, onReady: id => { void gallery.refreshIfOn(id); } });
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
   await app.register(cookie);
+  // A host or producer rpg_session cookie with under 6 hours left is renewed as its response goes out.
+  const renewals = new WeakMap<FastifyRequest, string>();
   const authenticate = async (request: FastifyRequest, client?: PoolClient): Promise<Actor> => {
-    const credential = httpCredential(request).token;
+    const selected = httpCredential(request);
+    const credential = selected.token;
     const found = credential ? await findActiveActor(client ?? pool, hash(credential)) : null;
     if (!found) throw new AppError(401, 'unauthorized', 'Sign in or redeem an invitation first.');
+    if (selected.name === 'rpg_session' && found.role === 'host' && found.expires_at && new Date(found.expires_at).getTime() - Date.now() < 6 * 3600 * 1000) renewals.set(request, credential!);
     return found;
   };
   app.setErrorHandler((error, _request, reply) => {
@@ -92,14 +97,24 @@ export async function buildApp(options: AppOptions) {
     reply.header('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : picture ? 'private, max-age=31536000, immutable' : 'no-store');
   });
   const tokenBody = z.strictObject({ token: z.string().min(1).max(1024), tab: z.literal(true).optional() });
-  const persistCredential = async (row: CredentialRow, client: Pick<PoolClient, 'query'> = pool, credentialOptions: { expiresAt?: Date } = {}) => {
+  const persistCredential = async (row: CredentialRow, client: Pick<PoolClient, 'query'> = pool, credentialOptions: { expiresAt?: Date; lifetimeHours?: number } = {}) => {
     const credential = randomBytes(32).toString('base64url');
-    await client.query('INSERT INTO credentials(token_hash,actor_id,role,session_id,character_id,producer_grant_id,stream_link_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,LEAST(now()+interval \'12 hours\',$8::timestamptz))', [hash(credential), row.actor_id, row.role, row.session_id, row.character_id, row.producer_grant_id ?? null, row.stream_link_id ?? null, credentialOptions.expiresAt ?? null]);
+    await client.query('INSERT INTO credentials(token_hash,actor_id,role,session_id,character_id,producer_grant_id,stream_link_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,LEAST(now()+$9::int*interval \'1 hour\',$8::timestamptz))', [hash(credential), row.actor_id, row.role, row.session_id, row.character_id, row.producer_grant_id ?? null, row.stream_link_id ?? null, credentialOptions.expiresAt ?? null, credentialOptions.lifetimeHours ?? 12]);
     return credential;
   };
   const issueCookie = (credential: string, reply: FastifyReply, identityId?: string, maxAgeSeconds = 12 * 3600) => {
     reply.setCookie(identityCookieName(identityId), credential, { path: '/', httpOnly: true, sameSite: 'strict', secure: options.origin.startsWith('https:'), maxAge: maxAgeSeconds });
   };
+  app.addHook('onSend', async (request, reply) => {
+    const token = renewals.get(request);
+    if (!token) return;
+    try {
+      const path = decodeURIComponent(request.url.split('?')[0]!);
+      if (!path.startsWith('/api/') || path.startsWith('/api/auth/')) return;
+      const seconds = await renewSignIn(pool, hash(token), hash(options.hostToken));
+      if (seconds !== null) issueCookie(token, reply, undefined, seconds);
+    } catch { /* A request that cannot renew is left as it came. */ }
+  });
   app.post('/api/auth/host', async (request, reply) => {
     const { token, tab } = tokenBody.parse(request.body);
     const identityId = tab ? randomBytes(16).toString('hex') : undefined;
@@ -110,14 +125,16 @@ export async function buildApp(options: AppOptions) {
   app.post('/api/auth/redeem', async (request, reply) => {
     const { token, tab } = tokenBody.parse(request.body);
     const identityId = tab ? randomBytes(16).toString('hex') : undefined;
-    const { actor, credential } = await transaction(pool, async (client) => {
+    const { actor, credential, lifetimeHours } = await transaction(pool, async (client) => {
       const result = await client.query('UPDATE invites SET redeemed_at=now() WHERE token_hash=$1 AND expires_at>now() AND redeemed_at IS NULL AND revoked_at IS NULL RETURNING *', [hash(token)]);
       if (!result.rowCount) throw new AppError(401, 'unauthorized', 'This invitation is expired, already redeemed, or invalid.');
       const invite = result.rows[0];
       const actor: Actor = { actor_id: invite.id, role: invite.role, session_id: invite.session_id, character_id: invite.character_id };
-      return { actor, credential: await persistCredential(actor, client) };
+      const ended = (await client.query('SELECT status=\'ended\' AS ended FROM sessions WHERE id=$1', [invite.session_id])).rows[0]?.ended === true;
+      const lifetimeHours = invite.role === 'player' && !ended ? 2160 : 12;
+      return { actor, credential: await persistCredential(actor, client, { lifetimeHours }), lifetimeHours };
     });
-    issueCookie(credential, reply, identityId);
+    issueCookie(credential, reply, identityId, lifetimeHours * 3600);
     return { sessionId: actor.session_id, role: actor.role, characterId: actor.character_id, ...(identityId ? { identityId } : {}) };
   });
   app.post('/api/auth/logout', async (request, reply) => {
@@ -132,7 +149,9 @@ export async function buildApp(options: AppOptions) {
     if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the host can create sessions.');
     const command = CreateSessionSchema.parse(request.body);
     const requestHash = digest(command);
-    return transaction(pool, async (client): Promise<CreateSessionResponse> => {
+    const portraitIds: string[] = [];
+    const response = await transaction(pool, async (client): Promise<CreateSessionResponse> => {
+      portraitIds.length = 0;
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [actor.actor_id]);
       const receipt = (await client.query('SELECT request_hash,response FROM command_receipts WHERE actor_id=$1 AND command_id=$2', [actor.actor_id, command.commandId])).rows[0];
       if (receipt && receipt.request_hash !== requestHash) throw new AppError(409, 'conflict', 'This command ID was already used with other input.');
@@ -150,6 +169,14 @@ export async function buildApp(options: AppOptions) {
         }
         for (const fact of state.facts) fact.sourceEventId = seedEvent.eventId;
         await saveState(client, state);
+        await createMainShowLink(client, options.hostToken, sessionId, actor);
+        if (custom && images.enabled) {
+          for (const npc of state.npcs) {
+            if (npc.portraitId || (!npc.appearance.trim() && !npc.role.trim())) continue;
+            const id = await images.reserveNpcPortrait(client, state, npc.id, actor, 'automatic');
+            if (id) portraitIds.push(id);
+          }
+        }
         for (const seat of [...state.characters.map((character) => ({ role: 'player' as const, character_id: character.id })), { role: 'stage' as const, character_id: null }]) {
           const invite = { id: randomUUID(), session_id: sessionId, ...seat };
           await client.query('INSERT INTO invites(id,token_hash,session_id,role,character_id,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval \'7 days\')', [invite.id, hash(invitationToken(invite)), sessionId, invite.role, invite.character_id]);
@@ -159,6 +186,8 @@ export async function buildApp(options: AppOptions) {
       const invites = (await client.query(`SELECT i.* FROM invites i LEFT JOIN characters c ON c.id=i.character_id WHERE i.session_id=$1 AND i.revoked_at IS NULL ORDER BY CASE WHEN i.role='player' THEN 0 ELSE 1 END,c.ordinal,i.id`, [sessionId])).rows.map((invite) => ({ role: invite.role, characterId: invite.character_id, token: invitationToken(invite) }));
       return { sessionId, invites };
     });
+    if (portraitIds.length) images.run(portraitIds);
+    return response;
   });
   app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/test-seat', async (request, reply) => {
     const owner = await authenticate(request);

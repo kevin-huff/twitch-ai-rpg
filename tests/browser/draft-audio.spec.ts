@@ -22,8 +22,8 @@ test('director previews saved narration privately and publishes that recording o
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2];
   const path = `/sessions/${sessionId}`;
   let state = (await api(page, path)).body;
@@ -48,8 +48,12 @@ test('director previews saved narration privately and publishes that recording o
   await page.reload();
   const panel = page.getByTestId('draft-audio-panel');
   await expect(panel).toBeVisible();
-  await panel.getByRole('button', { name: 'Prepare draft narration', exact: true }).click();
-  await expect(panel.getByRole('button', { name: 'Publish with narration', exact: true })).toBeEnabled();
+  // The narration prepares by itself; there is nothing to press.
+  await expect(panel.getByRole('button', { name: 'Prepare voice again' })).toHaveCount(0);
+  const publish = page.getByTestId('publish');
+  await expect(page.getByTestId('beat-status')).toHaveText('Voice ready', { timeout: 30000 });
+  await expect(publish).toBeEnabled();
+  await expect(publish).toHaveText('Publish');
   const ready = (await api(page, audioPath)).body.manifest;
   expect(ready.segments).not.toContainEqual(expect.objectContaining({ text: quote }));
   expect((await api(player, audioPath)).status).toBe(403);
@@ -58,10 +62,12 @@ test('director previews saved narration privately and publishes that recording o
   expect((await api(player, path)).body.history).toEqual([]);
   for (const field of ['session', 'history', 'tracks', 'characters']) expect((await api(page, path)).body[field]).toEqual(before[field]);
 
+  await page.getByTestId('script-line-0').click();
   await page.getByTestId('script-segment-0').fill('An unsaved alternative.');
-  await expect(panel.getByRole('button', { name: 'Publish with narration', exact: true })).toBeDisabled();
+  await expect(publish).toBeDisabled();
+  await expect(publish).toHaveText('Publish');
   await page.getByTestId('script-segment-0').fill(before.activeBeat.draft.segments[0].text);
-  await expect(panel.getByRole('button', { name: 'Publish with narration', exact: true })).toBeEnabled();
+  await expect(publish).toBeEnabled({ timeout: 30000 });
   await page.setViewportSize({ width: 430, height: 920 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await panel.screenshot({ path: 'test-results/draft-audio-director.png' });
@@ -71,9 +77,10 @@ test('director previews saved narration privately and publishes that recording o
   await expect(panel.getByRole('alert')).not.toBeVisible();
   await panel.getByRole('button', { name: 'Stop preview', exact: true }).click();
   await page.reload();
-  await expect(panel.getByRole('button', { name: 'Publish with narration', exact: true })).toBeEnabled();
+  await expect(page.getByTestId('beat-status')).toHaveText('Voice ready', { timeout: 30000 });
+  await expect(publish).toBeEnabled();
   await expect(panel.getByRole('button', { name: 'Stop preview', exact: true })).not.toBeVisible();
-  await panel.getByRole('button', { name: 'Publish with narration', exact: true }).click();
+  await publish.click();
   await expect(panel).not.toBeVisible();
   const after = (await api(page, path)).body;
   expect(after.history).toHaveLength(1);

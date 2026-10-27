@@ -10,16 +10,23 @@ async function api(page: Page, path: string, body?: unknown) {
   return result.data;
 }
 
+
+async function openFold(page: Page, testId: string) {
+  const fold = page.getByTestId(testId);
+  if (!(await fold.evaluate(details => (details as HTMLDetailsElement).open))) await fold.locator(':scope > summary').click();
+}
+
 test('directs recurring characters and deliberate reveals across scenes without rewriting the story', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   let snapshot = await api(page, `/sessions/${sessionId}`);
   await api(page, `/sessions/${sessionId}/commands`, { type: 'set_status', commandId: crypto.randomUUID(), expectedStateRevision: snapshot.session.stateRevision, status: 'live' });
   await page.reload();
+  await openFold(page, 'show-tools');
   await expect(page.getByTestId('live-controls')).toBeVisible();
   const controls = page.getByTestId('live-controls');
   await controls.locator(':scope > summary').click();
@@ -46,7 +53,7 @@ test('directs recurring characters and deliberate reveals across scenes without 
   const player = await context.newPage();
   await player.goto(`/sessions/${sessionId}/play?identity=${playerGrant.identityId}`);
   const stage = await context.newPage();
-  await stage.goto(`/sessions/${sessionId}/stage?identity=${new URL(page.url()).searchParams.get('identity')}`);
+  await stage.goto(`/sessions/${sessionId}/stage`);
 
   await controls.getByTestId('begin-reveal').click();
   await controls.getByTestId('reveal-npc').selectOption(courier.id);
@@ -97,19 +104,19 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await page.reload();
   snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.npcDetails.find((npc: { id: string }) => npc.id === courier.id)).toMatchObject({ displayName: 'Courier Ren', voiceProfileId: courier.voiceProfileId, knowledge: memory, locationId: originalLocation });
+  await openFold(page, 'beat-more');
   await page.getByTestId('open-conversation').click();
   await expect(page.getByRole('heading', { name: 'Collecting input', exact: true })).toBeVisible();
   await player.reload();
+  await expect(player.getByTestId('talking-to').or(player.getByLabel('Talking to'))).toBeVisible();
+  if (await player.getByTestId('talking-to-change').count()) await player.getByTestId('talking-to-change').click();
   await player.getByLabel('Talking to').selectOption(courier.id);
   await player.getByTestId('speech-input').fill('Will you show us the key, Ren?');
   await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
   await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(1);
-  await page.locator('.queue-item input[type=checkbox]').check();
-  await page.getByTestId('plan').click();
-  await page.getByTestId('approve-stakes').click();
-  await page.getByTestId('lock').click();
-  await page.getByTestId('render').click();
+  await expect(page.locator('.queue-item input[type=checkbox]')).toBeChecked();
+  await page.getByTestId('plan-and-draft').click();
   await page.getByTestId('publish').click();
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).history.length).toBe(1);
   snapshot = await api(page, `/sessions/${sessionId}`);
@@ -130,7 +137,8 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await expect(stage.getByTestId('public-facts')).toContainText('Ren is the rightful heir.');
   await expect(stage.locator('body')).not.toContainText('PRIVATE:');
   await stage.screenshot({ path: 'test-results/live-stage.png', fullPage: true });
-  await page.getByTestId('live-controls').locator(':scope > summary').click();
+  await openFold(page, 'show-tools');
+  await openFold(page, 'live-controls');
   await page.getByTestId('begin-reveal').click();
   await page.getByTestId('reveal-npc').selectOption(courier.id);
   await page.screenshot({ path: 'test-results/live-director-controls.png', fullPage: true });

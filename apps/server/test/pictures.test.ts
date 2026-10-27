@@ -96,10 +96,13 @@ suite('scene pictures through commands and routes', () => {
     expect(response.statusCode, response.body).toBe(200);
     return response;
   }
-  async function approveAll(show: Show) {
-    for (const character of (await director(show)).characterDetails) {
-      const approved = await command(show, { type: 'approve_character', characterId: character.id, expectedCharacterRevision: character.cardRevision });
-      expect(approved.statusCode, approved.body).toBe(200);
+  // Seats from saved cards start approved, so a show is ready to start as soon as it is made.
+  async function expectCardsApproved(show: Show) {
+    const details = (await director(show)).characterDetails;
+    expect(details.length).toBeGreaterThan(0);
+    for (const character of details) {
+      expect(character.approved, character.id).toBe(true);
+      expect(character.draft, character.id).toBeNull();
     }
   }
   async function start(show: Show, commandId = randomUUID(), revision?: number) {
@@ -144,7 +147,7 @@ suite('scene pictures through commands and routes', () => {
     await boot();
     hold();
     const show = await customShow();
-    await approveAll(show);
+    await expectCardsApproved(show);
     const before = await director(show);
     expect(await rows(show)).toEqual([]);
 
@@ -615,7 +618,7 @@ suite('scene pictures through commands and routes', () => {
   it('answers the picture buttons with the pictures-off sentence and reserves nothing when there is no image provider', async () => {
     await boot({ images: false });
     const lobby = await customShow();
-    await approveAll(lobby);
+    await expectCardsApproved(lobby);
     const started = await start(lobby);
     expect(started.statusCode, started.body).toBe(200);
     const view = started.json().snapshot as DirectorSnapshot;

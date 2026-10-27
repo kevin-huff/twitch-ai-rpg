@@ -1,19 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useId } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue';
 import type { ScenarioDefinition, ScenarioDraftJob, ScenarioGenerationRequest, ScenarioSize } from '@rpg/contracts';
 
 type Succeeded = Extract<ScenarioDraftJob, { status: 'succeeded' }>;
 type Applied = { definition: ScenarioDefinition; adjustments: string[]; warnings: string[]; suggestedBoundaries: string[] };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   boundaries: string[];
   premise: string;
   disabled?: boolean;
+  applyError?: string;
   replacesUnsaved: boolean;
+  variant?: 'library' | 'make';
   start: (input: ScenarioGenerationRequest) => Promise<ScenarioDraftJob>;
   poll: (jobId: string) => Promise<ScenarioDraftJob>;
-}>();
-const emit = defineEmits<{ apply: [result: Applied] }>();
+}>(), { variant: 'library' });
+const emit = defineEmits<{ apply: [result: Applied]; discard: [] }>();
 
 const POLL_MS = 2000;
 const GIVE_UP_EXTRA_MS = 30_000;
@@ -28,9 +30,10 @@ const FALLBACK_ERROR = 'AI drafting is not available right now. You can still fi
 const helpPrefix = useId();
 const helpId = (key: string) => `${helpPrefix}-help-${key}`;
 
-const opened = ref(false);
+const make = computed(() => props.variant === 'make');
+const opened = ref(props.variant === 'make');
 const prompt = ref('');
-const size = ref<ScenarioSize>('medium');
+const size = ref<ScenarioSize>(props.variant === 'make' ? 'small' : 'medium');
 const starting = ref(false);
 const running = ref<Extract<ScenarioDraftJob, { status: 'running' }> | null>(null);
 const result = ref<Succeeded | null>(null);
@@ -52,7 +55,7 @@ const minutes = computed(() => {
   if (!job) return 0;
   return Math.max(1, Math.ceil((Date.parse(job.deadlineAt) - Date.parse(job.startedAt)) / 60_000));
 });
-const applyLabel = computed(() => props.replacesUnsaved ? 'Replace the editor with this draft' : 'Load into the editor');
+const applyLabel = computed(() => make.value ? 'Use this story' : props.replacesUnsaved ? 'Replace the editor with this draft' : 'Load into the editor');
 
 const summary = computed(() => {
   const definition = result.value?.definition;
@@ -97,7 +100,7 @@ function reset() {
   generation++; stopTimers();
   starting.value = false; resuming.value = false; running.value = null; result.value = null; error.value = ''; expired.value = false;
 }
-function close() { if (result.value) forgetId(); reset(); opened.value = false; }
+function close() { if (result.value) forgetId(); reset(); if (!make.value) opened.value = false; emit('discard'); }
 function open() {
   if (disposed || props.disabled || opened.value) return;
   reset();
@@ -189,29 +192,38 @@ function useDraft() {
   const payload: Applied = {
     definition: job.definition, adjustments: job.adjustments, warnings: job.warnings, suggestedBoundaries: job.suggestedBoundaries,
   };
-  close();
+  if (!make.value) close();
   emit('apply', payload);
 }
+defineExpose({ clearDraft: close });
 
+onMounted(() => {
+  if (!make.value) return;
+  const jobId = rememberedId();
+  if (jobId) resume(generation, jobId);
+});
 onBeforeUnmount(() => { disposed = true; reset(); });
 </script>
 
 <template>
-  <div class="scenario-generator">
-    <button type="button" data-testid="scenario-generator-open" class="secondary" :aria-expanded="opened" :disabled="disabled || opened" @click="open">Create the whole scenario with AI</button>
+  <div class="scenario-generator" :class="{ 'scenario-generator-make': make }">
+    <button v-if="!make" type="button" data-testid="scenario-generator-open" class="secondary" :aria-expanded="opened" :disabled="disabled || opened" @click="open">Create the whole scenario with AI</button>
     <section v-if="opened" class="scenario-generator-panel" aria-label="Create the whole scenario" :aria-busy="busy">
-      <label>Describe your story
+      <label>{{ make ? "What's the story?" : 'Describe your story' }}
         <textarea v-model="prompt" data-testid="scenario-generator-prompt" :aria-describedby="helpId('prompt')" :disabled="busy" maxlength="4000" rows="5" />
       </label>
-      <p :id="helpId('prompt')" class="field-help">Describe the story in a few sentences: where it happens, who is in it and what goes wrong. Your content boundaries are sent too, so the AI avoids what they rule out.</p>
-      <label>Size
-        <select v-model="size" data-testid="scenario-generator-size" :aria-describedby="helpId('size')" :disabled="busy">
-          <option value="small">Small</option>
-          <option value="medium">Medium</option>
-          <option value="large">Large</option>
-        </select>
-      </label>
-      <p :id="helpId('size')" class="field-help">Bigger stories take longer to write and fail more often. You can add more by hand later.</p>
+      <p :id="helpId('prompt')" class="field-help">Describe the story in a few sentences: where it happens, who is in it and what goes wrong.<template v-if="!make"> Your content boundaries are sent too, so the AI avoids what they rule out.</template></p>
+      <component :is="make ? 'details' : 'div'" :class="{ 'scenario-generator-options': make }">
+        <summary v-if="make">More options</summary>
+        <label>Size
+          <select v-model="size" data-testid="scenario-generator-size" :aria-describedby="helpId('size')" :disabled="busy">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </label>
+        <p :id="helpId('size')" class="field-help">Bigger stories take longer to write and fail more often. You can add more by hand later.</p>
+      </component>
       <p v-if="resuming" data-testid="scenario-generator-resume" class="scenario-generator-status" role="status">{{ RESUME_MESSAGE }}</p>
       <p v-if="running" data-testid="scenario-generator-status" class="scenario-generator-status" role="status">The AI is writing your story. This can take up to {{ minutes }} minutes.</p>
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
@@ -223,30 +235,33 @@ onBeforeUnmount(() => { disposed = true; reset(); });
         <p>{{ summary.places }}</p>
         <h4>Characters</h4>
         <p>{{ summary.characters }}</p>
-        <h4>Tracks</h4>
-        <p>{{ summary.tracks }}</p>
-        <h4>Facts</h4>
-        <p>{{ summary.facts }}</p>
+        <template v-if="!make">
+          <h4>Tracks</h4>
+          <p>{{ summary.tracks }}</p>
+          <h4>Facts</h4>
+          <p>{{ summary.facts }}</p>
+        </template>
         <template v-if="result && result.suggestedBoundaries.length">
           <h4>Suggested boundaries</h4>
           <ul><li v-for="(item, index) in result.suggestedBoundaries" :key="index">{{ item }}</li></ul>
         </template>
-        <template v-if="result && result.adjustments.length">
+        <template v-if="!make && result && result.adjustments.length">
           <h4>What the app changed</h4>
           <ul><li v-for="(item, index) in result.adjustments" :key="index">{{ item }}</li></ul>
         </template>
-        <template v-if="result && result.warnings.length">
+        <template v-if="!make && result && result.warnings.length">
           <h4>Check before you save</h4>
           <ul><li v-for="(item, index) in result.warnings" :key="index">{{ item }}</li></ul>
         </template>
       </div>
-      <p v-if="result && replacesUnsaved" :id="helpId('replace')" class="notice error">This replaces your unsaved changes in the editor.</p>
+      <p v-if="!make && result && replacesUnsaved" :id="helpId('replace')" class="notice error">This replaces your unsaved changes in the editor.</p>
       <div class="scenario-generator-actions">
-        <button type="button" data-testid="scenario-generator-generate" class="secondary" :disabled="!canGenerate" @click="requestScenario">{{ error ? 'Try again' : 'Generate' }}</button>
+        <button type="button" data-testid="scenario-generator-generate" class="secondary" :disabled="!canGenerate" @click="requestScenario">{{ error ? 'Try again' : make ? 'Write my story' : 'Generate' }}</button>
         <button v-if="result" type="button" data-testid="scenario-generator-apply" :aria-describedby="replacesUnsaved ? helpId('replace') : undefined" :disabled="disabled" @click="useDraft">{{ applyLabel }}</button>
+        <p v-if="applyError" role="alert" class="notice error" data-testid="scenario-generator-apply-error">{{ applyError }}</p>
         <button type="button" data-testid="scenario-generator-cancel" class="quiet" @click="close">Cancel</button>
       </div>
-      <p class="scenario-generator-footer">Nothing is saved until you press Save scenario version.</p>
+      <p v-if="!make" class="scenario-generator-footer">Nothing is saved until you press Save scenario version.</p>
     </section>
   </div>
 </template>
@@ -265,5 +280,6 @@ onBeforeUnmount(() => { disposed = true; reset(); });
 .scenario-generator-preview ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .25rem; }
 .scenario-generator-premise { color: var(--muted); }
 .scenario-generator-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .8rem; }
+.scenario-generator-options summary { cursor: pointer; color: var(--muted); font-size: .85rem; margin: .6rem 0 .3rem; }
 .scenario-generator-footer { color: var(--muted); font-size: .75rem; margin: .8rem 0 0; }
 </style>

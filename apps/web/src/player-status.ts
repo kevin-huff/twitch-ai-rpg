@@ -2,11 +2,10 @@ import type { PublicBeat, Submission } from '@rpg/contracts';
 
 export type PlayerStatus = { headline: string; detail: string; tone: 'wait' | 'act' | 'done' };
 
-export function playerStatus(input: { sessionStatus: string; ready: boolean; beat: PublicBeat | null; own: Submission[]; name?: string; inputEpoch?: number }): PlayerStatus {
-  const { sessionStatus, ready, beat, own, inputEpoch } = input;
+export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | null; own: Submission[]; name?: string; inputEpoch?: number }): PlayerStatus {
+  const { sessionStatus, beat, own, inputEpoch } = input;
   const name = input.name ?? 'your character';
   if (sessionStatus === 'ended') return { headline: 'The show is over', detail: 'Thanks for playing. You can close this page.', tone: 'wait' };
-  if (!ready) return { headline: 'Finish setup first', detail: 'Open Cast & lobby, read your character card, tick the box and press Mark ready. You can still send the director a private note.', tone: 'act' };
   if (sessionStatus === 'paused') return { headline: 'The show is paused', detail: 'Hang on. The director will start again soon.', tone: 'wait' };
   if (!beat || beat.phase === 'published' || beat.phase === 'aborted') return { headline: 'Waiting for the next turn', detail: 'You can write now. Your line waits for the next turn.', tone: 'wait' };
   // Each turn moves the epoch on by two (publish or abort, then open). A line with no beat is one back when written

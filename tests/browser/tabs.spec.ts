@@ -5,12 +5,20 @@ async function createTable(page: Page) {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  const invitations = await Promise.all(names.map((_, index) => page.getByLabel(`Player ${index + 1} invitation`).inputValue()));
-  const stageInvitation = await page.getByLabel('Stage invitation').inputValue();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByTestId('try-it-now').click();
+  await expect(page).toHaveURL(/\/sessions\/[^/]+\/director/);
+  const sessionId = page.url().split('/sessions/')[1].split('/')[0];
+  const { invites } = await (await page.request.get(`/api/sessions/${sessionId}/invites`)).json() as { invites: { id: string; role: string; status: string }[] };
+  const links: string[] = [];
+  for (const invite of invites.filter(row => row.status === 'waiting')) {
+    const { token } = await (await page.request.get(`/api/sessions/${sessionId}/invites/${invite.id}/link`)).json() as { token: string };
+    links.push(`${new URL(page.url()).origin}/join/${token}`);
+  }
+  const stageRow = invites.filter(row => row.status === 'waiting').findIndex(row => row.role === 'stage');
+  const stageInvitation = links[stageRow];
+  const playerInvitations = links.filter((_, index) => index !== stageRow);
   await expect(page.getByTestId('director-controls')).toBeVisible();
-  return { invitations, stageInvitation };
+  return { invitations: playerInvitations, stageInvitation };
 }
 
 test('one browser keeps the director, four invited characters, and stage independent across refresh', async ({ page, context }) => {
@@ -20,15 +28,16 @@ test('one browser keeps the director, four invited characters, and stage indepen
     const player = await context.newPage();
     players.push(player);
     await player.goto(invitation);
-    await player.getByRole('button', { name: 'Join session' }).click();
+    await player.getByRole('button', { name: 'Join', exact: true }).click();
     await expect(player.getByRole('heading', { name: names[index], exact: true })).toBeVisible();
   }
   const stage = await context.newPage();
   await stage.goto(stageInvitation);
-  await stage.getByRole('button', { name: 'Join session' }).click();
+  await stage.getByRole('button', { name: 'Join', exact: true }).click();
   await expect(stage.locator('.stage')).toBeVisible();
   await page.reload();
   await expect(page.getByTestId('director-controls')).toBeVisible();
+  await page.getByTestId('beat-more').locator(':scope > summary').click();
   await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
   await Promise.all(players.map(async (player, index) => {
     await player.reload();
@@ -78,7 +87,7 @@ test('director opens each test character in a new tab without using player invit
   try {
     const realPlayer = await separatePlayer.newPage();
     await realPlayer.goto(invitations[0]);
-    await realPlayer.getByRole('button', { name: 'Join session' }).click();
+    await realPlayer.getByRole('button', { name: 'Join', exact: true }).click();
     await expect(realPlayer.getByRole('heading', { name: 'Rook', exact: true })).toBeVisible();
   } finally { await separatePlayer.close(); }
 });

@@ -15,9 +15,9 @@ let epoch = 0;
 let retry: { key: string; commandId: string } | undefined;
 const dirty = computed(() => text.value !== baseline.value);
 const gate = computed(() => {
-  if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the session before saving private direction.';
-  if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Private direction is available while the session is live or paused.';
-  if (!props.snapshot.activeBeat || ['published', 'aborted'].includes(props.snapshot.activeBeat.phase)) return 'Open an active beat to save private direction.';
+  if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the show before saving a note for the AI.';
+  if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Notes for the AI work while the show is live or paused.';
+  if (!props.snapshot.activeBeat || ['published', 'aborted'].includes(props.snapshot.activeBeat.phase)) return 'Open a beat to save a note for the AI.';
   return '';
 });
 const locked = computed(() => props.busy || Boolean(gate.value));
@@ -44,11 +44,11 @@ function save(clear = false) {
   const key = JSON.stringify(candidate);
   if (retry?.key !== key) retry = { key, commandId: crypto.randomUUID() };
   const parsed = CommandSchema.safeParse({ ...candidate, commandId: retry.commandId });
-  if (!parsed.success) { error.value = parsed.error.issues.slice(0, 3).map(issue => `${issue.path.join('.') || 'Private direction'}: ${issue.message}`).join('\n'); return; }
+  if (!parsed.success) { error.value = parsed.error.issues.slice(0, 3).map(issue => `${issue.path.join('.') || 'Note'}: ${issue.message}`).join('\n'); return; }
   const savedEpoch = epoch;
   const savedTarget = captured.value;
   const savedText = text.value.trim();
-  const savedNotice = savedText ? 'Private direction saved for the next plan or render.' : 'Private direction cleared.';
+  const savedNotice = savedText ? 'Note saved for the next plan or script.' : 'Note cleared.';
   emit('command', parsed.data, () => {
     if (savedEpoch !== epoch) {
       if (captured.value?.sessionId === savedTarget.sessionId && captured.value?.beatId === savedTarget.beatId && !dirty.value && baseline.value === savedText) notice.value = savedNotice;
@@ -65,18 +65,17 @@ function save(clear = false) {
 
 <template>
   <details class="panel beat-steering" data-testid="beat-steering">
-    <summary>Private AI direction</summary>
-    <p>Only the director sees this direction; the AI receives it with the next plan or render. Saving does not create canon, reveal secrets, or write player speech automatically.</p>
-    <p class="field-help">Saving discards the current generated draft and unsaved script or stakes edits. Before locking, saving direction requires fresh stakes review. After locking, it requires a new script review; existing dice stay fixed.</p>
+    <summary>Note for the AI</summary>
+    <p>Only you see this. The AI reads it the next time it plans or writes this beat; saving clears the current draft, and the dice stay the same.</p>
     <p v-if="gate" class="notice">{{ gate }}</p>
     <p v-if="notice" role="status" class="notice">{{ notice }}</p>
     <template v-if="captured">
-      <p v-if="stale" class="notice">The active beat changed while you were editing. Your unsaved words are preserved. Copy anything you want to keep before loading the saved direction.<button type="button" class="quiet" data-testid="reload-beat-steering" :disabled="locked" @click="reload">Reload saved direction</button></p>
-      <label>Direction for this beat<textarea v-model="text" data-testid="beat-steering-text" :aria-describedby="helpId" :disabled="locked" maxlength="3000" rows="4" /></label>
-      <p :id="helpId" class="field-help">Give private guidance for this active beat. Save explicitly to use it on the next generation; clearing saves an empty direction. This does not apply to future beats.</p>
-      <p v-if="dirty" class="muted">Unsaved private direction</p>
+      <p v-if="stale" class="notice">The active beat changed while you were editing. Your unsaved words are preserved. Copy anything you want to keep before loading the saved note.<button type="button" class="quiet" data-testid="reload-beat-steering" :disabled="locked" @click="reload">Reload saved note</button></p>
+      <label>Note for this beat<textarea v-model="text" data-testid="beat-steering-text" :aria-describedby="helpId" :disabled="locked" maxlength="3000" rows="4" /></label>
+      <p :id="helpId" class="field-help">Guidance for this beat only; saving an empty note clears it.</p>
+      <p v-if="dirty" class="muted">Unsaved note</p>
       <p v-if="error" role="alert" class="notice error">{{ error }}</p>
-      <div class="actions"><button type="button" data-testid="save-beat-steering" :disabled="locked || stale" @click="save()">{{ busy ? 'Saving…' : 'Save private direction' }}</button><button type="button" class="secondary" data-testid="clear-beat-steering" :disabled="locked || stale" @click="save(true)">Clear saved direction</button></div>
+      <div class="actions"><button type="button" data-testid="save-beat-steering" :disabled="locked || stale" @click="save()">{{ busy ? 'Saving…' : 'Save note' }}</button><button type="button" class="secondary" data-testid="clear-beat-steering" :disabled="locked || stale" @click="save(true)">Clear note</button></div>
     </template>
   </details>
 </template>

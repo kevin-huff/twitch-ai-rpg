@@ -1,81 +1,30 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue';
-import { CharacterCardDefinitionSchema } from '@rpg/contracts';
-import type { CardGenerationResponse, Character, CharacterCardDefinition, Command, DirectorSnapshot, FieldGenerationCharacterContext, FieldGenerationRequest, FieldGenerationResponse, PictureIdResponse, PlayerSnapshot, PortraitDetails } from '@rpg/contracts';
-import CharacterForm from './CharacterForm.vue';
-import PictureAvatar from './PictureAvatar.vue';
+import type { Command, DirectorSnapshot, PlayerSnapshot } from '@rpg/contracts';
+import CastSeats from './CastSeats.vue';
 import FieldGenerator from './FieldGenerator.vue';
-import StreamLinks from './StreamLinks.vue';
+import PlayerCard from './PlayerCard.vue';
+import ReadyStrip from './ReadyStrip.vue';
 import SeatInvites from './SeatInvites.vue';
-import { api } from './api';
-import { characterFieldContext } from './field-context';
+import StreamLinks from './StreamLinks.vue';
 import { identityPath } from './identity';
-import { pictureUrl, portraitAlt, portraitIdFor } from './pictures';
 
 const props = defineProps<{ snapshot: DirectorSnapshot | PlayerSnapshot; busy: boolean }>();
 const emit = defineEmits<{ command: [command: Command] }>();
+const castSaving = ref(false);
 const helpPrefix = useId();
 const helpId = (key: string) => `${helpPrefix}-help-${key}`;
 const director = computed(() => props.snapshot.role === 'director' ? props.snapshot : null);
 const player = computed(() => props.snapshot.role === 'player' ? props.snapshot : null);
 const own = computed(() => player.value?.ownCharacter ?? null);
 const setup = computed(() => props.snapshot.setup);
-const writing = computed(() => Boolean(own.value && !own.value.draft && !own.value.approved));
-const briefPremise = computed(() => props.snapshot.session.brief?.premise.trim() ?? '');
 const editable = computed(() => Boolean(setup.value && !setup.value.started && props.snapshot.session.status === 'lobby'));
-const form = ref<CharacterCardDefinition | null>(null);
-const formCharacterId = ref('');
-const formRevision = ref(0);
-const formBaseline = ref('');
-const cardKey = (card: CharacterCardDefinition) => { const { extensions, portraitId, ...rest } = card; return JSON.stringify({ ...rest, displayName: card.displayName.trim(), possessions: card.possessions.map(value => value?.trim() ?? '').filter(Boolean), portraitId: portraitId ?? null, extensions }); };
-const dirty = computed(() => Boolean(form.value && cardKey(form.value) !== formBaseline.value));
-const error = ref('');
-const pronounsPending = ref(false);
-const changedElsewhere = ref(false);
-const acknowledged = ref(false);
+const seats = computed(() => (director.value?.characterDetails ?? []).map(character => ({ id: character.id, displayName: character.displayName, hasCard: character.approved && !character.draft })));
 const boundariesText = ref('');
 const boundaryBaseline = ref('');
 const boundariesDirty = computed(() => boundariesText.value !== boundaryBaseline.value);
 const boundariesChangedElsewhere = ref(false);
-const overrideReason = ref('');
-const isWaiting = (character: { draft?: unknown; approved: boolean }) => !character.draft && !character.approved;
-const anyWaiting = computed(() => director.value?.characterDetails.some(isWaiting) ?? false);
-const allApproved = computed(() => props.snapshot.characters.every(character => character.approved) && (director.value?.characterDetails.every(character => !character.draft) ?? true));
-const allReady = computed(() => props.snapshot.characters.every(character => character.ready));
-const isReady = computed(() => own.value?.ready && own.value.acceptedBoundariesRevision === setup.value?.boundariesRevision);
-const canReady = computed(() => own.value?.approved && !own.value.draft && (setup.value?.started || !dirty.value));
-const picturesOn = computed(() => props.snapshot.picturesEnabled === true);
-const portraitSrc = (portraitId: string | null | undefined) => portraitId ? pictureUrl({ kind: 'session', sessionId: props.snapshot.session.id }, portraitId) : null;
-const castPortrait = (characterId: string) => portraitSrc(portraitIdFor(props.snapshot, characterId));
-const reviewPortrait = (character: Character) => picturesOn.value ? portraitSrc((character.draft ?? character).portraitId) : null;
-const portraitUrlFor = (imageId: string) => pictureUrl({ kind: 'session', sessionId: props.snapshot.session.id }, imageId);
-const brokenReview = ref<string[]>([]);
-const reviewShown = (character: Character) => { const src = reviewPortrait(character); return !!src && !brokenReview.value.includes(src); };
-const markReviewBroken = (character: Character) => { const src = reviewPortrait(character); if (src && !brokenReview.value.includes(src)) brokenReview.value = [...brokenReview.value, src]; };
-watch(() => (director.value?.characterDetails ?? []).map(reviewPortrait), sources => {
-  const kept = brokenReview.value.filter(src => sources.includes(src));
-  if (kept.length !== brokenReview.value.length) brokenReview.value = kept;
-});
 const sessionPath = (view: string) => identityPath(`/sessions/${encodeURIComponent(props.snapshot.session.id)}/${view}`);
-const testSeatUrl = (characterId: string) => identityPath(`/sessions/${encodeURIComponent(props.snapshot.session.id)}/play?testCharacterId=${encodeURIComponent(characterId)}`);
-function characterCard(character: Character): CharacterCardDefinition {
-  if (!character.draft && !character.approved) return { schemaVersion: 1, displayName: '', pronouns: '', appearance: '', personality: '', backstory: '', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, specialty: '', flaw: '', possessions: ['', '', ''], connection: '', secret: '', extensions: {} };
-  if (character.draft) return JSON.parse(JSON.stringify(character.draft));
-  return CharacterCardDefinitionSchema.parse({ schemaVersion: 1, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance, personality: character.personality, backstory: character.backstory, traits: character.traits, specialty: character.specialty, flaw: character.flaw, possessions: character.possessions.slice(0, 3).filter(Boolean), connection: character.connection, secret: character.secret, extensions: {}, portraitId: character.portraitId });
-}
-function resetDraft() {
-  if (!own.value) return;
-  form.value = characterCard(own.value); formBaseline.value = cardKey(form.value); formRevision.value = own.value.cardRevision;
-  formCharacterId.value = own.value.id; changedElsewhere.value = false; error.value = ''; pronounsPending.value = false;
-}
-watch([() => own.value?.id, () => own.value?.cardRevision, () => setup.value?.scenario.templateId], () => {
-  if (!own.value || !setup.value) { form.value = null; return; }
-  const incoming = characterCard(own.value);
-  if (!form.value || own.value.id !== formCharacterId.value || !dirty.value || cardKey(incoming) === cardKey(form.value)) resetDraft();
-  else if (writing.value && cardKey(incoming) === formBaseline.value) formRevision.value = own.value.cardRevision;
-  else changedElsewhere.value = true;
-}, { immediate: true });
-watch([() => setup.value?.boundariesRevision, () => own.value?.cardRevision, () => own.value?.id], () => { acknowledged.value = false; });
 watch(() => setup.value?.boundariesRevision, () => {
   const next = setup.value?.boundaries.join('\n') ?? '';
   if (!boundariesDirty.value || next === boundariesText.value) resetBoundaries();
@@ -85,75 +34,50 @@ function resetBoundaries() {
   boundariesText.value = setup.value?.boundaries.join('\n') ?? '';
   boundaryBaseline.value = boundariesText.value; boundariesChangedElsewhere.value = false;
 }
-function send(command: Command) { error.value = ''; emit('command', command); }
-async function generateField(request: FieldGenerationRequest): Promise<FieldGenerationResponse> {
-  const supplied = request.characterContext ?? (form.value ? characterFieldContext(form.value) : undefined);
-  if (!editable.value || !supplied || supplied.kind !== 'character') throw new Error('This character card is unavailable for generation.');
-  const characterContext: Extract<FieldGenerationCharacterContext, { kind: 'character' }> = supplied;
-  return api.generateSeatField(props.snapshot.session.id, { expectedCharacterRevision: formRevision.value, field: request.field, seed: request.seed, characterContext, usePremise: request.premise !== undefined });
-}
-async function generatePortrait(details: PortraitDetails): Promise<PictureIdResponse> {
-  if (!editable.value) throw new Error('This character card is unavailable for generation.');
-  return api.createSeatPortrait(props.snapshot.session.id, { expectedCharacterRevision: formRevision.value, details });
-}
-async function generateCard(input: { prompt: string; keepFilled: boolean; current: FieldGenerationCharacterContext }): Promise<CardGenerationResponse> {
-  const current = input.current;
-  if (!editable.value || current.kind !== 'character') throw new Error('This character card is unavailable for generation.');
-  return api.generateSeatCard(props.snapshot.session.id, { expectedCharacterRevision: formRevision.value, prompt: input.prompt, keepFilled: input.keepFilled, current });
-}
-function saveCard() {
-  if (!form.value || !editable.value || pronounsPending.value) return;
-  try {
-    const card = CharacterCardDefinitionSchema.parse({ ...form.value, possessions: form.value.possessions.filter(value => value?.trim()) });
-    send({ type: 'save_character', commandId: crypto.randomUUID(), expectedCharacterRevision: formRevision.value, card });
-  } catch { error.value = 'Give your character a name, and give the four traits one +2, two +1 and one +0. Nothing has been submitted.'; }
-}
-function approve(character: Character) { send({ type: 'approve_character', commandId: crypto.randomUUID(), characterId: character.id, expectedCharacterRevision: character.cardRevision }); }
-function ready() {
-  if (!own.value || !setup.value || (!isReady.value && (!canReady.value || !acknowledged.value))) return;
-  send({ type: 'set_ready', commandId: crypto.randomUUID(), expectedCharacterRevision: own.value.cardRevision, expectedBoundariesRevision: setup.value.boundariesRevision, ready: !isReady.value });
-}
 function saveBoundaries() {
   if (boundariesChangedElsewhere.value) return;
-  send({ type: 'set_boundaries', commandId: crypto.randomUUID(), expectedStateRevision: props.snapshot.session.stateRevision, boundaries: boundariesText.value.split('\n').map(line => line.trim()).filter(Boolean) });
+  emit('command', { type: 'set_boundaries', commandId: crypto.randomUUID(), expectedStateRevision: props.snapshot.session.stateRevision, boundaries: boundariesText.value.split('\n').map(line => line.trim()).filter(Boolean) });
 }
 function start() {
-  if (!allApproved.value || (!allReady.value && !overrideReason.value.trim())) return;
-  send({ type: 'start_session', commandId: crypto.randomUUID(), expectedStateRevision: props.snapshot.session.stateRevision, ...(!allReady.value ? { overrideUnreadyReason: overrideReason.value.trim() } : {}) });
+  emit('command', { type: 'start_session', commandId: crypto.randomUUID(), expectedStateRevision: props.snapshot.session.stateRevision });
 }
 </script>
 
 <template>
-  <section class="panel lobby"><p class="eyebrow">The cast</p><h2>{{ setup ? 'Get ready for your story.' : 'Meet your accomplices.' }}</h2>
+  <section class="panel lobby">
+    <ReadyStrip v-if="director" :session-id="snapshot.session.id" :seats="seats" :show-start="editable" :busy="busy || castSaving" :links-key="snapshot.eventSeq" @start="start" />
+    <h2>Cast &amp; lobby</h2>
     <div v-if="snapshot.session.brief" class="session-brief"><p>{{ snapshot.session.brief.premise }}</p><p class="muted">{{ snapshot.session.brief.genre }} · {{ snapshot.session.brief.tone }}</p><h3 v-if="snapshot.session.brief.objectives.length">Objectives</h3><ul><li v-for="objective in snapshot.session.brief.objectives" :key="objective">{{ objective }}</li></ul><h3 v-if="snapshot.session.brief.playerHooks.length">Connections to the story</h3><ul><li v-for="hook in snapshot.session.brief.playerHooks" :key="hook">{{ hook }}</li></ul></div>
-    <div class="cast"><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="castPortrait(character.id)" /><div><strong>{{ character.displayName }}</strong><small>{{ character.approved ? 'Approved character' : 'Awaiting approval' }} · {{ setup ? character.ready ? 'Ready' : 'Not ready' : `Strain ${character.strain}/4` }}</small><p class="muted">{{ character.appearance }}</p><a v-if="director" :href="testSeatUrl(character.id)" target="_blank" rel="noopener">Test as {{ character.displayName }} ↗</a></div></div></div>
-    <p v-if="director" class="notice">Testing on your own? Open each character in a new tab. Every tab keeps its own seat, and player invitations remain available for your cast.</p>
-    <StreamLinks v-if="director" :session-id="snapshot.session.id" :characters="snapshot.characters" />
-    <SeatInvites v-if="director" :session-id="snapshot.session.id" :characters="snapshot.characters" />
-    <template v-if="setup">
-      <section class="lobby-section"><h3>Content boundaries</h3><template v-if="director && editable"><p v-if="boundariesChangedElsewhere" class="notice">The saved boundaries changed while you were editing. Your unsaved text is preserved. Copy any changes you want to keep, then review the latest boundaries before saving.<button class="quiet" data-testid="load-boundaries" @click="resetBoundaries">Load latest saved boundaries</button></p><label>One boundary per line<textarea :aria-describedby="helpId('boundaries')" v-model="boundariesText" data-testid="boundaries" rows="4" /></label><p :id="helpId('boundaries')" class="field-help">Record the table’s agreed restrictions for players to review and the AI to follow. Saving a change clears everyone’s readiness; each player must accept the new version.</p><FieldGenerator v-model="boundariesText" field="scenario.boundaries" :context-key="`${snapshot.session.id}:${setup.boundariesRevision}:${editable}`" :disabled="busy || boundariesChangedElsewhere" /><button :disabled="busy || !boundariesDirty || boundariesChangedElsewhere" class="secondary" data-testid="save-boundaries" @click="saveBoundaries">Save boundaries</button></template><template v-else><ul v-if="setup.boundaries.length"><li v-for="boundary in setup.boundaries" :key="boundary">{{ boundary }}</li></ul><p v-else class="muted">No additional boundaries have been recorded. Check in with the table before starting.</p></template></section>
-      <section v-if="player && own" class="lobby-section"><h3>{{ writing ? 'Write your character' : 'Your character card' }}</h3><template v-if="editable && form"><p v-if="writing" class="muted" data-testid="write-character-guidance">This seat has no character yet. Write one yourself, or press Create the whole card with AI for a first draft. When you are happy with it, press Submit card for approval.</p><p class="muted">Your draft and private secret are visible to you and the director. Only approved public details are shown to the rest of the cast.</p><p v-if="changedElsewhere" class="notice">This card changed while you were editing. Your unsaved words are preserved. Review the latest saved card before replacing it.<button class="quiet" @click="resetDraft">Load latest saved card</button></p><CharacterForm v-model="form" v-model:pronouns-pending="pronounsPending" :disabled="busy" generation-enabled :generation-context="`${own.id}:${formRevision}`" :premise="briefPremise || undefined" premise-label="Story premise" :generate="generateField" :generate-card="generateCard" :card-generation-note="briefPremise ? 'The story\'s premise is sent too.' : undefined" :pictures-enabled="picturesOn" :generate-portrait="generatePortrait" :portrait-url="portraitUrlFor" /><p v-if="pronounsPending" class="notice" data-testid="pronouns-pending-notice">Check the pronouns the AI suggested first. Press Keep these pronouns, or change the Pronouns box.</p><p v-if="error" role="alert" class="notice error">{{ error }}</p><button :disabled="busy || pronounsPending" data-testid="save-character-draft" @click="saveCard">Submit card for approval</button><small v-if="dirty">Unsaved card changes · not submitted automatically</small></template><template v-else><h3>{{ own.displayName }}</h3><p>{{ own.appearance }}</p><p class="private-note">{{ own.secret }}</p><p class="muted">Character cards are fixed once the session starts.</p></template>
-        <div v-if="snapshot.session.status !== 'ended'" class="ready-box"><p>{{ own.approved && !own.draft ? 'Your card is approved.' : 'The director must approve your latest card before you can mark ready.' }}</p><label v-if="!isReady" class="check"><input :aria-describedby="helpId('accept')" v-model="acknowledged" data-testid="accept-boundaries" type="checkbox" :disabled="busy || !canReady">I reviewed my approved card and accept the current content boundaries.</label><p v-if="!isReady" :id="helpId('accept')" class="field-help">Confirms you accept this approved card and boundary version before marking ready. Card or boundary changes require a fresh review.</p><button data-testid="ready-character" :disabled="busy || (!isReady && (!canReady || !acknowledged))" @click="ready">{{ isReady ? 'Withdraw readiness' : 'Mark ready' }}</button><p v-if="isReady" class="notice">You are ready for this version of the boundaries.</p></div>
-      </section>
-      <section v-if="director" class="lobby-section"><h3>Review the cast</h3><article v-for="character in director.characterDetails" :key="character.id" class="card-review"><img v-if="reviewShown(character)" class="review-portrait" :src="reviewPortrait(character)!" :alt="portraitAlt(character.draft?.displayName ?? character.displayName)" @error="markReviewBroken(character)" /><h3>{{ character.draft?.displayName ?? character.displayName }}</h3><small>Card revision {{ character.cardRevision }} · {{ character.draft ? 'Draft awaiting approval' : character.approved ? 'Approved' : 'Awaiting approval' }}</small><p v-if="isWaiting(character)" class="muted" :data-testid="`waiting-for-card-${character.id}`">Waiting for this player's card</p><dl v-else><template v-for="field in (['pronouns', 'appearance', 'personality', 'backstory', 'specialty', 'flaw', 'connection', 'secret'] as const)" :key="field"><dt>{{ field === 'secret' ? 'Private secret' : field }}</dt><dd>{{ (character.draft ?? character)[field] || '—' }}</dd></template><dt>Traits</dt><dd><span v-for="(value, trait) in (character.draft ?? character).traits" :key="trait">{{ trait }} +{{ value }} &nbsp;</span></dd><dt>Possessions</dt><dd>{{ (character.draft ?? character).possessions.join(', ') }}</dd></dl><button v-if="editable && !isWaiting(character) && (!character.approved || character.draft)" :disabled="busy" :data-testid="`approve-character-${character.id}`" @click="approve(character)">Approve {{ character.draft?.displayName ?? character.displayName }}</button></article>
-        <div v-if="editable" class="start-box"><p v-if="!allApproved" class="notice">Approve every character card before starting.</p><p v-if="anyWaiting" class="muted" data-testid="absent-player-hint">If a player can't come, open their Test as link at the top of this page. Write the card in that tab and press Submit card for approval, then approve it here.</p><label v-if="!allReady">Reason to start with missing players<textarea :aria-describedby="helpId('override')" v-model="overrideReason" data-testid="override-unready" rows="2" placeholder="Optional: explain why the show can start while a seat is not ready." /></label><p v-if="!allReady" :id="helpId('override')" class="field-help">A private record of why you are starting before everyone is ready. Every card must still be approved.</p><p class="muted">Unready players must still accept the current boundaries before submitting in-character dialogue or actions.</p><button data-testid="start-session" :disabled="busy || !allApproved || boundariesDirty || (!allReady && !overrideReason.trim())" @click="start">Start session</button></div><p v-else class="notice">The session has started. Late arrivals can review their approved card and accept the current boundaries here.</p>
-      </section>
+    <template v-if="director">
+      <CastSeats :snapshot="director" :busy="busy" :editable="editable" @command="emit('command', $event)" @saving="castSaving = $event" />
+      <p class="notice">Testing on your own? Open each character in a new tab. Every tab keeps its own seat, and player invitations remain available for your cast.</p>
+      <details v-if="setup && editable" class="lobby-section boundaries-section" data-testid="boundaries-section"><summary>What the AI won't write</summary>
+        <p v-if="boundariesChangedElsewhere" class="notice">The saved list changed while you were editing. Your unsaved text is preserved. Copy any changes you want to keep, then review the latest list before saving.<button class="quiet" data-testid="load-boundaries" @click="resetBoundaries">Load latest saved list</button></p>
+        <label>One per line<textarea :aria-describedby="helpId('boundaries')" v-model="boundariesText" data-testid="boundaries" rows="4" /></label>
+        <p :id="helpId('boundaries')" class="field-help">One per line. The AI stays away from these when it writes. Players never see this list.</p>
+        <FieldGenerator v-model="boundariesText" field="scenario.boundaries" :context-key="`${snapshot.session.id}:${setup.boundariesRevision}:${editable}`" :disabled="busy || boundariesChangedElsewhere" />
+        <button :disabled="busy || !boundariesDirty || boundariesChangedElsewhere" class="secondary" data-testid="save-boundaries" @click="saveBoundaries">Save boundaries</button>
+      </details>
+      <StreamLinks :session-id="snapshot.session.id" :characters="snapshot.characters" />
+      <SeatInvites :session-id="snapshot.session.id" :characters="snapshot.characters" />
     </template>
-    <StreamLinks v-if="player && own" mode="player" :session-id="snapshot.session.id" :characters="snapshot.characters" :own-character-id="own.id" />
+    <template v-else-if="player">
+      <h3>The cast</h3>
+      <ul class="cast-list" data-testid="lobby-cast"><li v-for="character in snapshot.characters" :key="character.id">{{ character.approved ? character.displayName : `${character.displayName} · waiting` }}</li></ul>
+      <PlayerCard :snapshot="player" :busy="busy" @command="emit('command', $event)" />
+      <StreamLinks v-if="own" mode="player" :session-id="snapshot.session.id" :characters="snapshot.characters" :own-character-id="own.id" />
+    </template>
     <p class="muted">Keep your voice call open. Anyone can ask for a pause.</p>
-    <a v-if="!setup || setup.started" class="button" :href="sessionPath(director ? 'director' : 'play')">Enter the scene</a>
-    <p v-else class="muted">The director starts the session after the cast is approved and ready.</p>
+    <a v-if="!setup || setup.started" class="button" data-testid="back-to-show" :href="sessionPath(director ? 'director' : 'play')">Back to the show</a>
+    <p v-else class="muted">The director starts the show when every seat has a card.</p>
   </section>
 </template>
 
 <style scoped>
 .lobby-section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
 .session-brief { margin: 1.5rem 0; }
-.card-review { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
-.review-portrait { float: right; width: 6rem; height: 6rem; object-fit: cover; border-radius: 8px; margin: 0 0 .5rem 1rem; }
-.card-review dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 4fr); gap: .4rem 1rem; }
-.card-review dt { color: var(--muted); text-transform: capitalize; }
-.card-review dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ready-box, .start-box { margin: 1.5rem 0; }
+.cast-list { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .35rem; }
+.boundaries-section > summary { cursor: pointer; }
+.boundaries-section[open] > summary { margin-bottom: 1rem; }
 .lobby > .muted { margin-top: 1.5rem; }
 </style>

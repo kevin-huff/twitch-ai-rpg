@@ -14,6 +14,18 @@ const t = (id: string) => `[data-testid="gallery-${id}"]`;
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 
 describe('GalleryPanel', () => {
+  it('keeps the link outside a closed More gallery options fold that holds the rest', () => {
+    const w = mountPanel(status({ local: true }));
+    const fold = w.get(t('more'));
+    expect(fold.element.tagName).toBe('DETAILS');
+    expect((fold.element as HTMLDetailsElement).open).toBe(false);
+    expect(fold.get('summary').text()).toBe('More gallery options');
+    for (const id of ['list', 'list-url', 'rewrite', 'new-link', 'off', 'local']) expect(fold.find(t(id)).exists()).toBe(true);
+    for (const id of ['status', 'url', 'copy']) expect(fold.find(t(id)).exists()).toBe(false);
+    expect(w.find(t('url')).exists() && w.find(t('copy')).exists() && w.find(t('status')).exists()).toBe(true);
+    expect(mountPanel(status({ listed: true })).get(t('more')).find(t('unlist')).exists()).toBe(true);
+    expect(mountPanel(status({ state: 'off', url: null })).find(t('more')).exists()).toBe(false);
+  });
   it('renders nothing without a status', () => {
     expect(mountPanel(null).find(t('panel').replace('gallery-panel', 'gallery-panel')).exists()).toBe(false);
   });

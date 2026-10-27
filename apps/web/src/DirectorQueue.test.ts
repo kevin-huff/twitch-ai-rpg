@@ -68,4 +68,19 @@ describe('DirectorQueue', () => {
     await wrapper.get('input').setValue(true);
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([['s']]);
   });
+
+  it('uses the cast heading and counts lines and questions', () => {
+    const two = mountQueue([sub('a', 'say'), sub('b', 'act'), sub('q', 'ooc')]);
+    expect(two.get('h2').text()).toBe('Lines from the cast');
+    expect(two.get('.status').text()).toBe('2 lines waiting · 1 question');
+    const one = mountQueue([sub('a', 'say')]);
+    expect(one.get('.status').text()).toBe('1 line waiting');
+    const none = mountQueue([sub('q', 'ooc'), sub('r', 'ooc')]);
+    expect(none.get('.status').text()).toBe('No lines waiting · 2 questions');
+  });
+
+  it('explains that lines arrive ticked', () => {
+    const wrapper = mountQueue([sub('s', 'say')]);
+    expect(wrapper.get('.queue-hint').text()).toBe('Lines arrive ticked. Untick any you want to leave for later. Questions and pause requests are never ticked.');
+  });
 });

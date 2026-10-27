@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   AiSegmentSchema,
+  CharacterSchema,
   CommandSchema,
+  InvitePreviewRequestSchema,
+  InvitePreviewResponseSchema,
+  PublicCharacterSchema,
   NpcKnowledgeSchema,
   RedeemResponseSchema,
   SessionSnapshotSchema,
@@ -74,5 +78,43 @@ describe('stage projection contract', () => {
     expect(SessionSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(SessionSnapshotSchema.safeParse({ ...snapshot, directorNotes: 'Secret ledger location.' }).success).toBe(false);
     expect(SessionSnapshotSchema.safeParse({ ...snapshot, role: 'player' }).success).toBe(false);
+  });
+});
+
+describe('Sprint A contracts', () => {
+  const base = { id: 'c1', displayName: 'Ana', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 0 };
+  it('cardSource is optional and limited to host or player', () => {
+    const char = base;
+    expect(CharacterSchema.safeParse(char).success).toBe(true);
+    expect(CharacterSchema.safeParse({ ...char, cardSource: 'host' }).success).toBe(true);
+    expect(CharacterSchema.safeParse({ ...char, cardSource: 'player' }).success).toBe(true);
+    expect(CharacterSchema.safeParse({ ...char, cardSource: 'ai' }).success).toBe(false);
+    const parsed = CharacterSchema.parse({ ...char, cardSource: 'host' });
+    expect(PublicCharacterSchema.shape).not.toHaveProperty('cardSource');
+    const { id, displayName, traits, strain, appearance, approved, ready, portraitId } = parsed;
+    const pub = PublicCharacterSchema.parse({ id, displayName, traits, strain, appearance, approved, ready, portraitId });
+    expect(pub).not.toHaveProperty('cardSource');
+    expect(PublicCharacterSchema.safeParse({ ...pub, cardSource: 'host' }).success).toBe(false);
+  });
+  const cmd = { commandId: 'cmd-1' };
+  it('save_character takes an optional characterId', () => {
+    const card = { schemaVersion: 1, displayName: 'Nia', traits: base.traits, possessions: ['scanner'] };
+    const without = CommandSchema.safeParse({ type: 'save_character', ...cmd, expectedCharacterRevision: 0, card });
+    const withId = CommandSchema.safeParse({ type: 'save_character', ...cmd, expectedCharacterRevision: 0, card, characterId: 'c1' });
+    expect(without.success).toBe(true);
+    expect(withId.success).toBe(true);
+  });
+  it('remove_seat parses and is strict', () => {
+    const ok = { type: 'remove_seat', ...cmd, expectedStateRevision: 0, characterId: 'c1' };
+    expect(CommandSchema.safeParse(ok).success).toBe(true);
+    expect(CommandSchema.safeParse({ ...ok, characterId: undefined }).success).toBe(false);
+    expect(CommandSchema.safeParse({ ...ok, extra: 1 }).success).toBe(false);
+  });
+  it('invite preview schemas accept valid input and reject extras', () => {
+    expect(InvitePreviewRequestSchema.safeParse({ token: 'abc' }).success).toBe(true);
+    expect(InvitePreviewRequestSchema.safeParse({ token: 'abc', x: 1 }).success).toBe(false);
+    expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'player', characterName: 'Ana' }).success).toBe(true);
+    expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'stage' }).success).toBe(true);
+    expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'stage', x: 1 }).success).toBe(false);
   });
 });

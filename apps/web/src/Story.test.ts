@@ -37,4 +37,10 @@ describe('published correction ledger', () => {
     expect(wrapper.find('[aria-label="Published corrections"]').exists()).toBe(false);
     expect(wrapper.text()).toContain(latest.segments[0].text);
   });
+
+  it('names a system line The show', () => {
+    const system = { ...latest, segments: [{ ...latest.segments[0], kind: 'system' as const, text: 'The show was paused.' }] };
+    const wrapper = mount(Story, { props: { history: [system], characters: [] } });
+    expect(wrapper.get('.speaker').text()).toBe('The show');
+  });
 });

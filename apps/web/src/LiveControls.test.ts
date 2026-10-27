@@ -182,7 +182,7 @@ describe('live field drafting', () => {
           await control.get(field('field-generator-source')).setValue('premise');
           expect((control.get(field('field-generator-premise')).element as HTMLTextAreaElement).value).toBe(current.session.brief!.premise);
           expect(control.get(field('field-generator-premise')).attributes('readonly')).toBeDefined();
-          expect(control.text()).toContain('Session scenario: Test show');
+          expect(control.text()).toContain('Show scenario: Test show');
         } else expect(control.find(field('field-generator-source')).exists()).toBe(false);
         await control.get(field('field-generator-cancel')).trigger('click');
       }
@@ -365,6 +365,22 @@ describe('live director controls', () => {
     await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, status: 'ended' } } });
     expect(wrapper.get(field('begin-scene')).attributes('disabled')).toBeDefined(); wrapper.unmount();
   });
+  it('explains the live-change gate for a practice show before its first beat, an ended show and an unstarted setup', async () => {
+    const current = snapshot(); const wrapper = mount(LiveControls, { props: { snapshot: current, busy: false } });
+    const firstBeat = "Live changes start after the show's first beat. Open a conversation or an action round first.";
+    await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, status: 'lobby' } } });
+    expect(wrapper.get(field('begin-scene')).attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain(firstBeat);
+    expect(wrapper.text()).not.toContain('while the session is live or paused');
+    await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, status: 'lobby' }, setup: { started: true, boundaries: [], boundariesRevision: 0, scenario: { templateId: 'scenario', version: 1 } } } });
+    expect(wrapper.text()).toContain(firstBeat);
+    await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, status: 'ended' } } });
+    expect(wrapper.text()).toContain('The show has ended.');
+    expect(wrapper.text()).not.toContain(firstBeat);
+    await wrapper.setProps({ snapshot: { ...current, setup: { started: false, boundaries: [], boundariesRevision: 0, scenario: { templateId: 'scenario', version: 1 } } } });
+    expect(wrapper.text()).toContain('Start the show from Cast & lobby before making live changes.');
+    expect(wrapper.text()).not.toMatch(/\bsession\b|\btable\b/i); wrapper.unmount();
+  });
   it('requires explicit input cancellation acknowledgement and emits a complete new-location scene command', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     await begin(wrapper, 'scene');
@@ -386,7 +402,7 @@ describe('live director controls', () => {
     await wrapper.get(field('scene-description')).setValue('My unfinished\n\nscene');
     await wrapper.setProps({ snapshot: { ...current, session: { ...current.session, stateRevision: 8, scene: { ...current.session.scene, description: 'Saved elsewhere' } } } });
     expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('My unfinished\n\nscene');
-    expect(wrapper.text()).toContain('The table changed'); expect(wrapper.get(field('save-live')).attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain('The show changed'); expect(wrapper.get(field('save-live')).attributes('disabled')).toBeDefined();
     await wrapper.get('form').trigger('submit'); expect(wrapper.emitted('command')).toBeUndefined();
     await wrapper.get(field('reload-live')).trigger('click');
     expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('Saved elsewhere');
@@ -469,7 +485,7 @@ describe('published reveals in every audience', () => {
     if (accepted) transport.snapshot.mockResolvedValue({ ...current, session: { ...current.session, stateRevision: 8 } });
     else transport.command.mockRejectedValueOnce(new Error('The scene could not be saved.'));
     await controls.get('form').trigger('submit'); await flushPromises();
-    if (accepted) { expect(controls.find('form').exists()).toBe(false); expect(controls.text()).toContain('Scene changed.'); expect(controls.text()).not.toContain('The table changed'); }
+    if (accepted) { expect(controls.find('form').exists()).toBe(false); expect(controls.text()).toContain('Scene changed.'); expect(controls.text()).not.toContain('The show changed'); }
     else { expect((controls.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('Unsaved scene words'); expect(wrapper.get('[role="alert"]').text()).toContain('The scene could not be saved.'); }
     wrapper.unmount();
   });

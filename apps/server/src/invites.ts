@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { PoolClient } from 'pg';
-import { InviteLinkSchema, InviteSummarySchema, ReissueInviteSchema } from '@rpg/contracts';
+import { InviteLinkSchema, InvitePreviewRequestSchema, InvitePreviewResponseSchema, InviteSummarySchema, ReissueInviteSchema } from '@rpg/contracts';
 import { transaction } from './database';
 import { AppError, authorize, conflict, type Actor } from './repository';
 import { digest, recordEvent } from './commands';
@@ -51,6 +51,16 @@ export function registerInvites(app: FastifyInstance, deps: AccessRouteDeps) {
     if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the host or a producer can manage invitations.');
     return actor;
   };
+
+  app.post('/api/auth/invite-preview', async (request) => {
+    const { token } = InvitePreviewRequestSchema.parse(request.body);
+    const row = (await deps.pool.query<{ title: string; role: 'player' | 'stage'; data: { displayName?: string; approved?: boolean; draft?: unknown } | null }>(
+      `SELECT s.title,i.role,ch.data FROM invites i JOIN sessions s ON s.id=i.session_id LEFT JOIN characters ch ON ch.id=i.character_id
+       WHERE i.token_hash=$1 AND i.expires_at>now() AND i.redeemed_at IS NULL AND i.revoked_at IS NULL`, [hash(token)])).rows[0];
+    if (!row) throw new AppError(401, 'unauthorized', 'This invitation is expired, already redeemed, or invalid.');
+    const hasCard = row.role === 'player' && row.data?.approved === true && !row.data.draft && !!row.data.displayName;
+    return InvitePreviewResponseSchema.parse({ title: row.title, role: row.role, ...(hasCard ? { characterName: row.data!.displayName } : {}) });
+  });
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id/invites', async (request) => {
     const actor = await director(request);

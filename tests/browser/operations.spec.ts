@@ -9,17 +9,19 @@ async function api(page: Page, path: string, body?: unknown) {
   }, { path, body });
 }
 
-test('director sees real task progress, unlimited limits and durable recorded usage', async ({ page, context }) => {
+test('director sees real task progress, real status and durable recorded usage', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2];
   const path = `/sessions/${sessionId}`;
   const panel = page.getByTestId('operations-panel');
+  const openTools = async () => { if (!(await panel.isVisible())) await page.getByTestId('show-tools').locator('summary').first().click(); };
+  await openTools();
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText(/Unlimited/);
+  await expect(panel).not.toContainText(/Limits/);
   await expect(panel).toContainText(/Not reported/);
   let state = (await api(page, path)).body;
   const grant = (await api(page, `${path}/test-seat`, { characterId: state.characters[0].id })).body;
@@ -45,20 +47,25 @@ test('director sees real task progress, unlimited limits and durable recorded us
   await expect(panel.getByTestId('operations-progress')).toContainText(/Rendering|Drafting/);
   await rendering;
   await expect(page.getByTestId('draft-audio-panel')).toBeVisible();
-  await page.getByRole('button', { name: 'Prepare draft narration', exact: true }).click();
-  await expect(panel.getByTestId('operations-progress')).toContainText(/1\s*(?:\/|of)\s*2/);
-  await expect(page.getByRole('button', { name: 'Publish with narration', exact: true })).toBeEnabled();
+  await expect(page.getByTestId('beat-status')).toContainText('Voice ready', { timeout: 30_000 });
+  await expect(page.getByTestId('publish')).toBeEnabled();
   const operations = (await api(page, `${path}/operations`)).body;
   expect(operations.usage.ai).toMatchObject({ attempts: 2, succeeded: 2 });
   expect(operations.usage.speech).toMatchObject({ attempts: 2, succeeded: 2 });
   expect(operations.speech.draft).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
+  await page.getByTestId('script-line-0').click();
   const script = page.getByTestId('script-segment-0');
   await script.fill('An unsaved change survives status polling.');
   await page.waitForResponse(response => response.url().endsWith(`${path}/operations`) && response.request().method() === 'GET' && response.status() === 200);
   await expect(script).toHaveValue('An unsaved change survives status polling.');
   await page.reload();
+  await openTools();
   await expect(panel).toBeVisible();
   expect((await api(page, `${path}/operations`)).body.usage).toEqual(operations.usage);
+  await expect(page.getByTestId('publish')).toBeEnabled({ timeout: 30_000 });
+  await page.getByTestId('publish').click();
+  await expect(page.getByTestId('beat-error')).toHaveCount(0);
+  await expect.poll(async () => (await api(page, path)).body.history.length).toBe(1);
   await page.setViewportSize({ width: 430, height: 920 });
   await panel.locator('summary').click();
   await panel.scrollIntoViewIfNeeded();

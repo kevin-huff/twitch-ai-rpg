@@ -38,7 +38,7 @@ export function createTable() {
 
   const initials = (name: string) => name.split(' ').map(part => part[0]).slice(0, 2).join('').toUpperCase();
   const nameOf = (id: string) => snapshot.value?.characters.find(character => character.id === id)?.displayName ?? 'Player';
-  const phaseName = (phase: string) => ({ collecting: 'Collecting input', stakes_review: 'Review stakes', locked: 'Locked · dice fixed', draft_review: 'Review script', published: 'Published', aborted: 'Aborted' })[phase] ?? phase;
+  const phaseName = (phase: string) => ({ collecting: 'Collecting input', stakes_review: "What's at risk", locked: 'Locked · dice fixed', draft_review: 'Review script', published: 'Published', aborted: 'Aborted' })[phase] ?? phase;
   const effectLabel = (effect: Effect) => {
     if (effect.kind === 'track_delta') return `${snapshot.value?.tracks.find(track => track.id === effect.trackId)?.label ?? 'Track'} ${effect.delta >= 0 ? '+' : ''}${effect.delta}`;
     if (effect.kind === 'strain_delta') return `${nameOf(effect.characterId)} strain ${effect.delta >= 0 ? '+' : ''}${effect.delta}`;
@@ -55,7 +55,7 @@ export function createTable() {
       if (sequence !== refreshSequence) return;
       snapshot.value = next;
       for (const listener of [...listeners]) listener(next);
-    } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load the session.'; }
+    } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load the show.'; }
     finally { loading.value = false; }
   }
 
@@ -91,7 +91,7 @@ export function createTable() {
     await refresh();
     if (snapshot.value && !unsubscribe) {
       try { unsubscribe = subscribeToSession(sessionId, () => { void refresh(); }, value => { connected.value = value; }); }
-      catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not connect to the session.'; }
+      catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not connect to the show.'; }
     }
   }
 

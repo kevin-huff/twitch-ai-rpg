@@ -1,46 +1,37 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, toRaw, useId, watch } from 'vue';
-import type { ActionContract, AiSegment } from '@rpg/contracts';
+import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
+import type { ActionContract, AiSegment, Beat } from '@rpg/contracts';
 import { ActionContractSchema } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
-import FieldGenerator from './FieldGenerator.vue';
+import StakesCards from './StakesCards.vue';
+import ScriptEditor from './ScriptEditor.vue';
 import BeatStepper from './BeatStepper.vue';
-import { STEP_LABELS, beatStep } from './beat-step';
+import type { VoiceState } from './voice-state';
+import { GOLD_LABELS, GOLD_TEST_IDS, beatStep, goldAction, stepPosition, usesActionSteps, type GoldAction } from './beat-step';
 
-const STAGE_GOAL_CHARS = 90;
-const STAGE_OUTCOME_CHARS = 110;
-function stageLength(text: string, limit: number) {
-  const count = text.length;
-  return count > limit
-    ? { over: true, text: `Too long for the stage: it fits about ${limit} characters and this has ${count}. Shorten it so viewers can read all of it.` }
-    : { over: false, text: `On stage: ${count} of ${limit} characters` };
-}
-
-const props = defineProps<{ selected: string[] }>();
+const props = withDefaults(defineProps<{ selected: string[]; showAudio?: 'checking' | 'presenting' | 'none' | 'unknown'; playbackError?: string }>(), { showAudio: 'checking', playbackError: '' });
+const emit = defineEmits<{ published: [beatId: string, voiced: boolean]; 'start-playback': [] }>();
 const selected = computed(() => props.selected);
 
 const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
 
-const { sessionId, stage, snapshot, error, notice, busy, director, work, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
+const { sessionId, stage, snapshot, busy, director, work, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
 
+const MAX_PLANNED_LINES = 12;
 const beat = computed(() => director.value?.activeBeat ?? null);
 const contracts = ref<ActionContract[]>([]);
 const reviewClassification = ref<'ordinary' | 'action'>('ordinary');
 const abortReason = ref('');
-const contractJson = ref('');
 const script = ref<AiSegment[]>([]);
 const scriptEpoch = ref(0);
-const scriptRowKeys = new WeakMap<AiSegment, number>();
-let nextScriptRowKey = 0;
+const scriptEditor = ref<InstanceType<typeof ScriptEditor> | null>(null);
+const steerText = ref('');
+const currentNote = computed(() => { const text = beat.value?.steering?.trim() ?? ''; return /[.!?…]$/.test(text) ? text : `${text}.`; });
 const scriptContext = computed(() => `${sessionId}:${beat.value?.id}:${beat.value?.revision}:${scriptEpoch.value}`);
-function scriptRowKey(segment: AiSegment): number {
-  let key = scriptRowKeys.get(segment);
-  if (key === undefined) { key = ++nextScriptRowKey; scriptRowKeys.set(segment, key); }
-  return key;
-}
-const contractsDirty = computed(() => JSON.stringify(reviewClassification.value === 'ordinary' ? [] : contracts.value) !== JSON.stringify(beat.value?.contracts ?? []) || reviewClassification.value !== beat.value?.classification);
+const savedClassification = computed<'ordinary' | 'action'>(() => beat.value?.classification === 'ordinary' || (!beat.value?.classification && beat.value?.kind === 'conversation') ? 'ordinary' : 'action');
+const contractsDirty = computed(() => JSON.stringify(reviewClassification.value === 'ordinary' ? [] : contracts.value) !== JSON.stringify(beat.value?.contracts ?? []) || reviewClassification.value !== savedClassification.value);
 const scriptDirty = computed(() => JSON.stringify(script.value) !== JSON.stringify(beat.value?.draft?.segments ?? []));
 const rendering = computed(() => director.value?.jobs.some(job => job.beatId === beat.value?.id && job.generation === beat.value?.generation && job.task === 'render' && ['queued', 'running'].includes(job.status)) ?? false);
 const paused = computed(() => snapshot.value?.session.status === 'paused');
@@ -49,45 +40,82 @@ const continuityPending = computed(() => {
   if (!draft || beat.value?.approvedContinuity?.length) return 0;
   return draft.continuity.length;
 });
+const tickedIds = computed(() => {
+  const order = new Map((director.value?.submissions ?? []).map((item, index) => [item.id, index]));
+  return [...selected.value].sort((a, b) => (order.get(a) ?? Infinity) - (order.get(b) ?? Infinity)).slice(0, MAX_PLANNED_LINES);
+});
 const stepInput = computed(() => ({ beat: beat.value, selectedCount: selected.value.length, contractsDirty: contractsDirty.value, scriptDirty: scriptDirty.value, rendering: rendering.value, paused: paused.value, continuityPending: continuityPending.value }));
-const quickLock = computed(() => beatStep(stepInput.value).step === 'stakes' && reviewClassification.value === 'ordinary' && beat.value?.classification !== 'needs_action');
+const ordinary = computed(() => reviewClassification.value === 'ordinary' && beat.value?.classification !== 'needs_action');
+const quickLock = computed(() => ['stakes', 'lock'].includes(beatStep(stepInput.value).step) && ordinary.value);
 const step = computed(() => beatStep(quickLock.value ? { ...stepInput.value, quickLock: true } : stepInput.value));
 const idle = computed(() => !beat.value || ['published', 'aborted'].includes(beat.value.phase));
-const showPlan = computed(() => !idle.value && ['collecting', 'stakes_review'].includes(beat.value!.phase));
 const showStakes = computed(() => !idle.value && (beat.value!.phase === 'stakes_review' || (beat.value!.phase === 'collecting' && beat.value!.selectedSubmissionIds.length > 0 && Boolean(beat.value!.lastError))));
 const showScript = computed(() => !idle.value && ['locked', 'draft_review'].includes(beat.value!.phase));
-type PrimaryAction = 'open' | 'plan' | 'approve' | 'quick' | 'lock' | 'render' | 'save' | 'continuity' | 'publish';
-const primary = computed<PrimaryAction | null>(() => {
-  switch (step.value.step) {
-    case 'open': return 'open';
-    case 'select': case 'plan': return 'plan';
-    case 'stakes': return quickLock.value ? 'quick' : 'approve';
-    case 'lock': return 'lock';
-    case 'draft': return beat.value?.draft ? null : 'render';
-    case 'review': return scriptDirty.value ? 'save' : continuityPending.value ? 'continuity' : null;
-    case 'publish': return 'publish';
+const position = computed(() => stepPosition(step.value.step, idle.value ? false : usesActionSteps(beat.value, showStakes.value ? reviewClassification.value : undefined)));
+const gold = computed<GoldAction>(() => goldAction({ step: step.value.step, beat: idle.value ? null : beat.value, paused: paused.value, ordinary: ordinary.value }));
+
+const barError = ref('');
+const running = ref<{ task: 'plan' | 'render'; since: number } | null>(null);
+const seenJobs = reactive(new Map<string, number>());
+const activeJob = computed(() => idle.value ? null : director.value?.jobs.find(job => job.beatId === beat.value?.id && job.generation === beat.value?.generation && ['queued', 'running'].includes(job.status)) ?? null);
+watch(activeJob, job => { if (job && !seenJobs.has(job.id)) seenJobs.set(job.id, Date.now()); }, { immediate: true });
+const now = ref(Date.now());
+const working = computed(() => running.value ?? (activeJob.value ? { task: activeJob.value.task, since: seenJobs.get(activeJob.value.id) ?? now.value } : null));
+const voice = ref<VoiceState>({ status: 'checking' });
+const skipFacts = ref(false);
+const waiting = ref<{ beatId: string; draftRevision: number } | null>(null);
+const hasDraft = computed(() => Boolean(!idle.value && showScript.value && beat.value?.draft));
+const voicePending = computed(() => voice.value.status === 'checking' || voice.value.status === 'preparing');
+const statusText = computed(() => {
+  const task = working.value;
+  if (task) {
+    const seconds = Math.max(0, Math.floor((now.value - task.since) / 1000));
+    return task.task === 'plan' ? `Planning… ${seconds} s` : `Writing the script… ${seconds} s`;
   }
-  return null;
+  if (waiting.value) return 'Waiting for the voice, then publishing…';
+  if (busy.value || !hasDraft.value || scriptDirty.value || rendering.value || !['review', 'publish'].includes(step.value.step)) return '';
+  if (voicePending.value) return 'Preparing voice…';
+  return voice.value.status === 'ready' ? 'Voice ready' : '';
 });
-const buttonClass = (action: PrimaryAction) => primary.value === action ? undefined : 'secondary';
-const recordingReady = ref(false);
+const chainLabel = ref<string | null>(null);
+const goldLabel = computed(() => chainLabel.value ?? (gold.value === 'publish' && voicePending.value && !scriptDirty.value ? 'Preparing voice…' : GOLD_LABELS[gold.value]));
+const noShowAudio = computed(() => hasDraft.value && voice.value.status !== 'unavailable' && props.showAudio === 'none');
+let ticker: ReturnType<typeof setInterval> | undefined;
+watch(() => Boolean(working.value), active => {
+  if (ticker) { clearInterval(ticker); ticker = undefined; }
+  if (!active) return;
+  now.value = Date.now();
+  ticker = setInterval(() => { now.value = Date.now(); }, 1000);
+}, { immediate: true });
+onUnmounted(() => { if (ticker) clearInterval(ticker); });
+const errorText = computed(() => barError.value || (!idle.value && beat.value?.lastError) || '');
+
+const needsLines = computed(() => ['answer', 'plan-and-draft', 'plan'].includes(gold.value));
+const goldDisabled = computed(() => {
+  if (busy.value) return true;
+  if (gold.value === 'resume') return false;
+  if (needsLines.value && !tickedIds.value.length) return true;
+  if (gold.value === 'publish') return scriptDirty.value || rendering.value || Boolean(working.value) || Boolean(waiting.value) || voice.value.status === 'failed';
+  return Boolean(working.value);
+});
+const locked = computed(() => busy.value || paused.value);
+
 const root = ref<HTMLElement | null>(null);
 const actionsBar = ref<HTMLElement | null>(null);
-const emit = defineEmits<{ step: [name: string] }>();
-watch(() => STEP_LABELS[step.value.step], name => emit('step', name), { immediate: true });
+const more = ref<HTMLDetailsElement | null>(null);
+watch(scriptDirty, dirty => { if (dirty && more.value) more.value.open = true; });
 function focusPrimary() {
   root.value?.scrollIntoView?.({ block: 'start' });
-  const gold = Array.from(actionsBar.value?.querySelectorAll<HTMLButtonElement>('.beat-actions button') ?? []).find(button => !button.disabled && !button.classList.contains('secondary') && !button.classList.contains('quiet'));
-  if (gold) { gold.focus(); return; }
-  const audio = actionsBar.value?.ownerDocument.querySelector<HTMLButtonElement>('[data-testid="publish-draft-audio"]');
-  if (audio && !audio.disabled && root.value?.contains(audio)) { audio.focus(); return; }
+  const goldButton = Array.from(actionsBar.value?.querySelectorAll<HTMLButtonElement>('.beat-actions button') ?? []).find(button => !button.disabled && !button.classList.contains('secondary') && !button.classList.contains('quiet'));
+  if (goldButton) { goldButton.focus(); return; }
   actionsBar.value?.focus();
 }
 defineExpose({ focusPrimary });
-const confirmRegenerate = ref(false);
-const pendingPublish = ref<{ audioPreparationId?: string } | null>(null);
-watch(() => `${beat.value?.id}:${beat.value?.revision}`, () => { confirmRegenerate.value = false; pendingPublish.value = null; });
-watch(contracts, value => { contractJson.value = JSON.stringify(value, null, 2); }, { deep: true });
+const confirmRegenerate = ref<null | 'plain' | 'note' | 'replace'>(null);
+watch(() => `${beat.value?.id}:${beat.value?.revision}`, () => { confirmRegenerate.value = null; });
+watch(() => `${beat.value?.id}:${beat.value?.draftRevision}`, () => { skipFacts.value = false; });
+watch(() => beat.value?.id, () => { barError.value = ''; steerText.value = ''; });
+watch(reviewClassification, value => { if (value === 'action') ensureContracts(); });
 let editorRevision = '';
 
 function applyEditorReset(next: NonNullable<typeof snapshot.value>) {
@@ -98,7 +126,6 @@ function applyEditorReset(next: NonNullable<typeof snapshot.value>) {
       contracts.value = structuredClone(next.activeBeat?.contracts ?? []);
       reviewClassification.value = next.activeBeat?.classification === 'ordinary' || (!next.activeBeat?.classification && next.activeBeat?.kind === 'conversation') ? 'ordinary' : 'action';
       ensureContracts();
-      contractJson.value = JSON.stringify(contracts.value, null, 2);
       script.value = structuredClone(next.activeBeat?.draft?.segments ?? []);
       scriptEpoch.value++;
     }
@@ -113,8 +140,83 @@ function beatMeta() {
   return { commandId: crypto.randomUUID(), beatId: beat.value.id, expectedBeatRevision: beat.value.revision };
 }
 
-function openBeat(mode: 'conversation' | 'action') { return work(() => send({ type: 'open_beat', commandId: crypto.randomUUID(), expectedInputEpoch: snapshot.value!.session.inputEpoch, kind: mode })); }
-function plan() { return work(() => send({ type: 'plan_beat', ...beatMeta(), submissionIds: selected.value })); }
+function runBar(task: () => Promise<void>) {
+  barError.value = '';
+  return work(async () => {
+    try { await task(); }
+    catch (cause) { barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.'; }
+    finally { running.value = null; }
+  });
+}
+function reached(beatId: string, phase: Beat['phase']) {
+  const current = beat.value;
+  return Boolean(current && current.id === beatId && !current.lastError && current.phase === phase);
+}
+async function planStep(submissionIds: string[]) {
+  running.value = { task: 'plan', since: Date.now() };
+  try { await send({ type: 'plan_beat', ...beatMeta(), submissionIds }); } finally { running.value = null; }
+}
+async function renderStep() {
+  running.value = { task: 'render', since: Date.now() };
+  try { await send({ type: 'render_beat', ...beatMeta() }); } finally { running.value = null; }
+}
+async function lockAndDraftSteps(beatId: string) {
+  await send({ type: 'approve_stakes', ...beatMeta(), classification: 'ordinary', contracts: [] });
+  if (!reached(beatId, 'stakes_review') || !beat.value?.stakesApproved) return;
+  await send({ type: 'lock_beat', ...beatMeta() });
+  if (!reached(beatId, 'locked')) return;
+  await renderStep();
+}
+async function planAndDraftSteps(submissionIds: string[]) {
+  if (!submissionIds.length || !beat.value) return;
+  const beatId = beat.value.id;
+  await planStep(submissionIds);
+  if (!reached(beatId, 'stakes_review')) return;
+  const planned = beat.value!;
+  const acts = director.value?.submissions.some(item => planned.selectedSubmissionIds.includes(item.id) && item.kind === 'act') ?? false;
+  if (planned.classification !== 'ordinary' || acts) return;
+  await lockAndDraftSteps(beatId);
+}
+function checkedContracts() {
+  const proposed = reviewClassification.value === 'ordinary' ? [] : contracts.value;
+  if (reviewClassification.value === 'action' && !proposed.length) throw new Error('An action needs a reviewed contract for the selected input.');
+  if (proposed.some(contract => !contract.intent.trim() || !contract.approach.trim() || Object.values(contract.outcomes).some(branch => !branch.publicText.trim()))) throw new Error('Fill in the goal, approach, and all three outcome branches before approving stakes.');
+  return proposed.map(contract => ActionContractSchema.parse(contract));
+}
+
+function openBeat(mode: 'conversation' | 'action') { return runBar(() => send({ type: 'open_beat', commandId: crypto.randomUUID(), expectedInputEpoch: snapshot.value!.session.inputEpoch, kind: mode })); }
+function answerLines() {
+  const ids = tickedIds.value;
+  if (!ids.length) return;
+  return runBar(async () => {
+    await send({ type: 'open_beat', commandId: crypto.randomUUID(), expectedInputEpoch: snapshot.value!.session.inputEpoch, kind: 'conversation' });
+    if (!beat.value || !reached(beat.value.id, 'collecting')) return;
+    await planAndDraftSteps(ids);
+  });
+}
+function planAndDraft() { const ids = tickedIds.value; return runBar(() => planAndDraftSteps(ids)); }
+function plan() { const ids = tickedIds.value; if (!ids.length) return; return runBar(() => planStep(ids)); }
+function lockAndDraft() {
+  if (paused.value || !ordinary.value) return;
+  return runBar(async () => { if (beat.value) await lockAndDraftSteps(beat.value.id); });
+}
+function approveAndRoll() {
+  if (paused.value) return;
+  return runBar(async () => {
+    const checked = checkedContracts();
+    const beatId = beatMeta().beatId;
+    await send({ type: 'approve_stakes', ...beatMeta(), classification: reviewClassification.value, contracts: checked });
+    if (!reached(beatId, 'stakes_review') || !beat.value?.stakesApproved) return;
+    await send({ type: 'lock_beat', ...beatMeta() });
+    if (!reached(beatId, 'locked')) return;
+    await renderStep();
+  });
+}
+function approveStakes() { return runBar(async () => {
+  const checked = checkedContracts();
+  await send({ type: 'approve_stakes', ...beatMeta(), classification: reviewClassification.value, contracts: checked });
+}); }
+function resumeShow() { return runBar(() => send({ type: 'set_status', commandId: crypto.randomUUID(), status: 'live', expectedStateRevision: snapshot.value!.session.stateRevision })); }
 function ensureContracts() {
   if (reviewClassification.value !== 'action' || contracts.value.length) return;
   const inputs = director.value?.submissions.filter(item => beat.value?.selectedSubmissionIds.includes(item.id) && item.kind !== 'ooc') ?? [];
@@ -131,88 +233,144 @@ function ensureContracts() {
     };
   });
 }
-function approveStakes() { return work(async () => {
-  const proposed = reviewClassification.value === 'ordinary' ? [] : contracts.value;
-  if (reviewClassification.value === 'action' && !proposed.length) throw new Error('An action needs a reviewed contract for the selected input.');
-  if (proposed.some(contract => !contract.intent.trim() || !contract.approach.trim() || Object.values(contract.outcomes).some(branch => !branch.publicText.trim()))) throw new Error('Fill in the goal, approach, and all three outcome branches before approving stakes.');
-  const checked = proposed.map(contract => ActionContractSchema.parse(contract));
-  await send({ type: 'approve_stakes', ...beatMeta(), classification: reviewClassification.value, contracts: checked });
-}); }
-function lockAndDraft() {
-  if (paused.value || !quickLock.value) return;
-  return work(async () => {
-    await send({ type: 'approve_stakes', ...beatMeta(), classification: 'ordinary', contracts: [] });
-    if (error.value) return;
-    await send({ type: 'lock_beat', ...beatMeta() });
-    if (error.value) return;
-    await send({ type: 'render_beat', ...beatMeta() });
-  });
-}
-function abortBeat() { return work(async () => { await send({ type: 'abort_beat', ...beatMeta(), reason: abortReason.value.trim() }); abortReason.value = ''; }); }
-function useContractJson() {
-  try { contracts.value = JSON.parse(contractJson.value).map((item: unknown) => ActionContractSchema.parse(item)); error.value = ''; notice.value = 'Contract edits loaded. Review and approve to save.'; }
-  catch { error.value = 'The contract data is not valid. Keep all contract fields and supported typed effects.'; }
-}
-function lock() { return work(() => send({ type: 'lock_beat', ...beatMeta() })); }
+function abortBeat() { return runBar(async () => { await send({ type: 'abort_beat', ...beatMeta(), reason: abortReason.value.trim() }); abortReason.value = ''; }); }
+function lock() { return runBar(() => send({ type: 'lock_beat', ...beatMeta() })); }
 function render() {
   if (paused.value) return;
-  if (beat.value?.draft) { confirmRegenerate.value = true; return; }
+  if (beat.value?.draft) { confirmRegenerate.value = 'plain'; return; }
+  if (scriptDirty.value) { confirmRegenerate.value = 'replace'; return; }
   return runRender();
 }
-function runRender() { return work(() => send({ type: 'render_beat', ...beatMeta() })); }
-function confirmRender() { confirmRegenerate.value = false; return runRender(); }
-function saveScript() { return work(() => send({ type: 'edit_script', ...beatMeta(), segments: JSON.parse(JSON.stringify(script.value)) })); }
-function addNarration() { script.value.push({ kind: 'narration', speakerNpcId: null, recipientCharacterIds: [], text: '', delivery: 'neutral' }); }
-function addNpc() {
-  const npc = snapshot.value?.npcs.find(item => item.status === 'present');
-  if (npc) script.value.push({ kind: 'npc_dialogue', speakerNpcId: npc.id, recipientCharacterIds: [], text: '', delivery: 'neutral' });
+function runRender() { return runBar(renderStep); }
+function regenerate() {
+  if (paused.value) return;
+  const note = steerText.value.trim();
+  if (!note) return render();
+  if (scriptDirty.value) { confirmRegenerate.value = 'note'; return; }
+  confirmRegenerate.value = null;
+  return runNoteRegenerate(note);
 }
-function approveContinuity() { return work(() => send({ type: 'approve_continuity', ...beatMeta(), updates: beat.value?.draft?.continuity ?? [] })); }
-function publish(audioPreparationId?: string) {
-  if (scriptDirty.value || rendering.value || paused.value) return;
-  if (continuityPending.value > 0) { pendingPublish.value = audioPreparationId ? { audioPreparationId } : {}; return; }
-  return runPublish(audioPreparationId);
+function runNoteRegenerate(note: string) {
+  return runBar(async () => {
+    const beatId = beatMeta().beatId;
+    await send({ type: 'set_beat_steering', ...beatMeta(), text: note });
+    if (!beat.value || beat.value.id !== beatId || beat.value.lastError) return;
+    await renderStep();
+    if (beat.value?.id === beatId && !beat.value.lastError) steerText.value = '';
+  });
 }
-function publishAnyway() {
-  const pending = pendingPublish.value;
-  if (!pending || scriptDirty.value || rendering.value || paused.value) return;
-  pendingPublish.value = null;
-  return runPublish(pending.audioPreparationId);
+function writeItMyself() { scriptEditor.value?.addNarration(); }
+function confirmRender() {
+  const mode = confirmRegenerate.value;
+  confirmRegenerate.value = null;
+  if (mode === 'note') {
+    const note = steerText.value.trim();
+    return note ? runNoteRegenerate(note) : runRender();
+  }
+  return runRender();
 }
+function saveScript() { return runBar(() => send({ type: 'edit_script', ...beatMeta(), segments: JSON.parse(JSON.stringify(script.value)) })); }
+function onVoice(state: VoiceState) { voice.value = state; }
+function publishable() { return hasDraft.value && !scriptDirty.value && !rendering.value && !paused.value; }
 function runPublish(audioPreparationId?: string) {
-  return work(() => send({ type: 'publish_beat', ...beatMeta(), expectedStateRevision: snapshot.value!.session.stateRevision, draftRevision: beat.value!.draftRevision, textOnly: !audioPreparationId, ...(audioPreparationId ? { audioPreparationId } : {}) }));
+  waiting.value = null;
+  if (!publishable()) return;
+  return runBar(async () => {
+    const current = beat.value!;
+    const beatId = current.id;
+    const draftRevision = current.draftRevision;
+    if (continuityPending.value > 0 && !skipFacts.value) {
+      await send({ type: 'approve_continuity', ...beatMeta(), updates: current.draft!.continuity });
+      const next = beat.value;
+      if (!next || next.id !== beatId || next.lastError || next.phase !== 'draft_review' || next.draftRevision !== draftRevision) return;
+    }
+    await send({ type: 'publish_beat', ...beatMeta(), expectedStateRevision: snapshot.value!.session.stateRevision, draftRevision, textOnly: !audioPreparationId, ...(audioPreparationId ? { audioPreparationId } : {}) });
+    emit('published', beatId, Boolean(audioPreparationId));
+  });
+}
+function publish() {
+  if (!publishable() || waiting.value) return;
+  const state = voice.value;
+  if (state.status === 'ready') return runPublish(state.preparationId);
+  if (state.status === 'unavailable') return runPublish();
+  if (state.status === 'failed') return;
+  waiting.value = { beatId: beat.value!.id, draftRevision: beat.value!.draftRevision };
+}
+function publishTextOnly() {
+  if (voice.value.status === 'unavailable') return;
+  return runPublish();
+}
+watch([waiting, voice, busy, scriptDirty, rendering, paused, () => beat.value?.id, () => beat.value?.draftRevision, () => beat.value?.phase], () => {
+  const wait = waiting.value;
+  if (!wait) return;
+  const current = beat.value;
+  if (!current || current.id !== wait.beatId || current.draftRevision !== wait.draftRevision || !hasDraft.value || scriptDirty.value || rendering.value || paused.value || voice.value.status === 'failed') { waiting.value = null; return; }
+  if (busy.value) return;
+  if (voice.value.status === 'ready') void runPublish(voice.value.preparationId);
+  else if (voice.value.status === 'unavailable') void runPublish();
+});
+async function runChain(action: () => Promise<void> | undefined) {
+  chainLabel.value = GOLD_LABELS[gold.value];
+  try { await action(); } finally { chainLabel.value = null; }
+}
+function runGold() {
+  switch (gold.value) {
+    case 'resume': return resumeShow();
+    case 'answer': return runChain(answerLines);
+    case 'plan-and-draft': return runChain(planAndDraft);
+    case 'plan': return plan();
+    case 'lock-and-draft': return runChain(lockAndDraft);
+    case 'approve-and-roll': return runChain(approveAndRoll);
+    case 'draft': case 'try-again': return render();
+    case 'publish': return publish();
+  }
 }
 </script>
 
 
 <template>
-  <div v-if="director && snapshot" ref="root" class="panel beat-panel"><div class="panel-heading"><h2>{{ beat ? phaseName(beat.phase) : 'Direct the next beat' }}</h2><span v-if="beat" class="status">{{ beat.kind }}</span></div>
-      <BeatStepper :step="step.step" :next="step.next" :reason="step.reason" />
+  <div v-if="director && snapshot" ref="root" class="panel beat-panel"><div class="panel-heading"><h2>{{ !beat ? 'Direct the next beat' : beat.phase === 'stakes_review' ? (beat.kind === 'action' ? 'Action round' : 'Conversation') : phaseName(beat.phase) }}</h2><span v-if="beat" class="status">{{ beat.kind }}</span></div>
+      <BeatStepper :n="position.n" :m="position.m" />
       <template v-if="idle || !beat"><p class="muted">Keep the exchange short, or bring the cast together for a consequential action.</p></template>
       <template v-else>
-        <p v-if="beat.lastError" class="notice error" role="alert">{{ beat.lastError }} Your accepted input and any dice are preserved.</p>
-        <template v-if="showStakes"><label>How should this input resolve?<select :aria-describedby="helpId('classification')" v-model="reviewClassification" data-testid="stakes-classification" @change="ensureContracts"><option value="ordinary" :disabled="beat.classification === 'needs_action'">Ordinary conversation · no mechanical consequences</option><option value="action">Action · review the agreed goal and consequences</option></select></label><p :id="helpId('classification')" class="field-help">Choose ordinary conversation or an action that needs an agreed goal and consequences.</p><p v-if="beat.phase === 'collecting'" class="notice">Planning failed. You can review manual stakes below, retry planning, or abandon this beat with a reason.</p><p v-if="beat.classification === 'needs_action'" class="notice">This exchange has consequences. Review the action stakes before locking.</p><p v-if="reviewClassification === 'ordinary'" class="notice">Ordinary conversation. No check or mechanical effects.</p>
-          <article v-for="contract in reviewClassification === 'action' ? contracts : []" :key="contract.id" class="contract"><h3>{{ nameOf(contract.actorCharacterId) }}</h3><label>Ruling<select :aria-describedby="helpId('contract', contract.id, 'ruling')" v-model="contract.ruling" data-testid="contract-ruling"><option value="check">Check · uncertain and consequential</option><option value="no_check">No check · achievable without uncertainty</option><option value="blocked">Blocked · explain the missing requirement</option></select></label><p :id="helpId('contract', contract.id, 'ruling')" class="field-help">Choose a check for uncertainty, no check for automatic success, or blocked for a missing requirement.</p><label>Agreed goal<textarea :aria-describedby="helpId('contract', contract.id, 'intent')" v-model="contract.intent" rows="2" /></label><p :id="helpId('contract', contract.id, 'intent')" class="field-help">State the result the character is trying to achieve.</p><p class="stage-length" :class="{ over: stageLength(contract.intent, STAGE_GOAL_CHARS).over }" data-testid="stage-length-goal">{{ stageLength(contract.intent, STAGE_GOAL_CHARS).text }}</p><label>Approach<textarea :aria-describedby="helpId('contract', contract.id, 'approach')" v-model="contract.approach" rows="2" /></label><p :id="helpId('contract', contract.id, 'approach')" class="field-help">Describe how the character will attempt the agreed goal.</p><div class="contract-grid"><div><label>Trait<select :aria-describedby="helpId('contract', contract.id, 'trait')" v-model="contract.trait"><option v-for="trait in ['force', 'finesse', 'wits', 'presence']" :key="trait">{{ trait }}</option></select></label><p :id="helpId('contract', contract.id, 'trait')" class="field-help">Choose the character trait whose modifier is added to the check.</p></div><div><label>Risk<select :aria-describedby="helpId('contract', contract.id, 'risk')" v-model="contract.risk"><option>low</option><option>normal</option><option>high</option></select></label><p :id="helpId('contract', contract.id, 'risk')" class="field-help">Describe the severity of the consequences; risk does not change the dice modifier.</p></div></div><p v-if="contract.helperCharacterIds.length"><small>Helpers: {{ contract.helperCharacterIds.map(nameOf).join(', ') }} · Edge +{{ contract.edge }}</small></p><div v-for="band in (['clean', 'costly', 'setback'] as const)" :key="band" class="branch"><label>{{ band === 'clean' ? '10+ · Clean success' : band === 'costly' ? '7–9 · Success with a cost' : '6 or less · Setback' }}<textarea :aria-describedby="helpId('contract', contract.id, 'outcome', band)" v-model="contract.outcomes[band].publicText" :data-testid="`outcome-${band}`" rows="2" placeholder="Write the agreed outcome and consequences" /></label><p :id="helpId('contract', contract.id, 'outcome', band)" class="field-help">Describe the public result for this roll band. Mechanical effects are configured separately.</p><p class="stage-length" :class="{ over: stageLength(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS).over }" :data-testid="`stage-length-${band}`">{{ stageLength(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS).text }}</p><small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></div></article>
-          <details v-if="reviewClassification === 'action' && contracts.length"><summary>Edit typed effects, helpers & dependencies</summary><p class="muted"><small>Use the complete contract data. The server validates effects, actors, dependencies, and available traits before approval.</small></p><label>Contract data<textarea :aria-describedby="helpId('contract-data')" v-model="contractJson" rows="14" spellcheck="false" /></label><p :id="helpId('contract-data')" class="field-help">Advanced contract data includes effects, helpers, and dependencies. Load contract edits before approving stakes.</p><button class="secondary" @click="useContractJson">Load contract edits</button></details>
+        <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="busy" v-model:classification="reviewClassification" />
+        <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ roll.band === 'costly' ? 'Success with a cost' : roll.band }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
+          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="snapshot.npcs" :busy="busy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
+          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player quotes are inserted verbatim from locked submissions. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
-        <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ roll.band === 'costly' ? 'Success with a cost' : roll.band }}</small></div></div><p class="muted"><small>Input and results are fixed. Retrying narration keeps the same dice.</small></p>
-          <div v-for="(segment, index) in script" :key="scriptRowKey(segment)" class="segment"><template v-if="segment.kind === 'npc_dialogue'"><label>Speaker<select :aria-describedby="helpId('script', scriptRowKey(segment), 'speaker')" v-model="segment.speakerNpcId"><option v-for="npc in snapshot.npcs.filter(item => item.status === 'present')" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option></select></label><p :id="helpId('script', scriptRowKey(segment), 'speaker')" class="field-help">Choose the present non-player character whose name and voice will deliver this dialogue.</p></template><label>{{ segment.kind === 'narration' ? 'Narrator' : 'NPC dialogue' }}<textarea :aria-describedby="helpId('script', scriptRowKey(segment), 'text')" v-model="segment.text" :data-testid="`script-segment-${index}`" /></label><p :id="helpId('script', scriptRowKey(segment), 'text')" class="field-help">Edit this unpublished narration or dialogue. Save script edits before publishing the beat.</p><FieldGenerator v-if="segment.kind === 'narration' || segment.kind === 'npc_dialogue'" v-model="segment.text" :field="segment.kind === 'narration' ? 'script.narration' : 'script.npcDialogue'" :context-key="`${scriptContext}:${scriptRowKey(segment)}:${segment.speakerNpcId}`" :premise="director.session.brief?.premise" :premise-label="`Session scenario: ${director.session.title}`" :disabled="busy" /><button class="quiet" :disabled="busy" @click="script.splice(index, 1)">Remove segment</button></div>
-          <div class="actions script-tools"><button class="secondary" :disabled="busy" @click="addNarration">Add manual narration</button><button class="secondary" :disabled="busy" @click="addNpc">Add NPC dialogue</button></div>
-          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><details v-if="beat.draft.continuity.length"><summary>Review {{ beat.draft.continuity.length }} proposed continuity updates</summary><p v-for="(update, index) in beat.draft.continuity" :key="index" class="private-note">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</p></details><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player quotes are inserted verbatim from locked submissions. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" :highlight="continuityPending === 0" @recording-ready="recordingReady = $event" @publish="publish" /></div>
-        </template>
-        <details><summary>Abandon this beat</summary><p class="muted"><small>This records the reason and closes the current beat. Published history is preserved.</small></p><label>Reason for abandoning this beat<textarea :aria-describedby="helpId('abort')" v-model="abortReason" data-testid="abort-reason" maxlength="6000" rows="2" /></label><p :id="helpId('abort')" class="field-help">Record a private reason for abandoning this unfinished beat. Published history is preserved.</p><button class="secondary" data-testid="abort-beat" :disabled="busy || !abortReason.trim()" @click="abortBeat">Abort beat</button></details>
       </template>
       <div ref="actionsBar" class="beat-actions" role="region" tabindex="-1" aria-label="Beat actions">
-        <p class="beat-next"><strong class="beat-step-name">{{ STEP_LABELS[step.step] }}</strong> {{ step.next }}<span v-if="step.reason" class="beat-reason">{{ ' ' + step.reason }}</span></p>
-        <div v-if="beat?.draft && showScript && continuityPending > 0" class="beat-confirm beat-continuity"><p>{{ continuityPending }} continuity updates are not approved. Characters will not remember them unless you approve.</p><button :class="buttonClass('continuity')" :disabled="busy || scriptDirty || paused" @click="approveContinuity">Approve continuity updates</button><small v-if="scriptDirty" class="muted">Save your script edits before approving continuity.</small></div>
-        <div v-if="confirmRegenerate && beat?.draft && showScript" class="beat-confirm"><p>Replace the current draft? Saved script edits are discarded; the dice stay the same.</p><button class="secondary" :disabled="busy || paused" @click="confirmRender">Yes, regenerate</button><button class="secondary" @click="confirmRegenerate = false">Keep draft</button></div>
-        <div v-if="pendingPublish && beat?.draft && showScript" class="beat-confirm"><p>Publish without the {{ continuityPending }} continuity updates?</p><button class="secondary" :disabled="busy || scriptDirty || rendering || paused" @click="publishAnyway">Publish anyway</button><button class="secondary" @click="pendingPublish = null">Go back</button></div>
+        <p class="beat-next" data-testid="beat-next">{{ step.next }}<span v-if="step.reason" class="beat-reason">{{ ' ' + step.reason }}</span></p>
+        <p v-if="statusText" class="beat-status" data-testid="beat-status">{{ statusText }}</p>
+        <p v-if="hasDraft && !scriptDirty && voice.status === 'failed'" class="beat-status" data-testid="voice-failed">The voice could not be prepared. Press Prepare voice again, or Publish without voice.</p>
+        <p v-if="noShowAudio" class="beat-status" data-testid="no-show-audio">No show audio: the main show link isn't open in OBS.</p>
+        <p v-if="errorText" class="notice error beat-error" data-testid="beat-error" role="alert">{{ errorText }}</p>
+        <p v-if="playbackError" class="notice error beat-error" data-testid="playback-error" role="alert">{{ playbackError }} <button type="button" class="secondary" data-testid="start-playback" @click="emit('start-playback')">Play latest reviewed beat</button></p>
+        <div v-if="(confirmRegenerate === 'plain' || confirmRegenerate === 'note') && beat?.draft && showScript" class="beat-confirm"><p>Replace the current draft? Saved script edits are discarded; the dice stay the same.</p><button class="secondary" :disabled="locked" @click="confirmRender">Yes, regenerate</button><button class="secondary" :disabled="paused" @click="confirmRegenerate = null">Keep draft</button></div>
+        <div v-if="confirmRegenerate === 'replace' && beat" class="beat-confirm"><p>Replace what you wrote? The AI writes a new script and the lines you typed are lost. The dice stay the same.</p><button class="secondary" :disabled="locked" data-testid="confirm-replace" @click="confirmRender">Yes, replace it</button><button class="secondary" :disabled="paused" data-testid="keep-written" @click="confirmRegenerate = null">Keep what I wrote</button></div>
         <div class="actions">
-          <template v-if="idle"><button :class="buttonClass('open')" :disabled="busy || paused" data-testid="open-conversation" @click="openBeat('conversation')">Open conversation</button><button class="secondary" :disabled="busy || paused" data-testid="open-action" @click="openBeat('action')">Open action round</button></template>
-          <template v-if="showPlan"><button :class="buttonClass('plan')" :disabled="busy || paused || !selected.length" data-testid="plan" @click="plan">{{ busy ? 'Working…' : 'Plan selected input' }}</button><small>{{ selected.length }} selected</small></template>
-          <template v-if="showStakes && beat"><button v-if="quickLock" :disabled="busy || paused" data-testid="lock-and-draft" @click="lockAndDraft">Lock and draft</button><button :class="buttonClass('approve')" :disabled="busy || paused" data-testid="approve-stakes" @click="approveStakes">Approve stakes</button><button :class="buttonClass('lock')" :disabled="busy || paused || !beat.stakesApproved || contractsDirty" data-testid="lock" @click="lock">Lock input{{ contracts.some(item => item.ruling === 'check') ? ' & roll' : '' }}</button></template>
-          <template v-if="showScript && beat"><button :class="beat.draft ? 'secondary' : buttonClass('render')" :disabled="busy || paused" data-testid="render" @click="render">{{ beat.draft ? 'Regenerate script' : 'Draft the scene' }}</button><button v-if="script.length" :class="buttonClass('save')" :disabled="busy || script.some(segment => !segment.text.trim())" @click="saveScript">Save script edits</button><button v-if="beat.draft" :class="recordingReady ? 'secondary' : buttonClass('publish')" :disabled="busy || scriptDirty || rendering || paused" data-testid="publish" @click="publish()">Publish text-only beat</button></template>
+          <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
+          <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-action" @click="openBeat('action')">Open action round</button>
+          <button v-if="hasDraft && voice.status !== 'unavailable'" class="secondary" :disabled="locked || scriptDirty || rendering || Boolean(working)" data-testid="publish-text-only" @click="publishTextOnly">Publish without voice</button>
+          <button v-if="step.step === 'draft' && !idle && beat?.lastError" class="secondary" :disabled="locked" data-testid="write-it-myself" @click="writeItMyself">Write it myself</button>
         </div>
+        <details ref="more" class="beat-more" data-testid="beat-more"><summary>More</summary>
+          <div class="actions">
+            <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-conversation" @click="openBeat('conversation')">Open conversation</button>
+            <template v-if="!idle && (step.step === 'stakes' || step.step === 'lock')">
+              <button class="secondary" :disabled="locked" data-testid="approve-stakes" @click="approveStakes">Approve stakes</button>
+              <button class="secondary" :disabled="locked || !beat?.stakesApproved || contractsDirty" data-testid="lock" @click="lock">Roll the dice</button>
+              <button class="secondary" :disabled="locked || !tickedIds.length || Boolean(working)" data-testid="plan-again" @click="plan">Plan again</button>
+            </template>
+            <template v-if="showScript && beat?.draft">
+              <label class="steer-note">Tell the AI what to change<input v-model="steerText" type="text" maxlength="3000" data-testid="steer-text" :disabled="locked || Boolean(working)" @keydown.enter.prevent="regenerate" /></label>
+              <p v-if="beat.steering" class="field-help" data-testid="current-note">Current note: {{ currentNote }} What you type here replaces it.</p>
+              <button class="secondary" :disabled="locked || Boolean(working)" data-testid="regenerate" @click="regenerate">Regenerate script</button>
+            </template>
+            <button v-if="showScript && scriptDirty" class="secondary" :disabled="locked || script.some(segment => !segment.text.trim())" data-testid="save-script" @click="saveScript">Save edits</button>
+          </div>
+          <details v-if="!idle && beat" class="beat-abandon"><summary>Abandon this beat</summary><p class="muted"><small>This records the reason and closes the current beat. Published history is preserved.</small></p><label>Reason for abandoning this beat<textarea :aria-describedby="helpId('abort')" v-model="abortReason" data-testid="abort-reason" maxlength="6000" rows="2" :disabled="paused" /></label><p :id="helpId('abort')" class="field-help">Record a private reason for abandoning this unfinished beat. Published history is preserved.</p><button class="secondary" data-testid="abort-beat" :disabled="locked || !abortReason.trim()" @click="abortBeat">Abandon beat</button></details>
+        </details>
       </div>
   </div>
 </template>
@@ -221,11 +379,15 @@ function runPublish(audioPreparationId?: string) {
 .beat-actions { position: sticky; bottom: 0; z-index: 10; display: grid; gap: .6rem; margin: 1.2rem -1.5rem -1.5rem; padding: .9rem 1.5rem; background: var(--panel); border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
 .beat-actions .actions { gap: .6rem; }
 .beat-next { margin: 0; }
-.beat-step-name { display: inline-block; margin-right: .4rem; padding: .1rem .55rem; border: 1px solid var(--gold); border-radius: 999px; color: var(--gold); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.beat-status { margin: 0; color: var(--muted); font-size: .9rem; }
+.beat-error { margin: 0; }
+.beat-more > summary, .beat-abandon > summary { cursor: pointer; color: var(--muted); }
+.beat-more .actions { margin-top: .6rem; }
+.beat-abandon { margin-top: .6rem; }
 .beat-reason { color: var(--muted); }
 .beat-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .6rem .8rem; border: 1px solid var(--gold); border-radius: 6px; }
 .beat-confirm p { flex: 1 1 18rem; margin: 0; }
-.script-tools { margin-top: .8rem; }
-.stage-length { margin: .2rem 0 .6rem; color: var(--muted); font-size: .8rem; }
-.stage-length.over { color: var(--gold); }
+.steer-note { flex: 1 1 16rem; }
+.beat-facts { margin: 1rem 0; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 6px; }
+.beat-facts ul { margin: .4rem 0 .6rem; padding-left: 1.2rem; }
 </style>

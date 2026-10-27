@@ -31,12 +31,16 @@ function sampleLines(page: Page, lineSelector: string, hiddenClass: string, boxS
   }, { lineSelector, hiddenClass, boxSelector });
 }
 
+async function openMore(page: Page) {
+  const more = page.getByTestId('beat-more');
+  if (!(await more.evaluate(node => (node as HTMLDetailsElement).open))) await more.locator('summary').first().click();
+}
+
 test('the full scene and the overlay both show every line of the latest beat, players included', async ({ page, context, browser }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2];
   const path = `/sessions/${sessionId}`;
@@ -64,12 +68,9 @@ test('the full scene and the overlay both show every line of the latest beat, pl
 
   // The director selects both players, plans, locks and drafts.
   await page.reload();
-  for (const name of names) await page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox').check();
-  await page.getByRole('button', { name: 'Plan selected input' }).click();
-  await page.getByRole('button', { name: 'Approve stakes', exact: true }).click();
-  await page.getByRole('button', { name: /Lock input/ }).click();
-  await page.getByRole('button', { name: 'Draft the scene', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Publish text-only beat' })).toBeEnabled();
+  for (const name of names) await expect(page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox')).toBeChecked();
+  await page.getByRole('button', { name: 'Plan and draft', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeEnabled();
 
   // Rewrite the script to four non-player segments of about 110 words.
   const script = [
@@ -81,14 +82,18 @@ test('the full scene and the overlay both show every line of the latest beat, pl
   const wordCount = script.join(' ').split(/\s+/).length;
   expect(wordCount).toBeGreaterThanOrEqual(100);
   expect(wordCount).toBeLessThanOrEqual(120);
-  await expect(page.getByTestId('script-segment-1')).toBeVisible();
-  await expect(page.getByTestId('script-segment-2')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add manual narration' }).click();
-  await page.getByRole('button', { name: 'Add manual narration' }).click();
+  await expect(page.getByTestId('script-line-1')).toBeVisible();
+  await expect(page.getByTestId('script-line-2')).toHaveCount(0);
+  await page.getByTestId('script-line-0').click();
+  await page.getByTestId('script-line-1').click();
+  await page.getByTestId('script-add-line').selectOption('narration');
+  await page.getByTestId('script-add-line').selectOption('narration');
   for (let index = 0; index < script.length; index++) await page.getByTestId(`script-segment-${index}`).fill(script[index]);
-  await page.getByRole('button', { name: 'Save script edits' }).click();
-  await expect(page.getByRole('button', { name: 'Publish text-only beat' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Publish text-only beat' }).click();
+  await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeDisabled();
+  await openMore(page);
+  await page.getByRole('button', { name: 'Save edits', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Publish without voice' }).click();
   await expect.poll(async () => (await api(page, path)).body.history.length).toBe(1);
 
   const segments = (await api(page, path)).body.history[0].segments as Segment[];
@@ -101,11 +106,10 @@ test('the full scene and the overlay both show every line of the latest beat, pl
 
   // Create the main show link and read its address.
   await page.getByRole('link', { name: 'Cast & lobby' }).click();
-  await page.getByRole('button', { name: 'Show stage & OBS links' }).click();
-  await page.getByRole('button', { name: 'Create main show link' }).click();
-  const showRow = page.locator('.link-row').filter({ hasText: 'The whole show' });
-  await expect(showRow.getByLabel('Link address')).toBeVisible();
-  const base = new URL(await showRow.getByLabel('Link address').inputValue());
+  await page.getByTestId('stream-setup').locator('summary').first().click();
+  const showRow = page.getByTestId('stream-row-show');
+  await expect(showRow.getByTestId('copy-scene')).toBeVisible();
+  const base = new URL((await showRow.getByTestId('copy-scene').getAttribute('data-url'))!);
   expect(base.hash).toMatch(/^#token=.+/);
   const urlFor = (layout: 'scene' | 'overlay') => {
     const url = new URL(base.toString());
@@ -200,8 +204,7 @@ test('the overlay shows each wager in turn without cutting it, then every dice c
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2]!;
   const path = `/sessions/${sessionId}`;

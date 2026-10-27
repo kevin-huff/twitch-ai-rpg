@@ -60,30 +60,33 @@ function confirmYes() {
     <template v-else>
       <p role="status" class="gallery-status" data-testid="gallery-status">{{ statusLine }}</p>
       <p v-if="status.pending > 0" class="muted" data-testid="gallery-pending">{{ pendingLine }}</p>
-      <div class="gallery-failure">
-        <p v-if="status.message" data-testid="gallery-message">{{ status.message }}</p>
-        <button type="button" class="secondary" data-testid="gallery-rewrite" :disabled="busy" @click="emit('action', 'rewrite')">Write the gallery again</button>
-      </div>
-      <label class="gallery-link-row">Private link
+      <p v-if="status.message" class="gallery-failure" data-testid="gallery-message">{{ status.message }}</p>
+      <label class="gallery-link-row">Gallery link
         <input ref="urlBox" type="text" readonly data-testid="gallery-url" :value="status.url ?? ''" />
       </label>
       <button type="button" class="secondary" data-testid="gallery-copy" @click="copyLink">Copy link</button>
-      <button v-if="!status.listed" type="button" class="secondary" data-testid="gallery-list" :disabled="busy" @click="emit('action', 'list')">Add to public list</button>
-      <template v-else>
-        <p data-testid="gallery-listed">On the public list</p>
-        <button type="button" class="secondary" data-testid="gallery-unlist" :disabled="busy" @click="emit('action', 'unlist')">Remove from public list</button>
-      </template>
-      <p class="muted" data-testid="gallery-list-url">Public list: <a :href="status.listUrl" target="_blank" rel="noopener">{{ status.listUrl }}</a></p>
-      <div v-if="!confirming" class="gallery-danger">
-        <button type="button" class="secondary" data-testid="gallery-new-link" :disabled="busy" @click="confirming = 'new_link'">New link</button>
-        <button type="button" class="secondary" data-testid="gallery-off" :disabled="busy" @click="confirming = 'off'">Turn off gallery</button>
-      </div>
-      <div v-else class="beat-confirm" data-testid="gallery-confirm">
-        <p>This stops the link you may have posted in chat.</p>
-        <button type="button" class="secondary" data-testid="gallery-confirm-yes" :disabled="busy" @click="confirmYes">{{ confirming === 'new_link' ? 'Yes, make a new link' : 'Yes, turn it off' }}</button>
-        <button type="button" class="secondary" data-testid="gallery-keep" @click="confirming = null">Keep it</button>
-      </div>
-      <p v-if="status.local" class="muted" data-testid="gallery-local">These links only work on this computer until the app is deployed.</p>
+      <details class="gallery-more" data-testid="gallery-more">
+        <summary>More gallery options</summary>
+        <button v-if="!status.listed" type="button" class="secondary" data-testid="gallery-list" :disabled="busy" @click="emit('action', 'list')">Add to public list</button>
+        <template v-else>
+          <p data-testid="gallery-listed">On the public list</p>
+          <button type="button" class="secondary" data-testid="gallery-unlist" :disabled="busy" @click="emit('action', 'unlist')">Remove from public list</button>
+        </template>
+        <p class="muted" data-testid="gallery-list-url">Public list: <a :href="status.listUrl" target="_blank" rel="noopener">{{ status.listUrl }}</a></p>
+        <div class="gallery-failure">
+          <button type="button" class="secondary" data-testid="gallery-rewrite" :disabled="busy" @click="emit('action', 'rewrite')">Write the gallery again</button>
+        </div>
+        <div v-if="!confirming" class="gallery-danger">
+          <button type="button" class="secondary" data-testid="gallery-new-link" :disabled="busy" @click="confirming = 'new_link'">New link</button>
+          <button type="button" class="secondary" data-testid="gallery-off" :disabled="busy" @click="confirming = 'off'">Turn off gallery</button>
+        </div>
+        <div v-else class="beat-confirm" data-testid="gallery-confirm">
+          <p>This stops the link you may have posted in chat.</p>
+          <button type="button" class="secondary" data-testid="gallery-confirm-yes" :disabled="busy" @click="confirmYes">{{ confirming === 'new_link' ? 'Yes, make a new link' : 'Yes, turn it off' }}</button>
+          <button type="button" class="secondary" data-testid="gallery-keep" @click="confirming = null">Keep it</button>
+        </div>
+        <p v-if="status.local" class="muted" data-testid="gallery-local">These links only work on this computer until the app is deployed.</p>
+      </details>
     </template>
   </section>
 </template>
@@ -91,5 +94,7 @@ function confirmYes() {
 <style scoped>
 .gallery-link-row { display: grid; gap: .25rem; margin-block: .5rem; }
 .gallery-failure { display: grid; gap: .5rem; margin-block: .5rem; }
+.gallery-more { margin-block: .5rem; }
+.gallery-more > summary { cursor: pointer; }
 .gallery-danger { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .5rem; }
 </style>

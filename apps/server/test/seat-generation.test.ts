@@ -152,11 +152,10 @@ suite('player seat card and field generation', () => {
       expect(response.json().message).toBe('This session uses the original rehearsal cast rather than an editable lobby.');
     }
     expect((await card(cardBody(), rehearsal.players[0]!)).statusCode).toBe(404);
-    for (const character of (await director()).characterDetails) {
-      expect((await command({ type: 'approve_character', characterId: character.id, expectedCharacterRevision: character.cardRevision })).statusCode).toBe(200);
-    }
+    // Cards from the library start approved, so the show can start without any approval step.
+    for (const character of (await director()).characterDetails) expect(character).toMatchObject({ approved: true, draft: null });
     const revision = (await director()).session.stateRevision;
-    const started = await command({ type: 'start_session', expectedStateRevision: revision, overrideUnreadyReason: 'Testing a started show.' });
+    const started = await command({ type: 'start_session', expectedStateRevision: revision });
     expect(started.statusCode, started.body).toBe(200);
     for (const response of [await card(cardBody({ expectedCharacterRevision: 1 })), await field(fieldBody({ expectedCharacterRevision: 1 }))]) {
       expect(response.statusCode, response.body).toBe(409);
@@ -198,7 +197,7 @@ suite('player seat card and field generation', () => {
     expect(generateField).toHaveBeenCalledTimes(3);
   });
 
-  it.each(['save', 'approve', 'revoke'] as const)('holds no session lock during the AI call and withholds the card after a concurrent %s', async (change) => {
+  it.each(['save', 'director save', 'revoke'] as const)('holds no session lock during the AI call and withholds the card after a concurrent %s', async (change) => {
     let finish: ((value: ReturnType<typeof cardDraft>) => void) | undefined;
     generateCard.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const generated = card();
@@ -213,9 +212,9 @@ suite('player seat card and field generation', () => {
       if (change === 'save') {
         const saved = await command({ type: 'save_character', expectedCharacterRevision: 0, card: starter.characters[0] }, seats[0]);
         expect(saved.statusCode, saved.body).toBe(200);
-      } else if (change === 'approve') {
-        const approved = await command({ type: 'approve_character', characterId: seats[0]!.characterId, expectedCharacterRevision: 0 });
-        expect(approved.statusCode, approved.body).toBe(200);
+      } else if (change === 'director save') {
+        const written = await command({ type: 'save_character', characterId: seats[0]!.characterId, expectedCharacterRevision: 0, card: starter.characters[0] });
+        expect(written.statusCode, written.body).toBe(200);
       } else {
         expect((await pool.query('UPDATE credentials SET revoked_at=now() WHERE token_hash=$1', [hash(seats[0]!.cookie.split('=')[1]!)])).rowCount).toBe(1);
         expected = 401;

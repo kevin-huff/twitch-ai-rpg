@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 
 async function api(page: Page, path: string, body?: unknown) {
   return page.evaluate(async ({ path, body }) => {
@@ -34,10 +34,6 @@ async function publishOneBeat(page: Page, context: { newPage(): Promise<Page> },
   return state.history[0].segments.map((segment: { text: string }) => segment.text) as string[];
 }
 
-async function chooseLayout(row: Locator, label: string) {
-  await row.getByLabel('Layout').selectOption({ label });
-}
-
 async function openStream(browser: Browser, url: string) {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
@@ -56,29 +52,27 @@ test('main show link and a personal link each draw the latest beat in both layou
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
-  await page.getByRole('button', { name: 'Create rehearsal session' }).click();
-  await page.getByRole('link', { name: 'Enter director workspace' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
   await expect(page.getByTestId('director-controls')).toBeVisible();
   const sessionId = new URL(page.url()).pathname.split('/')[2];
   const lines = await publishOneBeat(page, context, sessionId);
   expect(lines.length).toBeGreaterThan(0);
 
-  await page.getByRole('link', { name: 'Cast & lobby' }).click();
-  await page.getByRole('button', { name: 'Show stage & OBS links' }).click();
-  await page.getByRole('button', { name: 'Create main show link' }).click();
-  const showRow = page.locator('.link-row').filter({ hasText: 'The whole show' });
-  await expect(showRow.getByLabel('Link address')).toBeVisible();
-  await page.getByLabel('Create a personal link for').selectOption({ label: 'You' });
-  await page.getByRole('button', { name: 'Create link' }).click();
-  const personalRow = page.locator('.link-row').filter({ hasText: 'Host' }).filter({ hasNotText: 'The whole show' });
-  await expect(personalRow.getByLabel('Link address')).toBeVisible();
+  const characterId: string = (await api(page, `/sessions/${sessionId}`)).body.characters[0].id;
+  await page.getByTestId('stream-this-show').click();
+  await expect(page.getByTestId('stream-setup')).toHaveAttribute('open', '');
+  // Links are ready without any press.
+  const showRow = page.getByTestId('stream-row-show');
+  const personalRow = page.getByTestId(`stream-row-player-${characterId}`);
+  await expect(showRow.getByTestId('copy-scene')).toBeVisible();
+  await expect(personalRow.getByTestId('copy-scene')).toBeVisible();
 
   const urls: Record<string, string> = {};
   for (const [name, row] of [['show', showRow], ['personal', personalRow]] as const) {
-    for (const [layout, label] of [['scene', 'Full scene (1920×1080)'], ['overlay', 'Transparent overlay']] as const) {
-      await chooseLayout(row, label);
-      const url = await row.getByLabel('Link address').inputValue();
+    for (const layout of ['scene', 'overlay'] as const) {
+      const url = (await row.getByTestId(`copy-${layout}`).getAttribute('data-url'))!;
       expect(new URL(url).searchParams.get('layout')).toBe(layout);
+      expect(new URL(url).searchParams.has('bg')).toBe(false);
       expect(new URL(url).pathname).toBe('/stream');
       expect(new URL(url).hash).toMatch(/^#token=.+/);
       urls[`${name}-${layout}`] = url;
@@ -86,6 +80,26 @@ test('main show link and a personal link each draw the latest beat in both layou
   }
   expect(urls['show-scene']).toContain('audio=present');
   expect(urls['personal-scene']).not.toContain('audio=present');
+
+  // Previews are silent, and only the overlay preview adds the checker background.
+  for (const layout of ['overlay', 'scene'] as const) {
+    const popup = page.waitForEvent('popup');
+    await showRow.getByTestId(`preview-${layout}`).click();
+    const preview = await popup;
+    const previewUrl = new URL(preview.url());
+    expect(previewUrl.searchParams.get('layout')).toBe(layout);
+    expect(previewUrl.searchParams.get('audio')).toBe('off');
+    expect(previewUrl.searchParams.get('bg')).toBe(layout === 'overlay' ? 'checker' : null);
+    await preview.close();
+  }
+
+  // Copying writes the same address that the button carries, with no bg.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await showRow.getByTestId('copy-overlay').click();
+  await expect(showRow.getByText('Copied', { exact: true })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toBe(urls['show-overlay']);
+  expect(copied).not.toContain('bg=');
 
   const open: Page[] = [];
   const contexts: { close(): Promise<void> }[] = [];
@@ -103,12 +117,14 @@ test('main show link and a personal link each draw the latest beat in both layou
       if (key === 'show-scene' || key === 'personal-scene') open.push(stream);
     }
 
-    await personalRow.getByRole('button', { name: 'Revoke' }).click();
-    await personalRow.getByRole('button', { name: 'Turn off link' }).click();
-    await expect(page.locator('.link-row').filter({ hasText: 'Host' }).filter({ hasNotText: 'The whole show' })).toHaveCount(0);
-    await showRow.getByRole('button', { name: 'Revoke' }).click();
-    await showRow.getByRole('button', { name: 'Turn off link' }).click();
-    await expect(showRow).toHaveCount(0);
+    await personalRow.getByTestId('turn-off').click();
+    await personalRow.getByTestId('turn-off-confirm').click();
+    await expect(personalRow.getByText('Turned off.')).toBeVisible();
+    await expect(personalRow.getByTestId('copy-scene')).toHaveCount(0);
+    await showRow.getByTestId('turn-off').click();
+    await showRow.getByTestId('turn-off-confirm').click();
+    await expect(showRow.getByText('Turned off.')).toBeVisible();
+    await expect(showRow.getByTestId('copy-scene')).toHaveCount(0);
 
     for (const stream of open) {
       await expect(stream.getByText('The story continues shortly')).toBeVisible({ timeout: 10000 });
@@ -118,4 +134,29 @@ test('main show link and a personal link each draw the latest beat in both layou
     contexts.push(late);
     await expect(lateStream.getByText('The story continues shortly')).toBeVisible({ timeout: 10000 });
   } finally { await Promise.all(contexts.map(item => item.close())); }
+});
+
+test('a Test as seat opens Stream this show and finds its own link ready', async ({ page, context }) => {
+  await page.goto('/');
+  await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
+  await page.getByRole('button', { name: 'Sign in as host' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
+  const sessionId = new URL(page.url()).pathname.split('/')[2];
+  const characterId: string = (await api(page, `/sessions/${sessionId}`)).body.characters[0].id;
+  const grant = (await api(page, `/sessions/${sessionId}/test-seat`, { characterId })).body;
+  const seat = await context.newPage();
+  await seat.goto(`/sessions/${sessionId}/play?identity=${grant.identityId}`);
+  await seat.getByTestId('stream-this-show').click();
+  await expect(seat).toHaveURL(/\/lobby/);
+  await expect(seat).toHaveURL(/identity=/);
+  const panel = seat.getByTestId('my-stream-view');
+  await expect(panel).toHaveAttribute('open', '');
+  const own = panel.getByTestId('stream-row-own');
+  await expect(own.getByTestId('copy-scene')).toBeVisible();
+  const url = (await own.getByTestId('copy-scene').getAttribute('data-url'))!;
+  expect(new URL(url).pathname).toBe('/stream');
+  expect(url).not.toContain('audio=present');
+  // The player's own link is not the main show link, so the director's list is unaffected.
+  await seat.close();
 });
