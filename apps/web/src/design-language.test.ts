@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -44,5 +44,44 @@ describe('design language tokens and fonts', () => {
     for (const [name, value] of Object.entries(colourTokens)) {
       expect(root).toContain(`${name}: ${value};`);
     }
+  });
+});
+
+// Guards that keep the language from drifting: every stylesheet the app ships is style.css plus each
+// component's <style> block, and templates must not use characters the three pixel fonts cannot draw.
+const components = readdirSync(fileURLToPath(new URL('./', import.meta.url))).filter(name => name.endsWith('.vue')).sort();
+const sources = [
+  { name: 'style.css', css: style, template: '' },
+  ...components.map(name => {
+    const text = read(`./${name}`);
+    return { name, css: [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(match => match[1]).join('\n'), template: text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '') };
+  }),
+];
+const findings = (pattern: RegExp, keep: (match: RegExpMatchArray) => boolean = () => true) =>
+  sources.flatMap(({ name, css }) => [...css.matchAll(pattern)].filter(keep).map(match => `${name}: ${match[0].trim()}`));
+
+describe('design language guards', () => {
+  it('reads every component stylesheet', () => {
+    expect(components.length).toBeGreaterThan(40);
+  });
+
+  it('uses no retired colour variable', () => {
+    expect(findings(/var\(--(gold|muted|panel|line|teal)\)/g)).toEqual([]);
+  });
+
+  it('rounds no corner', () => {
+    expect(findings(/border-radius\s*:\s*([^;}]+)/g, match => !/^0(px)?(\s*!important)?$/.test(match[1].trim()))).toEqual([]);
+  });
+
+  it('uses no see-through colour, blur or filter', () => {
+    expect(findings(/rgba\(|hsla\(|#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{4}\b|blur\(|(?<![-\w])filter\s*:\s*(?!none)[^;}]*/g)).toEqual([]);
+  });
+
+  it('moves only in steps', () => {
+    expect(findings(/transition\s*:\s*([^;}]+)/g, match => !/^none\b/.test(match[1].trim()) && !/steps\(/.test(match[1]))).toEqual([]);
+  });
+
+  it('puts no arrow the fonts cannot draw in a template', () => {
+    expect(sources.filter(({ template }) => /[←-⇿]/.test(template)).map(({ name }) => name)).toEqual([]);
   });
 });
