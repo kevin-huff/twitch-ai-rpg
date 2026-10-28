@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Story Table Build Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jacquard+24&family=Jersey+20&family=Silkscreen:wght@400;700&display=swap">
+<style>
+:root {
+  --void: #080810; --night: #181838; --night-raised: #282858; --bone: #f8f0d8; --dust: #a8a8c8;
+  --candle: #f8c838; --candle-deep: #a87818; --on-candle: #080810; --heart: #e84058; --herb: #b0f888; --mana: #50a8f8;
+  --font-display: "Jacquard 24", Georgia, serif;
+  --font-body: "Jersey 20", "Arial Narrow", system-ui, sans-serif;
+  --font-label: Silkscreen, "Courier New", ui-monospace, monospace;
+  --frame-window: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--bone), inset 0 0 0 6px var(--void);
+  --frame-slot: inset 0 0 0 2px var(--void);
+  --cut: polygon(0 4px, 4px 4px, 4px 0, calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px));
+  --cut-2: polygon(0 8px, 4px 8px, 4px 4px, 8px 4px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 4px, calc(100% - 4px) 4px, calc(100% - 4px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 4px) calc(100% - 8px), calc(100% - 4px) calc(100% - 4px), calc(100% - 8px) calc(100% - 4px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 4px), 4px calc(100% - 4px), 4px calc(100% - 8px), 0 calc(100% - 8px));
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--void); }
+body {
+  margin: 0; background: var(--void); color: var(--bone);
+  font: 400 20px/28px var(--font-body); font-synthesis: none; -webkit-font-smoothing: none;
+  -webkit-text-size-adjust: 100%;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--candle); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.label { font: 400 16px/16px var(--font-label); text-transform: uppercase; letter-spacing: 1px; color: var(--dust); }
+.num { font-variant-numeric: tabular-nums; }
+
+.page {
+  max-width: 1120px; margin: 0 auto;
+  padding: 24px max(16px, env(safe-area-inset-right)) 56px max(16px, env(safe-area-inset-left));
+  display: grid; gap: 40px;
+}
+
+/* Title card: a letterbox band with void, bone, void rings top and bottom */
+.titlecard {
+  display: grid; justify-items: center; gap: 20px; padding: 44px 24px 48px; text-align: center;
+  background: var(--night);
+  box-shadow: inset 0 2px 0 var(--void), inset 0 4px 0 var(--bone), inset 0 6px 0 var(--void),
+              inset 0 -2px 0 var(--void), inset 0 -4px 0 var(--bone), inset 0 -6px 0 var(--void);
+}
+.kicker { margin: 0; color: var(--candle); }
+.title { margin: 0; font: 400 96px/96px var(--font-display); color: var(--bone); text-shadow: 4px 4px 0 var(--void); text-wrap: balance; }
+.sub { margin: 0; max-width: 40em; color: var(--dust); text-wrap: pretty; }
+.byline { margin: 0; }
+
+/* Window: night fill, void-bone-void frame, cut corners */
+.win { position: relative; background: var(--night); color: var(--bone); box-shadow: var(--frame-window); clip-path: var(--cut); padding: 24px 28px 28px; min-width: 0; }
+.sec { display: grid; justify-items: start; min-width: 0; }
+.sec > .win { justify-self: stretch; }
+.plate {
+  position: relative; z-index: 1; margin: 0 0 -2px 16px; padding: 10px 16px;
+  background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut); color: var(--candle);
+}
+.banner { margin: 0 0 12px; font: 400 48px/48px var(--font-display); color: var(--bone); text-wrap: balance; }
+.lede { margin: 0 0 24px; max-width: 46em; text-wrap: pretty; }
+.h3 { margin: 32px 0 6px; color: var(--candle); }
+.h3 + .note { margin: 0 0 16px; }
+.note { color: var(--dust); }
+p { margin: 0; }
+
+/* Hero roll: die tile plus the roll card */
+.roll { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.die { flex: none; width: 136px; height: 136px; padding: 4px; background: var(--void); clip-path: var(--cut-2); }
+.die__face {
+  display: grid; place-items: center; height: 100%; padding-bottom: 4px;
+  background: var(--night-raised); box-shadow: inset 0 -8px 0 var(--night); clip-path: var(--cut);
+  font: 400 80px/80px var(--font-body); font-variant-numeric: tabular-nums; color: var(--bone);
+}
+.is-crit .die__face { background: var(--candle); box-shadow: inset 0 -8px 0 var(--candle-deep); color: var(--on-candle); }
+.is-fumble .die__face { background: var(--heart); box-shadow: inset 0 -8px 0 var(--void); color: var(--void); }
+.dice { display: flex; gap: 12px; flex: none; }
+.roll__card { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 24px; row-gap: 12px; padding: 22px 28px 26px; }
+.roll__who { grid-column: 1 / -1; font: 400 40px/48px var(--font-body); text-wrap: balance; }
+.roll__verdict { font: 700 32px/32px var(--font-label); text-transform: uppercase; color: var(--candle); text-align: right; }
+.is-fumble .roll__verdict { color: var(--heart); }
+
+/* Stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.tile { display: grid; gap: 10px; align-content: start; padding: 20px 24px 24px; }
+.tile__num { font: 400 80px/80px var(--font-body); font-variant-numeric: tabular-nums; }
+.tile__note { color: var(--dust); }
+
+/* Dialogue box */
+.talk { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.dlg { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.dlg__speaker { z-index: 1; margin: 0 0 -2px 16px; padding: 10px 18px; display: flex; align-items: baseline; gap: 14px; }
+.dlg__name { color: var(--candle); }
+.dlg__box {
+  align-self: stretch; display: block; width: 100%; text-align: left; cursor: pointer; border: 0;
+  padding: 24px 64px 28px 28px;
+}
+.dlg__box:focus-visible { outline: none; box-shadow: var(--frame-window), inset 0 0 0 8px var(--candle); }
+.dlg__text { display: block; font: 400 40px/48px var(--font-body); min-height: 240px; text-wrap: pretty; }
+.dlg__foot { display: block; margin-top: 16px; }
+.next {
+  position: absolute; right: 28px; bottom: 28px; width: 20px; height: 12px; background: var(--candle);
+  clip-path: polygon(0 0, 20px 0, 20px 4px, 16px 4px, 16px 8px, 12px 8px, 12px 12px, 8px 12px, 8px 8px, 4px 8px, 4px 4px, 0 4px);
+  animation: blink 1s steps(1, end) infinite;
+}
+.dlg.is-typing .next { visibility: hidden; }
+@keyframes blink { 50% { opacity: 0; } }
+.stats { display: grid; gap: 18px; }
+.stat { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 12px; padding-bottom: 14px; border-bottom: 2px solid var(--night-raised); }
+.stat:last-of-type { border-bottom: 0; padding-bottom: 0; }
+.stat__val { font: 400 40px/40px var(--font-body); font-variant-numeric: tabular-nums; text-align: right; }
+.stat__sub { grid-column: 1 / -1; color: var(--dust); }
+
+/* Segmented bars (StatBar at a 2px dot) */
+.sbar { --fill: var(--candle); display: grid; grid-template-columns: 76px minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
+.sbar__track { height: 16px; padding: 2px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut); }
+.sbar__fill { display: block; height: 12px; min-width: 2px; width: calc(var(--v) * 100%); background: repeating-linear-gradient(90deg, var(--fill) 0 6px, var(--night-raised) 6px 8px); }
+.sbar__num { font: 400 20px/20px var(--font-body); font-variant-numeric: tabular-nums; text-align: right; }
+.sbar--agents { --fill: var(--herb); }
+.pbar { --fill: var(--herb); display: grid; gap: 6px; }
+.pbar--cost { --fill: var(--mana); }
+.pbar__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.pbar__num { font: 400 20px/20px var(--font-body); font-variant-numeric: tabular-nums; }
+
+/* Timelines and tracks */
+.legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0 0 14px; padding: 0; list-style: none; }
+.key { display: flex; align-items: center; gap: 8px; color: var(--dust); }
+.sw { flex: none; width: 14px; height: 14px; box-shadow: inset 0 0 0 2px var(--void); }
+.sw--tick { width: 4px; height: 16px; box-shadow: none; }
+.track { position: relative; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut); }
+.gridline { position: absolute; top: 2px; bottom: 2px; width: 2px; background: var(--night); pointer-events: none; }
+.band { position: absolute; top: 0; bottom: 0; left: 0; background: var(--void); pointer-events: none; }
+.tick { position: absolute; top: 0; height: 100%; width: 14px; margin-left: -7px; padding: 0; border: 0; background: none; cursor: pointer; }
+.tick::before { content: ""; position: absolute; left: 5px; top: var(--top, 8px); width: 4px; height: var(--h, 24px); background: var(--bone); }
+.tick--click::before { background: var(--dust); top: var(--ctop, 14px); height: var(--ch, 12px); }
+.run { position: absolute; padding: 0 6px; border: 0; background: var(--candle); box-shadow: var(--frame-slot); color: var(--on-candle); font: 400 16px/22px var(--font-label); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-align: left; cursor: pointer; min-width: 4px; }
+.run.is-cut { color: transparent; }
+.pip { position: absolute; width: 20px; height: 20px; margin-left: -10px; padding: 0; border: 0; background: none; cursor: pointer; }
+.pip::before { content: ""; position: absolute; left: 4px; top: 4px; width: 12px; height: 12px; background: var(--herb); box-shadow: inset 0 0 0 2px var(--void); }
+.pip--fail::before { background: var(--heart); }
+.axis { position: relative; height: 18px; margin-top: 8px; }
+.axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.axis span:first-child { transform: none; }
+.axis span:last-child { transform: translateX(-100%); }
+
+.tl { display: grid; gap: 10px; }
+.tl__row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 12px; }
+.tl__row--axis .axis { margin-top: 0; }
+.tl .track { height: 40px; }
+.tl .track--runs { height: 60px; }
+
+/* Ask to live */
+.asks { display: grid; gap: 14px; }
+.ask { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 6px 20px; align-items: center; }
+.ask__q { display: grid; gap: 4px; }
+.ask__q q { quotes: '"' '"'; }
+.ask__bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ask__track { position: relative; flex: 1; height: 24px; padding: 2px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut); }
+.ask__fill { display: block; height: 20px; min-width: 6px; padding: 0; border: 0; cursor: pointer; background: repeating-linear-gradient(90deg, var(--candle) 0 6px, var(--night-raised) 6px 8px); }
+.asks, .ask-axis { --dw: 100px; }
+.ask__dur { flex: none; width: var(--dw); font-variant-numeric: tabular-nums; }
+.ask-axis { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 20px; }
+.ask-axis .axis { margin-right: calc(var(--dw) + 10px); }
+
+/* Around the clock */
+.clock { display: grid; gap: 16px; }
+.day { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 6px 14px; align-items: start; }
+.day__head { display: grid; gap: 6px; padding-top: 4px; }
+.day__head .label { white-space: nowrap; }
+.day__spend { font: 400 20px/20px var(--font-body); font-variant-numeric: tabular-nums; }
+.day .track { height: 68px; }
+.day__note { grid-column: 2; color: var(--dust); text-wrap: pretty; }
+.clock-axis { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 14px; }
+
+/* Party */
+.party { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.pc { display: grid; gap: 12px; align-content: start; padding: 20px 22px 24px; }
+.pc__name { margin: 0; font: 400 48px/48px var(--font-display); }
+.pc__note { color: var(--dust); text-wrap: pretty; }
+.pc__lines { display: grid; gap: 6px; }
+.pc__line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.pc__line b { font: 400 40px/40px var(--font-body); font-variant-numeric: tabular-nums; }
+
+/* Cost */
+.cost-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 28px; align-items: end; margin-bottom: 8px; }
+.bignum { font: 400 80px/80px var(--font-body); font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 10px; margin-top: 22px; }
+.stack__bar { display: flex; gap: 2px; height: 32px; padding: 2px; background: var(--void); clip-path: var(--cut); }
+.seg { height: 100%; min-width: 4px; padding: 0; border: 0; cursor: pointer; background: var(--c); }
+.c1 { --c: var(--candle); } .c2 { --c: var(--mana); } .c3 { --c: var(--herb); }
+.stack .legend { margin: 0; }
+.stack .key b { font-weight: 400; color: var(--bone); font-variant-numeric: tabular-nums; }
+.eff { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
+.eff .tile { background: var(--night-raised); box-shadow: inset 0 0 0 2px var(--void); clip-path: var(--cut); }
+.eff .tile__num { font-size: 60px; line-height: 60px; }
+
+/* Fumble story */
+.steps { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 14px; }
+.steps li { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 14px; align-items: baseline; }
+.steps .label { color: var(--bone); display: inline-flex; align-items: center; gap: 10px; }
+.steps .label::before { content: ""; flex: none; width: 10px; height: 10px; background: var(--dust); box-shadow: inset 0 0 0 2px var(--void); }
+.steps .is-live .label::before { background: var(--herb); }
+.steps .is-fail .label::before { background: var(--heart); }
+.ruling { color: var(--bone); }
+
+/* Loot */
+.loot { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 32px; }
+.loot li { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 14px; align-items: start; }
+.loot li::before { content: ""; width: 10px; height: 10px; margin-top: 9px; background: var(--herb); box-shadow: inset 0 0 0 2px var(--void); }
+.growth { display: grid; gap: 12px; margin-top: 28px; max-width: 760px; }
+.growth .sbar { grid-template-columns: 156px minmax(0, 1fr) 220px; }
+.growth .sbar__num { text-align: left; }
+
+/* Notes */
+.notes { margin: 0; padding: 0 0 0 0; list-style: none; display: grid; gap: 10px; color: var(--dust); }
+.notes li { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 14px; }
+.notes li::before { content: ""; width: 6px; height: 6px; margin-top: 11px; background: var(--dust); }
+
+/* Table views */
+.tv { margin-top: 18px; }
+.tv > summary { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; color: var(--candle); padding: 4px 0; }
+.tv > summary::-webkit-details-marker { display: none; }
+.tv > summary::before { content: ""; width: 6px; height: 10px; background: var(--candle); clip-path: polygon(0 0, 2px 0, 2px 2px, 4px 2px, 4px 4px, 6px 4px, 6px 6px, 4px 6px, 4px 8px, 2px 8px, 2px 10px, 0 10px); }
+.tv[open] > summary::before { transform: rotate(90deg); }
+.tv__wrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font: 400 20px/24px var(--font-body); }
+th { font: 400 16px/16px var(--font-label); text-transform: uppercase; letter-spacing: 1px; color: var(--dust); text-align: left; padding: 8px 10px; }
+td { padding: 6px 10px; border-top: 2px solid var(--night-raised); vertical-align: top; }
+td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Tooltip */
+.tip { position: fixed; z-index: 50; left: 0; top: 0; max-width: 300px; padding: 12px 16px 14px; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut); pointer-events: none; font: 400 20px/24px var(--font-body); }
+.tip[hidden] { display: none; }
+.tip__t { display: block; margin-bottom: 6px; color: var(--candle); }
+.tip__l { display: block; color: var(--dust); }
+.tip__l:first-of-type { color: var(--bone); }
+
+.foot { text-align: center; }
+
+@media (max-width: 1000px) {
+  .party { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .eff { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .title { font-size: 72px; line-height: 72px; }
+}
+@media (max-width: 860px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile__num { font-size: 60px; line-height: 60px; }
+  .talk { grid-template-columns: 1fr; }
+  .ask, .ask-axis { grid-template-columns: 1fr; }
+  .ask-axis > :first-child { display: none; }
+}
+@media (max-width: 640px) {
+  .page { gap: 32px; }
+  .title { font-size: 48px; line-height: 48px; text-shadow: 2px 2px 0 var(--void); }
+  .titlecard { padding: 36px 18px 40px; }
+  .win { padding: 20px 18px 24px; }
+  .roll { flex-direction: column; align-items: stretch; }
+  .roll .die, .roll .dice { align-self: flex-start; }
+  .roll__who { font-size: 40px; line-height: 48px; }
+  .roll__card { grid-template-columns: 1fr; padding: 20px 20px 24px; }
+  .roll__verdict { text-align: left; }
+  .dlg__box { padding: 20px 44px 24px 20px; }
+  .dlg__text { font-size: 20px; line-height: 28px; min-height: 168px; }
+  .next { right: 20px; bottom: 24px; }
+  .tl__row { grid-template-columns: 1fr; gap: 6px; }
+  .tl__row--axis > :first-child { display: none; }
+  .day, .clock-axis { grid-template-columns: 1fr; }
+  .day__head { display: flex; justify-content: space-between; align-items: baseline; }
+  .day__note { grid-column: 1; }
+  .clock-axis > :first-child { display: none; }
+  .axis .odd { display: none; }
+  .loot { grid-template-columns: 1fr; }
+  .steps li { grid-template-columns: 1fr; gap: 4px; }
+  .cost-top { grid-template-columns: 1fr; }
+  .growth .sbar { grid-template-columns: 1fr; gap: 6px; }
+}
+@media (max-width: 480px) {
+  .tiles { gap: 12px; }
+  .tile { padding: 16px 16px 18px; }
+  .tile__num { font-size: 40px; line-height: 40px; }
+  .eff { gap: 12px; }
+  .eff .tile__num { font-size: 40px; line-height: 40px; }
+  .die { width: 104px; height: 104px; }
+  .die__face { font-size: 60px; line-height: 60px; }
+  .party { grid-template-columns: 1fr; }
+  .bignum { font-size: 60px; line-height: 60px; }
+  .asks, .ask-axis { --dw: 92px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .next { animation: none; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="titlecard">
+    <p class="kicker label">Build log · Oct 22 to 28, 2026</p>
+    <h1 class="title">Six Nights at the Story Table</h1>
+    <p class="sub">The Story Table is a tabletop roleplaying show for Twitch. Players act from their phones, an AI storyteller plans and narrates each round for the director to approve, and dice decide how it goes. Kevin Huff brought a first version to Claude Code on Thursday night, October 22. By 11:35 AM the next Wednesday, the day of its first live show, nine releases had gone live.</p>
+    <p class="byline label">Kevin Huff · built with Claude Code · play time 132:55</p>
+  </header>
+
+  <section aria-label="The headline numbers">
+    <div class="roll is-crit">
+      <div class="die" aria-hidden="true"><div class="die__face" id="hero-die">29</div></div>
+      <div class="win roll__card">
+        <p class="roll__who">29 lines of code and tests for every word Kevin typed</p>
+        <p class="label">55,925 lines added / 1,913 words typed</p>
+        <p class="roll__verdict">Critical</p>
+      </div>
+    </div>
+    <div class="tiles">
+      <div class="win tile"><span class="label">Hours</span><span class="tile__num">133</span><span class="tile__note">First message to ninth release: Thu 10:40 PM to Wed 11:35 AM</span></div>
+      <div class="win tile"><span class="label">Releases</span><span class="tile__num">9</span><span class="tile__note">7 of them between 11 PM Tuesday and noon Wednesday</span></div>
+      <div class="win tile"><span class="label">Sprints</span><span class="tile__num">30</span><span class="tile__note">1,459 AI agents. More of them reviewed work (725) than built it (612)</span></div>
+      <div class="win tile"><span class="label">Tests</span><span class="tile__num">3,832</span><span class="tile__note">2,627 unit, 1,153 database and 52 browser tests</span></div>
+      <div class="win tile"><span class="label">Lines added</span><span class="tile__num">55,925</span><span class="tile__note">72% of them are tests</span></div>
+      <div class="win tile"><span class="label">Words typed</span><span class="tile__num">1,913</span><span class="tile__note">By Kevin, in 71 messages and 12 notes on his answers</span></div>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-typed">
+    <div class="plate label">Director</div>
+    <div class="win">
+      <h2 class="banner" id="h-typed">What Kevin typed</h2>
+      <p class="lede">Kevin set the direction and answered questions. Claude wrote the code. Across six nights he typed 1,913 words, about four double-spaced pages, and his median message was 12 words long. Press the box to read some of them, word for word.</p>
+      <div class="talk">
+        <div class="dlg" id="dlg">
+          <div class="win dlg__speaker"><span class="dlg__name">Kevin</span><span class="label" id="dlg-when">Thu 10:40 PM</span></div>
+          <button class="win dlg__box" type="button" id="dlg-box" aria-describedby="dlg-help">
+            <span class="dlg__text" id="dlg-text" aria-hidden="true">I'd like to see if you can improve this project. Use the sprint skill and focus on usability and on stream presentation. …</span>
+            <span class="dlg__foot label" id="dlg-count">1 of 10 · press for the next line</span>
+            <span class="next" aria-hidden="true"></span>
+          </button>
+          <span class="sr" id="dlg-help">Shows the next message Kevin typed.</span>
+          <span class="sr" aria-live="polite" id="dlg-live"></span>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="label">Messages</span><span class="stat__val">71</span><span class="stat__sub">1,744 words in all</span></div>
+          <div class="stat"><span class="label">Median message</span><span class="stat__val">12</span><span class="stat__sub">words</span></div>
+          <div class="stat"><span class="label">Answers</span><span class="stat__val">68</span><span class="stat__sub">to multiple-choice questions. 56 were a single click; 12 came with a note (169 words)</span></div>
+          <div class="sbar sbar--agents" aria-label="56 of 68 answers were a single click"><span class="label">Clicks</span><span class="sbar__track"><span class="sbar__fill" style="--v: 0.8235"></span></span><span class="sbar__num">56/68</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-night">
+    <div class="plate label">Show night</div>
+    <div class="win">
+      <h2 class="banner" id="h-night">One night, seven releases</h2>
+      <p class="lede">Tuesday 10 PM to Wednesday noon, the day of the first live show. Kevin sent requests as he thought of them. Features went to sprints, and the two quick fixes went straight to the main session. He sent nothing between 2:44 AM and 9:24 AM; in that time a 75-agent sprint built the voices. At 9:24 he wrote "deploy it once the check passes", and it was live at 9:50.</p>
+      <ul class="legend" aria-label="Legend">
+        <li class="key"><span class="sw sw--tick" style="background: var(--bone)"></span>Kevin typed a message</li>
+        <li class="key"><span class="sw sw--tick" style="background: var(--dust); height: 10px"></span>Kevin clicked an answer</li>
+        <li class="key"><span class="sw" style="background: var(--candle)"></span>Sprint running</li>
+        <li class="key"><span class="sw" style="background: var(--herb)"></span>Release went live</li>
+        <li class="key"><span class="sw" style="background: var(--heart)"></span>Live check failed</li>
+      </ul>
+      <div class="tl" id="night"></div>
+      <details class="tv"><summary class="label">Show as a table</summary><div class="tv__wrap" id="night-table"></div></details>
+
+      <h3 class="h3 label">From ask to live</h3>
+      <p class="note">Time from Kevin's message to the change running on the live site.</p>
+      <div class="asks" id="asks"></div>
+      <div class="ask-axis"><span></span><div class="axis label" id="ask-axis"></div></div>
+      <details class="tv"><summary class="label">Show as a table</summary><div class="tv__wrap" id="ask-table"></div></details>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-clock">
+    <div class="plate label">Sprint log</div>
+    <div class="win">
+      <h2 class="banner" id="h-clock">Around the clock</h2>
+      <p class="lede">This chart puts all 30 sprint runs on a 24-hour clock, each from its first agent to its last. The dark band is midnight to 6 AM; 19 hours of sprint work fell inside it. The ticks along the top of each day are Kevin's messages.</p>
+      <ul class="legend" aria-label="Legend">
+        <li class="key"><span class="sw sw--tick" style="background: var(--bone); height: 10px"></span>Kevin typed a message</li>
+        <li class="key"><span class="sw" style="background: var(--candle)"></span>Sprint run</li>
+        <li class="key"><span class="sw" style="background: var(--herb)"></span>Release went live</li>
+        <li class="key"><span class="sw" style="background: var(--void); box-shadow: inset 0 0 0 2px var(--night-raised)"></span>Midnight to 6 AM</li>
+      </ul>
+      <div class="clock" id="clock"></div>
+      <div class="clock-axis"><span></span><div class="axis label" id="clock-axis"></div></div>
+      <details class="tv"><summary class="label">Show as a table</summary><div class="tv__wrap" id="clock-table"></div></details>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-party">
+    <div class="plate label">Party</div>
+    <div class="win">
+      <h2 class="banner" id="h-party">The party</h2>
+      <p class="lede">Three Claude models split the 1,459 sprint agents by job. Opus 5.5 planned, reviewed and ran the main session. Sonnet 5.5 ran more than half of the agents for 9% of the cost. Haiku 5.5 took the simplest builds. Each card shows its share of the sprint agents and of the total cost.</p>
+      <div class="party">
+        <div class="win pc">
+          <h3 class="pc__name">Opus 5.5</h3>
+          <span class="label">Planner · reviewer · main session</span>
+          <div class="pbar pbar--agents"><div class="pbar__head"><span class="label">Agents</span><span class="pbar__num">630</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.4318"></span></span></div>
+          <div class="pbar pbar--cost"><div class="pbar__head"><span class="label">Cost</span><span class="pbar__num">$1,910</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.9117"></span></span></div>
+          <p class="pc__note">58 plans and critiques, 445 reviews including every final review, 46 integrations, 77 builds of hard tickets and retries, and every conversation with Kevin.</p>
+        </div>
+        <div class="win pc">
+          <h3 class="pc__name">Sonnet 5.5</h3>
+          <span class="label">Builder · reviewer</span>
+          <div class="pbar pbar--agents"><div class="pbar__head"><span class="label">Agents</span><span class="pbar__num">771</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.5284"></span></span></div>
+          <div class="pbar pbar--cost"><div class="pbar__head"><span class="label">Cost</span><span class="pbar__num">$184</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.0878"></span></span></div>
+          <p class="pc__note">477 builds and 280 reviews, plus 14 agents that mapped, read and audited the code.</p>
+        </div>
+        <div class="win pc">
+          <h3 class="pc__name">Haiku 5.5</h3>
+          <span class="label">Builder</span>
+          <div class="pbar pbar--agents"><div class="pbar__head"><span class="label">Agents</span><span class="pbar__num">58</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.0398"></span></span></div>
+          <div class="pbar pbar--cost"><div class="pbar__head"><span class="label">Cost</span><span class="pbar__num">$1</span></div><span class="sbar__track"><span class="sbar__fill" style="--v: 0.0005"></span></span></div>
+          <p class="pc__note">58 builds of the most mechanical tickets, each checked by a stronger reviewer.</p>
+        </div>
+        <div class="win pc">
+          <h3 class="pc__name">Kevin</h3>
+          <span class="label">Director</span>
+          <div class="pc__lines">
+            <div class="pc__line"><span class="label">Words</span><b>1,913</b></div>
+            <div class="pc__line"><span class="label">Answers</span><b>68</b></div>
+          </div>
+          <p class="pc__note">Picked what to build, answered the design questions, brought in the cast's feedback and said when to ship.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-cost">
+    <div class="plate label">Gold</div>
+    <div class="win">
+      <h2 class="banner" id="h-cost">What it cost</h2>
+      <div class="cost-top">
+        <span class="bignum">$2,095</span>
+        <p class="note">What the tokens in Claude Code's logs would cost at API list prices. The biggest share went to re-reading context the models had already cached, which is billed at a tenth of the normal input price.</p>
+      </div>
+      <div class="stack" id="stack-who"></div>
+      <div class="stack" id="stack-what"></div>
+      <div class="eff">
+        <div class="tile"><span class="label">From cache</span><span class="tile__num">97%</span><span class="tile__note">of everything the models read: 4.5 billion tokens</span></div>
+        <div class="tile"><span class="label">Per agent</span><span class="tile__num">$1.13</span><span class="tile__note">average for a sprint agent</span></div>
+        <div class="tile"><span class="label">Per line</span><span class="tile__num">$0.037</span><span class="tile__note">for each line of code and tests added</span></div>
+        <div class="tile"><span class="label">Replies</span><span class="tile__num">26,682</span><span class="tile__note">model replies, 27.8 million tokens of output</span></div>
+      </div>
+      <details class="tv"><summary class="label">Show as a table</summary><div class="tv__wrap" id="cost-table"></div></details>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-fumble">
+    <div class="plate label">Critical failure</div>
+    <div class="win">
+      <h2 class="banner" id="h-fumble">The roll that almost failed</h2>
+      <div class="roll is-fumble">
+        <div class="dice" aria-hidden="true">
+          <div class="die"><div class="die__face" id="fumble-a">1</div></div>
+          <div class="die"><div class="die__face" id="fumble-b">1</div></div>
+        </div>
+        <div class="win roll__card" style="background: var(--night-raised)">
+          <p class="roll__who">Double ones at 4:31 AM on show day</p>
+          <p class="label">Live check · narration stalled</p>
+          <p class="roll__verdict">Critical failure</p>
+        </div>
+      </div>
+      <ol class="steps">
+        <li><span class="label">4:26 AM</span><p>The last live check of the dice build forces double ones to test the new critical failures. The AI's ruling: <span class="ruling">"Dash is caught red-handed in the manager's office, drawer open, as the break ends."</span></p></li>
+        <li class="is-fail"><span class="label">4:31 AM</span><p>The check fails. The stream page played the first narration clip to its end, but its one report that the clip had finished never reached the server, so the narration sat there for more than five minutes.</p></li>
+        <li><span class="label">4:42 AM</span><p>Claude commits the fix. The stream page now repeats that report every two seconds until the server moves on, and the new tests fail on the old code.</p></li>
+        <li class="is-live"><span class="label">4:55 AM</span><p>Live, 24 minutes after the failure.</p></li>
+        <li><span class="label">9:37 AM</span><p>The voices live check plays a full round of narration through on the stream page.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-loot">
+    <div class="plate label">Loot</div>
+    <div class="win">
+      <h2 class="banner" id="h-loot">On the table now</h2>
+      <p class="lede">Everything here shipped during the six nights, on top of the first version.</p>
+      <ul class="loot">
+        <li>A guided workspace for the director and a simple phone seat for each player</li>
+        <li>Producers who help run the show, with their own stream links</li>
+        <li>OBS stream pages: a full scene and a transparent overlay</li>
+        <li>Players write their own characters, and one prompt drafts a whole character or scenario</li>
+        <li>Sogni pictures of scenes, action rounds and beats, plus character portraits</li>
+        <li>A public gallery of each show's pictures</li>
+        <li>Help built into the app</li>
+        <li>A simpler setup and live show for first-timers</li>
+        <li>The Story Table look on every screen and stream page</li>
+        <li>Speak and act in the same round, with lines voiced and the story on the seat</li>
+        <li>Every line rolls, and double ones are a critical failure</li>
+        <li>ElevenLabs voices for players and characters, Eleven v4 emotion tags, and Help me say it</li>
+      </ul>
+      <div class="growth">
+        <div class="sbar"><span class="label">First commit</span><span class="sbar__track"><span class="sbar__fill" style="--v: 0.3072"></span></span><span class="sbar__num">24,080 lines · 142 files</span></div>
+        <div class="sbar"><span class="label">Now</span><span class="sbar__track"><span class="sbar__fill" style="--v: 1"></span></span><span class="sbar__num">78,396 lines · 407 files</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-notes">
+    <div class="plate label">Notes</div>
+    <div class="win">
+      <h2 class="banner" id="h-notes">How we counted</h2>
+      <ul class="notes">
+        <li>Times are US Central.</li>
+        <li>Cost is what the tokens in Claude Code's logs for this project would cost at API list prices: every main session, helper agent and sprint agent from October 22 to the afternoon of October 28.</li>
+        <li>Not counted: building the first version, before October 22, and the AI, voice and picture calls the app itself makes.</li>
+        <li>Lines come from git, from the first commit to the ninth release (b99e916). 40,270 of the 55,925 added lines are tests.</li>
+        <li>Words typed covers every message Kevin typed into this project's sessions, side chats included, plus the 12 notes he added to multiple-choice answers. One pasted message from a player (216 words) is left out. A click on an answer counts as an answer, not as words.</li>
+        <li>A sprint run's bar goes from its first agent's start to its last agent's finish. The design language run's 12 hours include an internet outage.</li>
+        <li>Built with Claude Code on Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5.</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="foot label">The Story Table · built with Claude Code</p>
+</main>
+
+<div class="tip" id="tip" role="tooltip" hidden></div>
+
+<script>
+(() => {
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DAYS = { 22: 'Thu', 23: 'Fri', 24: 'Sat', 25: 'Sun', 26: 'Mon', 27: 'Tue', 28: 'Wed' };
+  const toMin = s => { const [d, hm] = s.split(' '); const [h, m] = hm.split(':').map(Number); return (Number(d) - 22) * 1440 + h * 60 + m; };
+  const clock12 = r => { const h = Math.floor(r / 60), m = r % 60; return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+  const fmt = min => `${DAYS[22 + Math.floor(min / 1440)]} ${clock12(min % 1440)}`;
+  const dur = min => { const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h ${m} min` : `${m} min`; };
+  const money = n => '$' + n.toLocaleString('en-US');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  /* ---------- Data ---------- */
+  const RUNS = [
+    ['22 22:56', '22 23:50', 7, 20, 'Audit every screen and plan'],
+    ['22 23:55', '23 04:12', 106, 159, 'Get ready for the first live show'],
+    ['23 04:17', '23 11:17', 65, 110, 'Usability for the first show'],
+    ['23 11:19', '23 13:03', 34, 56, 'Final fixes to the stream overlay'],
+    ['23 13:14', '23 15:15', 44, 60, 'Action rounds on stream'],
+    ['23 22:43', '24 00:55', 46, 73, 'A form-only player seat'],
+    ['24 11:16', '24 11:45', 5, 11, 'Plan player-made characters'],
+    ['24 11:56', '24 14:17', 73, 92, 'Player-made characters and one-prompt AI'],
+    ['24 14:19', '24 15:13', 19, 26, 'Fix pass: the new generators'],
+    ['24 15:14', '24 15:44', 14, 17, 'Fix pass: generator polish'],
+    ['24 18:09', '24 18:51', 7, 22, 'Live AI checks'],
+    ['24 18:53', '24 22:01', 99, 118, 'Scene pictures and portraits'],
+    ['24 22:13', '24 22:47', 36, 23, 'Fix pass: pictures and portraits'],
+    ['24 22:50', '24 23:23', 28, 18, 'Fix pass: pictures, second round'],
+    ['24 23:24', '24 23:57', 10, 12, 'Fix pass: pictures, last round'],
+    ['25 00:36', '25 01:50', 35, 34, 'Automatic action pictures'],
+    ['25 01:54', '25 02:39', 16, 16, 'Fix pass: action pictures'],
+    ['25 02:41', '25 03:25', 14, 16, 'Fix pass: the newest picture on stream'],
+    ['25 16:23', '25 19:56', 79, 94, 'Picture controls for the director'],
+    ['25 21:45', '26 00:53', 59, 75, 'A public show gallery'],
+    ['26 00:59', '26 02:07', 26, 23, 'Fix pass: gallery'],
+    ['26 17:34', '26 19:40', 68, 72, 'Simpler for first-timers, part A'],
+    ['26 19:43', '26 21:31', 50, 47, 'Fix pass: part A'],
+    ['26 21:38', '27 00:28', 105, 110, 'Simpler for first-timers, part B'],
+    ['27 00:55', '27 02:14', 42, 37, 'Fix pass: part B'],
+    ['27 10:50', '27 22:52', 145, 73, 'The Story Table design language', 'Includes an internet outage'],
+    ['28 00:11', '28 02:07', 61, 43, 'Speak and act in one round', null, 'Lines'],
+    ['28 01:50', '28 04:19', 57, 70, 'Every line rolls, critical failures', null, 'Rolls'],
+    ['28 04:21', '28 09:33', 75, 72, 'Player and character voices', null, 'Voices'],
+    ['28 09:41', '28 11:12', 34, 41, 'Follow-up fixes', null, 'Fixes'],
+  ].map(([s, e, agents, cost, name, note, short]) => ({ s: toMin(s), e: toMin(e), agents, cost, name, note, short }));
+
+  const RELEASES = [
+    ['25 23:15', 'a4e3af1', 'First deploy to Railway'],
+    ['27 08:20', '347ffd9', 'The show gallery and the simpler setup'],
+    ['27 23:09', 'e270d2d', 'The Story Table design language'],
+    ['27 23:47', '1dce18b', 'Checkboxes and disabled buttons easy to tell apart'],
+    ['28 01:12', 'fbe83b2', 'Safe actions stop failing planning; steadier seat audio'],
+    ['28 02:20', '87ed19b', 'Speak and act in one round; voiced player lines'],
+    ['28 04:55', '5f561e1', 'Every line rolls, critical failures; narration keeps moving'],
+    ['28 09:50', '93e0779', 'Player and character voices, v4 emotion tags, Help me say it'],
+    ['28 11:35', 'b99e916', 'Follow-up fixes: no tags on stream, a voice for every line'],
+  ].map(([t, sha, what]) => ({ t: toMin(t), sha, what }));
+
+  // Every message Kevin typed: day, time, words.
+  const TYPED = [
+    [22,'22:38',1],[22,'22:40',65],[22,'23:58',6],
+    [23,'00:04',7],[23,'00:22',15],[23,'00:23',15],[23,'00:24',22],[23,'00:25',13],[23,'00:29',6],[23,'00:30',1],[23,'00:30',8],[23,'12:01',5],[23,'12:53',4],[23,'22:14',40],[23,'22:33',22],
+    [24,'11:14',66],[24,'17:45',73],[24,'22:46',4],
+    [25,'00:26',10],[25,'00:29',13],[25,'00:34',11],[25,'10:07',10],[25,'12:21',55],[25,'12:30',7],[25,'14:46',6],[25,'16:17',8],[25,'21:20',19],[25,'21:24',13],[25,'22:05',9],[25,'22:51',12],[25,'22:55',11],[25,'23:56',13],
+    [26,'00:03',29],[26,'00:06',6],[26,'00:41',6],[26,'00:42',8],[26,'08:06',4],[26,'16:37',50],[26,'16:51',78],[26,'17:28',19],[26,'22:43',11],[26,'22:53',5],
+    [27,'08:18',6],[27,'08:25',8],[27,'08:31',8],[27,'08:32',8],[27,'13:47',9],[27,'22:28',8],[27,'22:51',9],[27,'22:52',20],
+    [28,'00:02',48],[28,'00:26',27],[28,'00:29',8],[28,'00:49',17],[28,'01:31',83],[28,'01:37',354],[28,'01:46',47],[28,'01:58',36],[28,'02:01',16],[28,'02:04',45],[28,'02:13',57],[28,'02:21',14],[28,'02:25',19],[28,'02:27',9],[28,'02:32',19],[28,'02:43',37],[28,'09:24',6],[28,'14:18',12],[28,'16:41',9],[28,'16:56',6],[28,'16:57',13],
+  ].map(([d, hm, words]) => ({ t: toMin(`${d} ${hm}`), words }));
+
+  const SIDE = 'Side chat in another session, drafting a scenario';
+  const NIGHT_KEVIN = [
+    ['27 22:28', 't', "internet restored let me see where you're at"],
+    ['27 22:51', 't', "I don't see the work in the mission control"],
+    ['27 22:52', 't', "it's on my internet went out and I didn't restart your session. So don't feel bad about having to rush"],
+    ['27 22:52', 'c', 'Picked: Faster path tonight'],
+    ['28 00:02', 't', 'A few fixes, want the players to be able to do both actions and speaking in one round. That breaks currently. …'],
+    ['28 00:06', 't', "Picked: Two rolls · Narrator reads them aloud too · Before today's show. Note: latest beat should be up front with the option to pull up the whole log"],
+    ['28 00:09', 'c', 'Picked: Looks right, build it'],
+    ['28 00:26', 't', "quick aside on the railway test we're doing getting a lot of Generation failed. …"],
+    ['28 00:29', 't', "check the clewdr logs while you're at it"],
+    ['28 00:49', 't', 'on the player seat page sometimes the audio gets a little glitchy and skips back and forth.'],
+    ['28 01:31', 't', "want to add in the idea of critical failures, and also every action and convesation should invite a roll and potential concequences …"],
+    ['28 01:34', 't', 'just do the work now. I want everything up tonight.'],
+    ['28 01:37', 't', SIDE], ['28 01:46', 't', SIDE], ['28 01:58', 't', SIDE], ['28 02:01', 't', SIDE], ['28 02:04', 't', SIDE], ['28 02:13', 't', SIDE],
+    ['28 02:21', 't', "I'd like to let the players choose their voice too for my elevenlab voices."],
+    ['28 02:25', 't', "could you also generate a list of all the changes we've made and those that are currently in progress"],
+    ['28 02:25', 'c', "Picked: I'll add Voices: Read · Say lines; narrator reads actions · Yes, director picks"],
+    ['28 02:27', 't', 'I added voice read to the current elevenlabs key'],
+    ['28 02:29', 'c', 'Picked: Looks right, build it'],
+    ['28 02:32', 't', "also we should be using elevenv4 so let's make sure that the AI makes use of the emotive features."],
+    ['28 02:43', 't', 'maybe add an ai assist button to conversation for the players that will take their input and expand it …'],
+    ['28 02:44', 'c', 'Picked: Looks right, build it'],
+    ['28 09:24', 't', 'deploy it once the check passes'],
+  ].map(([t, kind, text]) => ({ t: toMin(t), kind, text }));
+
+  const FAIL = { t: toMin('28 04:31'), what: 'Live check failed: the stream narration stalled on its first clip' };
+
+  const ASKS = [
+    ['28 00:49', '28 01:12', 'sometimes the audio gets a little glitchy and skips back and forth', 'Steadier seat audio'],
+    ['28 00:26', '28 01:12', 'getting a lot of Generation failed', 'Safe actions stop failing planning, with one corrected AI retry'],
+    ['28 00:02', '28 02:20', 'want the players to be able to do both actions and speaking in one round', 'Speak and act in one round, voiced lines, the story on the seat'],
+    ['28 01:31', '28 04:55', 'So even conversations should cause a roll.', 'Every line rolls, with critical failures'],
+    ['28 02:21', '28 09:50', "I'd like to let the players choose their voice too", 'Player and character voices, v4 emotion tags, Help me say it'],
+    ['27 08:25', '27 23:09', 'okay now I got new design language', 'The Story Table design language', 'An internet outage in the middle'],
+    ['26 16:37', '27 08:20', "sounds like it's a little too complicated", 'A simpler setup and live show', 'Two sprints and two fix passes overnight'],
+  ].map(([a, l, q, what, note]) => ({ asked: toMin(a), live: toMin(l), q, what, note }));
+
+  const DAY_NOTES = {
+    22: [29, '10:40 PM: Kevin asks for better usability and stream presentation. The first sprint audits every screen.'],
+    23: [470, 'Getting ready for the first show: the app split into screens, OBS layouts, producers, help, action rounds on stream. At night, a form-only seat for players who have never played an RPG.'],
+    24: [439, 'Players write their own characters, and one prompt fills in a whole character or scenario. Then live AI checks, and scene pictures and portraits from Sogni.'],
+    25: [296, "Action pictures, picture controls for the director and a public gallery for chat. Claude commits the week's work at 9:47 PM, and the app goes to Railway at 11:15 PM."],
+    26: [303, "4:37 PM: feedback from the cast says it's too complicated. Two sprints and two fix passes simplify setup and the live show overnight."],
+    27: [244, '8:20 AM: the simpler version is live. The design language sprint runs through an internet outage and goes live at 11:09 PM.'],
+    28: [315, 'Show day. Speak and act in one round, every line rolls, critical failures, player voices. Five releases before noon.'],
+  };
+
+  const LINES = [
+    ['Thu 10:40 PM', "I'd like to see if you can improve this project. Use the sprint skill and focus on usability and on stream presentation. …"],
+    ['Fri 10:14 PM', 'okay I need to grossly simplify the user interface for the seats. They need a form only version … they are not RPG players'],
+    ['Sat 11:14 AM', "… The players should be able to create their own chracters. I'd also like to add a full generate from AI option for both the scenario and characters. …"],
+    ['Mon 4:37 PM', "so got some feedback and sounds like it's a little too complicated. original idea was talk to one ai and build the story through just an interaction. …"],
+    ['Mon 5:28 PM', "I'm going to take a nap so try to work on your own from here on without my interaction"],
+    ['Tue 8:18 AM', 'commit & push and deploy please'],
+    ['Wed 1:31 AM', "… If I say something to someone there's a chance it comes across wrong and they want to fight me. So even conversations should cause a roll. …"],
+    ['Wed 1:34 AM', 'just do the work now. I want everything up tonight.'],
+    ['Wed 2:21 AM', "I'd like to let the players choose their voice too for my elevenlab voices."],
+    ['Wed 9:24 AM', 'deploy it once the check passes'],
+  ];
+
+  /* ---------- Tooltip ---------- */
+  const tip = document.getElementById('tip');
+  const tips = new WeakMap();
+  const setTip = (node, title, lines, label) => { tips.set(node, { title, lines: lines.filter(Boolean) }); node.setAttribute('aria-label', label || [title, ...lines.filter(Boolean)].join('. ')); };
+  let tipFor = null;
+  const place = (x, y) => {
+    const r = tip.getBoundingClientRect();
+    let left = x + 14, top = y + 18;
+    if (left + r.width > innerWidth - 8) left = Math.max(8, x - r.width - 14);
+    if (top + r.height > innerHeight - 8) top = Math.max(8, y - r.height - 14);
+    tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+  };
+  const show = (node, x, y) => {
+    const data = tips.get(node); if (!data) return;
+    tipFor = node; tip.replaceChildren(el('span', 'tip__t label', data.title), ...data.lines.map(l => el('span', 'tip__l', l)));
+    tip.hidden = false; place(x, y);
+  };
+  const hide = () => { tipFor = null; tip.hidden = true; };
+  const owner = t => { let n = t instanceof Element ? t : null; while (n && !tips.has(n)) n = n.parentElement; return n; };
+  document.addEventListener('pointermove', e => { const n = owner(e.target); if (n) { if (n !== tipFor) show(n, e.clientX, e.clientY); else place(e.clientX, e.clientY); } else if (tipFor) hide(); });
+  document.addEventListener('pointerdown', e => { const n = owner(e.target); if (n) show(n, e.clientX, e.clientY); else hide(); });
+  document.addEventListener('focusin', e => { const n = owner(e.target); if (n) { const r = n.getBoundingClientRect(); show(n, r.left + r.width / 2, r.bottom); } });
+  document.addEventListener('focusout', hide);
+  addEventListener('scroll', () => { if (tipFor && document.activeElement !== tipFor) hide(); }, { passive: true });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+
+  /* ---------- Tables ---------- */
+  const table = (host, heads, rows, rightCols = []) => {
+    const t = el('table'); const hr = el('tr');
+    heads.forEach((h, i) => { const th = el('th', rightCols.includes(i) ? 'r' : '', h); th.scope = 'col'; hr.append(th); });
+    const thead = el('thead'); thead.append(hr); const tbody = el('tbody');
+    rows.forEach(r => { const tr = el('tr'); r.forEach((c, i) => tr.append(el('td', rightCols.includes(i) ? 'r' : '', c))); tbody.append(tr); });
+    t.append(thead, tbody); document.getElementById(host).append(t);
+  };
+
+  /* ---------- Axis helper ---------- */
+  const axis = (host, ticks) => { const a = document.getElementById(host) || host; ticks.forEach(([p, text, odd]) => { const s = el('span', odd ? 'odd' : '', text); s.style.left = `${p}%`; a.append(s); }); return a; };
+
+  /* ---------- Show night timeline ---------- */
+  {
+    const T0 = toMin('27 22:00'), T1 = toMin('28 12:00');
+    const pct = m => ((Math.min(Math.max(m, T0), T1) - T0) / (T1 - T0)) * 100;
+    const host = document.getElementById('night');
+    const row = (name, cls) => { const r = el('div', 'tl__row'); const n = el('span', 'label', name); const tr = el('div', `track ${cls || ''}`); r.append(n, tr); host.append(r); for (let h = 2; h < 14; h += 2) { const g = el('span', 'gridline'); g.style.left = `${(h / 14) * 100}%`; tr.append(g); } return tr; };
+    const kev = row('Kevin'), runs = row('Sprints', 'track--runs'), live = row('Live');
+    NIGHT_KEVIN.forEach(k => {
+      const b = el('button', `tick${k.kind === 'c' ? ' tick--click' : ''}`); b.type = 'button'; b.style.left = `${pct(k.t)}%`;
+      b.style.setProperty('--top', '8px'); b.style.setProperty('--h', '24px'); b.style.setProperty('--ctop', '14px');
+      setTip(b, fmt(k.t), [k.kind === 'c' ? k.text : k.text === SIDE ? SIDE : `"${k.text}"`]);
+      kev.append(b);
+    });
+    const ends = [];
+    RUNS.filter(r => r.e > T0 && r.s < T1).forEach(r => {
+      let lane = ends.findIndex(end => end <= r.s); if (lane < 0) { lane = ends.length; ends.push(0); } ends[lane] = r.e;
+      const b = el('button', 'run', r.short || ''); b.type = 'button';
+      b.style.left = `${pct(r.s)}%`; b.style.width = `${pct(r.e) - pct(r.s)}%`; b.style.top = `${6 + lane * 26}px`; b.style.height = '22px';
+      setTip(b, r.name, [`${fmt(r.s)} to ${fmt(r.e)}`, `${r.agents} agents · ${money(r.cost)}`, r.note || (r.s < T0 ? `Started ${fmt(r.s)}` : '')]);
+      runs.append(b);
+    });
+    RELEASES.filter(r => r.t >= T0 && r.t <= T1).forEach(r => {
+      const b = el('button', 'pip'); b.type = 'button'; b.style.left = `${pct(r.t)}%`; b.style.top = '10px';
+      setTip(b, `Live ${fmt(r.t)}`, [r.what, `Release ${r.sha}`]); live.append(b);
+    });
+    const f = el('button', 'pip pip--fail'); f.type = 'button'; f.style.left = `${pct(FAIL.t)}%`; f.style.top = '10px';
+    setTip(f, fmt(FAIL.t), [FAIL.what]); live.append(f);
+    const ar = el('div', 'tl__row tl__row--axis'); ar.append(el('span'), el('div', 'axis label')); host.append(ar);
+    axis(ar.lastChild, [[0, '10 PM'], [100 / 7, '12 AM', true], [200 / 7, '2 AM'], [300 / 7, '4 AM', true], [400 / 7, '6 AM'], [500 / 7, '8 AM', true], [600 / 7, '10 AM', true], [100, '12 PM']]);
+    const rows = [
+      ...NIGHT_KEVIN.map(k => [k.t, fmt(k.t), k.kind === 'c' ? 'Kevin clicked' : 'Kevin typed', k.text === SIDE ? SIDE : k.text]),
+      ...RUNS.filter(r => r.e > T0 && r.s < T1).map(r => [Math.max(r.s, T0), `${fmt(r.s)} to ${fmt(r.e)}`, 'Sprint', `${r.name} (${r.agents} agents, ${money(r.cost)})`]),
+      ...RELEASES.filter(r => r.t >= T0).map(r => [r.t, fmt(r.t), 'Live', `${r.what} (${r.sha})`]),
+      [FAIL.t, fmt(FAIL.t), 'Check failed', FAIL.what],
+    ].sort((a, b) => a[0] - b[0]).map(r => r.slice(1));
+    table('night-table', ['When', 'Who', 'What'], rows);
+  }
+
+  /* ---------- Ask to live ---------- */
+  {
+    const MAX = 16 * 60;
+    const host = document.getElementById('asks');
+    ASKS.forEach(a => {
+      const m = a.live - a.asked;
+      const row = el('div', 'ask');
+      const q = el('div', 'ask__q'); q.append(el('span', 'label', `Asked ${fmt(a.asked)}`), el('q', '', a.q));
+      const bar = el('div', 'ask__bar'); const track = el('div', 'ask__track');
+      const fill = el('button', 'ask__fill'); fill.type = 'button'; fill.style.width = `${(m / MAX) * 100}%`;
+      setTip(fill, a.what, [`Asked ${fmt(a.asked)}`, `Live ${fmt(a.live)}`, a.note || '']);
+      track.append(fill); bar.append(track, el('span', 'ask__dur', dur(m)));
+      row.append(q, bar); host.append(row);
+    });
+    axis('ask-axis', [[0, '0'], [25, '4 h', true], [50, '8 h'], [75, '12 h', true], [100, '16 h']]);
+    table('ask-table', ['Asked', 'Request', 'What shipped', 'Live', 'Time'], ASKS.map(a => [fmt(a.asked), a.q, a.what, fmt(a.live), dur(a.live - a.asked)]), [4]);
+  }
+
+  /* ---------- Around the clock ---------- */
+  {
+    const host = document.getElementById('clock');
+    for (let d = 22; d <= 28; d++) {
+      const D0 = (d - 22) * 1440, D1 = D0 + 1440; const pct = m => ((m - D0) / 1440) * 100;
+      const row = el('div', 'day');
+      const head = el('div', 'day__head'); head.append(el('span', 'label', `${DAYS[d]} Oct ${d}`), el('span', 'day__spend', money(DAY_NOTES[d][0])));
+      const track = el('div', 'track');
+      const band = el('span', 'band'); band.style.width = '25%'; track.append(band);
+      [25, 50, 75].forEach(p => { const g = el('span', 'gridline'); g.style.left = `${p}%`; track.append(g); });
+      TYPED.filter(k => k.t >= D0 && k.t < D1).forEach(k => {
+        const b = el('button', 'tick'); b.type = 'button'; b.style.left = `${pct(k.t)}%`; b.style.setProperty('--top', '6px'); b.style.setProperty('--h', '10px');
+        setTip(b, fmt(k.t), [`Kevin typed ${k.words} word${k.words === 1 ? '' : 's'}`]); track.append(b);
+      });
+      const ends = [];
+      RUNS.filter(r => r.e > D0 && r.s < D1).forEach(r => {
+        const s = Math.max(r.s, D0), e = Math.min(r.e, D1);
+        let lane = ends.findIndex(end => end <= s); if (lane < 0) { lane = ends.length; ends.push(0); } ends[lane] = e;
+        const b = el('button', 'run'); b.type = 'button'; b.style.left = `${pct(s)}%`; b.style.width = `${pct(e) - pct(s)}%`; b.style.top = `${20 + lane * 16}px`; b.style.height = '14px';
+        setTip(b, r.name, [`${fmt(r.s)} to ${fmt(r.e)}`, `${r.agents} agents · ${money(r.cost)}`, r.note || '']); track.append(b);
+      });
+      RELEASES.filter(r => r.t >= D0 && r.t < D1).forEach(r => {
+        const b = el('button', 'pip'); b.type = 'button'; b.style.left = `${pct(r.t)}%`; b.style.top = '46px';
+        setTip(b, `Live ${fmt(r.t)}`, [r.what, `Release ${r.sha}`]); track.append(b);
+      });
+      row.append(head, track, el('p', 'day__note', DAY_NOTES[d][1]));
+      host.append(row);
+    }
+    axis('clock-axis', [[0, '12 AM'], [25, '6 AM', true], [50, '12 PM'], [75, '6 PM', true], [100, '12 AM']]);
+    table('clock-table', ['Sprint run', 'Start', 'End', 'Agents', 'Cost'], RUNS.map(r => [r.name + (r.note ? ` (${r.note.toLowerCase()})` : ''), fmt(r.s), fmt(r.e), String(r.agents), money(r.cost)]), [3, 4]);
+  }
+
+  /* ---------- Cost stacks ---------- */
+  {
+    const stack = (host, title, parts) => {
+      const h = document.getElementById(host); const total = parts.reduce((a, p) => a + p[1], 0);
+      const bar = el('div', 'stack__bar'); const legend = el('ul', 'legend');
+      parts.forEach(([name, v], i) => {
+        const pct = Math.round((v / total) * 100);
+        const s = el('button', `seg c${i + 1}`); s.type = 'button'; s.style.flex = `${v} 1 0`;
+        setTip(s, name, [`${money(v)} · ${pct}%`]); bar.append(s);
+        const k = el('li', 'key'); k.append(el('span', `sw c${i + 1}`), document.createTextNode(`${name} `), el('b', '', `${money(v)} · ${pct}%`));
+        k.firstChild.style.background = 'var(--c)'; legend.append(k);
+      });
+      h.append(el('span', 'label', title), bar, legend);
+    };
+    const WHO = [['Sprint agents', 1642], ['Main sessions', 397], ['Helper agents', 56]];
+    const WHAT = [['Reading cached context', 871], ['Writing to the cache', 714], ['Model output', 510]];
+    stack('stack-who', 'Who spent it', WHO);
+    stack('stack-what', 'What it paid for', WHAT);
+    table('cost-table', ['Group', 'Part', 'Cost', 'Share'], [
+      ...WHO.map(([n, v]) => ['Who', n, money(v), `${Math.round((v / 2095) * 100)}%`]),
+      ...WHAT.map(([n, v]) => ['What', n, money(v), `${Math.round((v / 2095) * 100)}%`]),
+      ...[['Opus 5.5', 1910], ['Sonnet 5.5', 184], ['Haiku 5.5', 1]].map(([n, v]) => ['Model', n, money(v), v / 2095 < 0.01 ? 'under 1%' : `${Math.round((v / 2095) * 100)}%`]),
+    ], [2, 3]);
+  }
+
+  /* ---------- Whole-pixel widths for shrink-wrapped frames, so the corner cut leaves no hairline ---------- */
+  const snap = () => document.querySelectorAll('.plate, .dlg__speaker').forEach(n => { n.style.width = ''; n.style.width = `${Math.ceil(n.getBoundingClientRect().width)}px`; });
+  snap(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(snap);
+
+  /* ---------- Run labels that do not fit ---------- */
+  const fitLabels = () => document.querySelectorAll('#night .run').forEach(b => { b.classList.remove('is-cut'); if (b.scrollWidth > b.clientWidth) b.classList.add('is-cut'); });
+  fitLabels(); addEventListener('resize', fitLabels);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLabels);
+
+  /* ---------- Dice ---------- */
+  const roll = (faces, finals, done) => {
+    if (reduced) { faces.forEach((f, i) => { f.textContent = finals[i]; }); return; }
+    let n = 0; const timer = setInterval(() => {
+      faces.forEach(f => { f.textContent = 1 + Math.floor(Math.random() * 6); });
+      if (++n >= 12) { clearInterval(timer); faces.forEach((f, i) => { f.textContent = finals[i]; }); if (done) done(); }
+    }, 70);
+  };
+  roll([document.getElementById('hero-die')], ['29']);
+  const fumble = [document.getElementById('fumble-a'), document.getElementById('fumble-b')];
+  const whenSeen = (node, fn) => {
+    if (!('IntersectionObserver' in window)) return fn();
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); fn(); } }, { threshold: 0.6 }); io.observe(node);
+  };
+  whenSeen(fumble[0], () => roll(fumble, ['1', '1']));
+
+  /* ---------- Dialogue box ---------- */
+  {
+    const dlg = document.getElementById('dlg'), box = document.getElementById('dlg-box'), text = document.getElementById('dlg-text');
+    const when = document.getElementById('dlg-when'), count = document.getElementById('dlg-count'), live = document.getElementById('dlg-live');
+    let i = 0, timer = null, full = LINES[0][1];
+    const finish = () => { clearInterval(timer); timer = null; text.textContent = full; dlg.classList.remove('is-typing'); };
+    const say = k => {
+      i = k; full = LINES[k][1]; when.textContent = LINES[k][0];
+      count.textContent = `${k + 1} of ${LINES.length} · press for the ${k + 1 === LINES.length ? 'first line again' : 'next line'}`;
+      live.textContent = `${LINES[k][0]}: ${full}`;
+      snap();
+      if (reduced) { text.textContent = full; return; }
+      let n = 0; text.textContent = ''; dlg.classList.add('is-typing'); clearInterval(timer);
+      timer = setInterval(() => { n += 2; text.textContent = full.slice(0, n); if (n >= full.length) finish(); }, 50);
+    };
+    box.addEventListener('click', () => { if (timer) finish(); else say((i + 1) % LINES.length); });
+    whenSeen(box, () => say(0));
+  }
+})();
+</script>
+</body>
+</html>
