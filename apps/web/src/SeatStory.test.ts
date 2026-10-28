@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PublicCharacter, PublishedBeat, Roll, ScriptSegment } from '@rpg/contracts';
 import SeatStory from './SeatStory.vue';
 
@@ -26,6 +26,18 @@ const second = beat(2, [
 ], [roll('r1', 'c-Dash', 11, 'clean'), roll('r2', 'gone', 7, 'costly')]);
 
 describe('SeatStory', () => {
+  it('offers Play only on voiced parts, and only when it knows the show', () => {
+    const voiced = { ...beat(3, [segment('v', 'narration', 'The bell rings.')]), textOnly: false };
+    expect(mount(SeatStory, { props: { history: [voiced], characters } }).find('[data-testid="seat-story-play"]').exists()).toBe(false);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'missing' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const withSound = mount(SeatStory, { props: { history: [first, voiced], characters, sessionId: 's1' } });
+    expect(withSound.findAll('[data-testid="seat-story-play"]').map(button => button.text())).toEqual(['Play']);
+    expect(fetchMock).toHaveBeenCalledWith('/api/sessions/s1/audio/beat-3', expect.objectContaining({ credentials: 'same-origin' }));
+    withSound.unmount();
+    vi.unstubAllGlobals();
+  });
+
   it('explains the empty state and offers no toggle', () => {
     const wrapper = mount(SeatStory, { props: { history: [], characters } });
     expect(wrapper.get('h2').text()).toBe('The story');

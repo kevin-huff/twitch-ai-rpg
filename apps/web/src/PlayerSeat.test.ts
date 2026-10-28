@@ -337,14 +337,11 @@ describe('player seat', () => {
       expect(w.get('button.send').attributes('disabled')).toBeUndefined();
     });
 
-    it('starts How this works closed and folds the sound control into a closed Sound line', async () => {
+    it('starts How this works closed and has no shared Sound fold, since each part of the story plays on its own', async () => {
       const w = await mountSeat(snapshot());
       expect(w.get('details.how').attributes('open')).toBeUndefined();
-      const sound = w.get('[data-testid="sound"]');
-      expect(sound.element.tagName).toBe('DETAILS');
-      expect(sound.attributes('open')).toBeUndefined();
-      expect(sound.get('summary').text()).toBe('Sound');
-      expect(sound.find('[data-testid="audio-panel-stub"]').exists()).toBe(true);
+      expect(w.find('[data-testid="sound"]').exists()).toBe(false);
+      expect(w.find('[data-testid="audio-panel-stub"]').exists()).toBe(false);
     });
 
     it('names the one present character as text and reveals the choice with Change', async () => {

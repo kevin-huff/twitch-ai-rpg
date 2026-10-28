@@ -484,7 +484,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Hearing the story',
         paragraphs: [
-          'Open Sound at the bottom of the page. Press Hear the story here to play the narration in your browser, in step with the show. Press Mute to stop it, and use Volume to set how loud it plays. If the stream is also playing near you, mute one of them, or you\'ll hear everything twice.',
+          'Each part of the story on your seat has a Play button. It plays that part\'s voices on your phone or computer, from the start, whenever you like, and you can play it again as often as you want. Press Stop to stop it, and use your device\'s volume to set how loud it plays. If the stream is also playing near you, you\'ll hear the story twice.',
         ],
       },
       {
@@ -871,7 +871,7 @@ export const topics: HelpTopic[] = [
           'On the director page, look for the No show audio chip, or the line No show audio: the main show link isn\'t open in OBS. If you see either, the main show link is not open in OBS, so open it there. If a Preview (not for OBS) tab has taken the audio, open Audio options on that tab and press Release audio.',
           'To test a link, use Preview (silent) on its card. Do not open the main show link in an ordinary browser tab. A tab like that only listens. It does not play the broadcast audio.',
           'If a browser asks you to press Listen in this browser, press it. Browsers block sound until someone does.',
-          'On a player\'s seat the same button is called Hear the story here.',
+          'On a player\'s seat there is no such button: each part of the story has its own Play button instead.',
         ],
       },
       {
@@ -930,7 +930,7 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Note for the AI', definition: 'A private hint you give the AI for one beat, under Show tools. Players never see it.' },
   { term: 'Input window', definition: 'The time when players can send lines. It opens when you start a conversation or action round and closes when the lines are locked.' },
   { term: 'Presenter', definition: 'The one browser source allowed to play narration for the audience. It is the main show link in OBS.' },
-  { term: 'Listen', definition: 'The Listen in this browser button, which lets a browser play the narration. On a player\'s seat it is called Hear the story here. Browsers stay silent until someone presses it.' },
+  { term: 'Listen', definition: 'The Listen in this browser button, which lets a browser play the narration. A player\'s seat has a Play button on each part of the story instead. Browsers stay silent until someone presses it.' },
   { term: 'Text-only beat', definition: 'A beat published with Publish without voice. It has no narration. Viewers read it on the stage.' },
   { term: 'Test seat', definition: 'A seat you open yourself to try a character\'s view. It lets you check the player screen without inviting anyone.' },
   { term: 'Host', definition: 'The person who owns the show and signs in with the host token. Only the host manages producer access.' },

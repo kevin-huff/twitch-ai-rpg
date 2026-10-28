@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { isPlayerSegmentKind } from '@rpg/contracts';
 import type { PublicCharacter, PublishedBeat, ScriptSegment } from '@rpg/contracts';
 import { bandLabel } from './stage-format';
+import { createBeatAudio } from './beat-audio';
 
-const props = defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[] }>();
+const props = defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[]; sessionId?: string }>();
 const open = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
@@ -26,6 +27,17 @@ async function toTop() {
 watch(open, value => { void (value ? toBottom() : toTop()); });
 watch(() => props.history.length, () => { if (open.value) void toBottom(); });
 watch(() => props.history[props.history.length - 1]?.id, () => { if (!open.value) void toTop(); });
+
+// Each part plays on this device alone, from the start, whenever the player presses Play.
+const sound = props.sessionId ? createBeatAudio(props.sessionId) : null;
+const latestVoiced = computed(() => { const latest = props.history[props.history.length - 1]; return latest && !latest.textOnly ? latest.id : null; });
+watch(latestVoiced, id => { if (sound && id) sound.prefetch(id); }, { immediate: true });
+onUnmounted(() => sound?.dispose());
+function toggleSound(beat: PublishedBeat) {
+  if (!sound) return;
+  if (sound.state.beatId === beat.id) sound.stop();
+  else void sound.play(beat.id);
+}
 </script>
 
 <template>
@@ -36,6 +48,10 @@ watch(() => props.history[props.history.length - 1]?.id, () => { if (!open.value
       <div ref="scroller" class="seat-story-scroll" data-testid="seat-story-scroll" tabindex="0" aria-label="The story">
         <article v-for="beat in beats" :key="beat.id" class="seat-story-beat" data-testid="seat-story-beat">
           <p v-if="open" class="seat-story-label">Beat {{ beat.beatNumber }}</p>
+          <div v-if="sound && !beat.textOnly" class="seat-story-sound">
+            <button type="button" class="secondary" data-testid="seat-story-play" :aria-label="`${sound.state.beatId === beat.id ? 'Stop' : 'Play'} beat ${beat.beatNumber}`" :disabled="sound.state.loading === beat.id" @click="toggleSound(beat)">{{ sound.state.beatId === beat.id ? 'Stop' : sound.state.loading === beat.id ? 'Loading…' : 'Play' }}</button>
+            <span v-if="sound.state.errorBeatId === beat.id" class="seat-story-sound-note" role="status">{{ sound.state.error }}</span>
+          </div>
           <p v-for="segment in playerLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
           <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
           <p v-for="segment in otherLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span v-if="showsName(segment)" class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
@@ -58,5 +74,7 @@ watch(() => props.history[props.history.length - 1]?.id, () => { if (!open.value
 .seat-story-words { color: var(--bone); white-space: pre-wrap; }
 .seat-story-line.narration .seat-story-words, .seat-story-line.system .seat-story-words { color: var(--dust); }
 .seat-story-roll { color: var(--bone); }
+.seat-story-sound { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+.seat-story-sound-note { font-family: var(--font-body); font-size: 20px; line-height: 24px; color: var(--dust); }
 @media (max-width: 600px) { .seat-story-scroll { max-height: 216px; } }
 </style>

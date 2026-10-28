@@ -6,7 +6,6 @@ import { pictureUrl, portraitAlt, shownScenePicture } from './pictures';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { playerStatus } from './player-status';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
-import AudioPanel from './AudioPanel.vue';
 import LineAssist from './LineAssist.vue';
 import SeatStory from './SeatStory.vue';
 import SeatVoice from './SeatVoice.vue';
@@ -18,7 +17,7 @@ const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
 
 const table = useTable();
-const { sessionId, snapshot, busy, player, latestHistory, send, work, onSnapshot } = table;
+const { sessionId, snapshot, busy, player, send, work, onSnapshot } = table;
 const context = table.inputContext;
 
 const playerReady = computed(() => !player.value?.setup || Boolean(player.value.setup.started && player.value.ownCharacter?.approved));
@@ -255,7 +254,7 @@ async function askPrivately() {
         <template v-else><h2>Unassigned seat</h2><p class="notice">This seat has no character yet. Ask the director.</p></template>
       </section>
       <div class="player-status" :data-tone="status.tone" aria-live="polite"><span class="tone">{{ toneLabel }}</span><strong>{{ status.headline }}</strong><span>{{ status.detail }}</span></div>
-      <SeatStory :history="snapshot.history" :characters="snapshot.characters" />
+      <SeatStory :history="snapshot.history" :characters="snapshot.characters" :session-id="sessionId" />
       <details class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
       <section ref="formPanel" class="panel form-panel">
         <form data-testid="submission-form" @submit.prevent="saveSubmission">
@@ -280,7 +279,6 @@ async function askPrivately() {
       </section>
       <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" @edit="startEdit" @withdraw="withdraw" />
       <div class="extras"><button type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
-      <details class="sound" data-testid="sound"><summary>Sound</summary><AudioPanel compact :session-id="sessionId" :beat-id="latestHistory[0]?.id" :director="false" /></details>
     </div>
   </template>
 </template>

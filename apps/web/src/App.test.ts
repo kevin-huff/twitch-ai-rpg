@@ -143,7 +143,7 @@ describe('public performance and player authority', () => {
     expect(wrapper.get('[data-testid="publish"]').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
-  it.each(['director', 'player', 'stage'])('keeps session audio available before publication in the %s view', async role => {
+  it.each(['director', 'stage'])('keeps session audio available before publication in the %s view', async role => {
     window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
     transport.snapshot.mockResolvedValue({ ...snapshot(role), history: [] });
     const wrapper = mount(App, { global: { stubs: { AudioPanel: { name: 'AudioPanel', props: { sessionId: String, beatId: String, director: Boolean, stage: Boolean, compact: Boolean }, template: '<div />' } } } });
@@ -153,7 +153,16 @@ describe('public performance and player authority', () => {
     expect(panel.props('beatId')).toBeUndefined();
     expect(Boolean(panel.props('director'))).toBe(role === 'director');
     expect(Boolean(panel.props('stage'))).toBe(role === 'stage');
-    expect(Boolean(panel.props('compact'))).toBe(role === 'player');
+    expect(Boolean(panel.props('compact'))).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('gives the player view no shared audio panel, since each part of the story plays on its own', async () => {
+    window.history.replaceState({}, '', '/sessions/show/play');
+    transport.snapshot.mockResolvedValue({ ...snapshot('player'), history: [] });
+    const wrapper = mount(App, { global: { stubs: { AudioPanel: { name: 'AudioPanel', template: '<div />' } } } });
+    await flushPromises();
+    expect(wrapper.findComponent({ name: 'AudioPanel' }).exists()).toBe(false);
     wrapper.unmount();
   });
 
