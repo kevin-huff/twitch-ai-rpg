@@ -14,6 +14,8 @@ type Lease = { id: string; deadline: number; generation: number };
 const CLOCK_SAMPLE_WINDOW_MS = 10_000;
 // A listener jumps only after staying out of step this long, so one late reading cannot make the audio skip back and forth.
 const LISTENER_DRIFT_PERSIST_MS = 1_500;
+// Only the presenter can say a clip finished, and a lost report would stall the narration, so it is sent again until the server moves on.
+const ENDED_RETRY_MS = 2_000;
 
 export function createPlaybackController(initial: Context) {
   let context = { ...initial };
@@ -41,6 +43,8 @@ export function createPlaybackController(initial: Context) {
   let audio: HTMLAudioElement | null = null;
   let audioKey = '';
   let blockedKey = '';
+  let endedKey = '';
+  let endedAt = 0;
   let started = false;
   let clockSamples: { offset: number; roundTrip: number; at: number }[] = [];
   let clockOffset = 0;
@@ -189,7 +193,7 @@ export function createPlaybackController(initial: Context) {
     seekCurrent();
     clip.onended = () => {
       if (!valid() || !started) return;
-      const report = telemetry('ended'); blockedKey = key; halt(); void report;
+      blockedKey = key; endedKey = key; halt(); void reportEnded();
     };
     clip.onerror = () => { if (valid()) playbackFailed(key); };
     const startClip = () => {
@@ -389,6 +393,27 @@ export function createPlaybackController(initial: Context) {
     }
   }
 
+  async function reportEnded() {
+    const snapshot = state.snapshot;
+    if (!checkIdentity() || !lease || !liveLease() || !snapshot?.playbackId || snapshot.segmentIndex === null || snapshot.status !== 'playing' || currentKey(snapshot) !== endedKey) return;
+    const owner = lease, generation = contextGeneration, fence = responseGeneration;
+    endedAt = now();
+    try {
+      const result = await request(`${endpoint()}/telemetry`, {
+        type: 'ended', commandId: crypto.randomUUID(), clientId, leaseId: owner.id, playbackId: snapshot.playbackId,
+        expectedRevision: snapshot.revision, segmentIndex: snapshot.segmentIndex, telemetrySequence: ++telemetrySequence,
+      });
+      if (!checkIdentity() || generation !== contextGeneration || fence !== responseGeneration || lease?.id !== owner.id || !liveLease()) return;
+      accept(PlaybackResponseSchema.parse(result.data).snapshot, result.start, result.end);
+    } catch { /* The next tick sends it again while the server still waits on this clip. */ }
+  }
+
+  function retryEnded() {
+    if (!endedKey) return;
+    if (blockedKey !== endedKey || !state.presenting || !state.snapshot || currentKey(state.snapshot) !== endedKey) { endedKey = ''; return; }
+    if (now() - endedAt >= ENDED_RETRY_MS) void reportEnded();
+  }
+
   function setContext(next: Context) {
     if (disposed) return;
     const changed = next.sessionId !== context.sessionId || next.director !== context.director || Boolean(next.stage) !== Boolean(context.stage);
@@ -410,7 +435,7 @@ export function createPlaybackController(initial: Context) {
     pollTicks++;
     if (activePolls === 0 && (state.listening || state.presenting || pollTicks % 4 === 0)) void refresh();
   }, 250);
-  const positionTimer = setInterval(() => { void telemetry('position'); }, PLAYBACK_POSITION_REPORT_MS);
+  const positionTimer = setInterval(() => { void telemetry('position'); retryEnded(); }, PLAYBACK_POSITION_REPORT_MS);
   const manifestTimer = setInterval(() => { if (state.audioStatus !== 'ready' && !state.preparing) void loadManifest(); }, 3000);
   void refresh(); void loadManifest();
   return { state, refresh, prepare: () => loadManifest(true), listen, mute, setVolume, command,

@@ -377,6 +377,55 @@ describe('coordinated browser playback', () => {
     expect(value.state.preparing).toBe(false); expect(value.state.audioStatus).toBe('ready');
   });
 
+  describe('presenter clip end', () => {
+    const ends = () => vi.mocked(fetch).mock.calls.filter(call => String(call[0]).endsWith('/telemetry') && JSON.parse(String(call[1]?.body)).type === 'ended');
+    // Serves the playback snapshot of the moment; the server moves to the next segment when it receives a clip end it accepts.
+    function server(acceptEnd: (attempt: number) => boolean) {
+      let current = snapshot();
+      let attempts = 0;
+      vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (String(url).includes('/audio/')) return response({ status: 'ready', manifest });
+        const stamped = () => ({ ...current, serverTimeMs: 100_000 + performance.now() });
+        if (String(url).endsWith('/presenter')) return response({ snapshot: stamped(), leaseId });
+        if (String(url).endsWith('/telemetry')) {
+          if (JSON.parse(String(init?.body)).type === 'ended') {
+            attempts += 1;
+            if (!acceptEnd(attempts)) throw new TypeError('Failed to fetch');
+            current = snapshot({ revision: 1, sampleRevision: 50, segmentIndex: 1, positionMs: 0, anchorTimeMs: 100_000 + performance.now() });
+          }
+          return response({ snapshot: stamped() });
+        }
+        return response(stamped());
+      });
+    }
+
+    it('sends a lost clip end again until the server moves on', async () => {
+      server(attempt => attempt > 1);
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      expect(instances).toHaveLength(1);
+      instances[0].onended!(); await settle();
+      expect(ends()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(ends()).toHaveLength(2);
+      expect(instances.at(-1)!.src).toBe(manifest.segments[1].url);
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(ends()).toHaveLength(2);
+    });
+
+    it('sends the clip end even when the clock reads the last report as still ahead', async () => {
+      server(() => true);
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      const late = deferred<Response>();
+      vi.mocked(fetch).mockImplementationOnce(() => late.promise);
+      const polled = value.refresh();
+      await vi.advanceTimersByTimeAsync(20);
+      late.resolve(response(snapshot({ sampleRevision: 7, serverTimeMs: 100_000 + performance.now() + 30, positionMs: 4_000, anchorTimeMs: 100_000 + performance.now() + 30 })));
+      await polled; await settle();
+      instances[0].onended!(); await settle();
+      expect(ends()).toHaveLength(1);
+    });
+  });
+
   it('only presenter ended advances the cursor; listeners wait for a server transition', async () => {
     const value = controller(); await settle(); value.listen(); await settle();
     const ended = instances[0].onended!; ended(); await value.refresh(); await settle();
