@@ -93,13 +93,13 @@ onUnmounted(() => { if (ticker) clearInterval(ticker); });
 const errorText = computed(() => barError.value || (!idle.value && beat.value?.lastError) || '');
 
 const needsLines = computed(() => ['answer', 'plan'].includes(gold.value));
-const MAX_ROLLS_PER_ROUND = 6;
+const MAX_ROLLS_PER_ROUND = 12;
 const tickedLineCount = computed(() => {
   const kinds = new Map((director.value?.submissions ?? []).map(item => [item.id, item.kind]));
   return selected.value.filter(id => kinds.get(id) !== 'ooc').length;
 });
 const tooManyLines = computed(() => needsLines.value && tickedLineCount.value > MAX_ROLLS_PER_ROUND);
-const tooManyWarning = computed(() => `${tickedLineCount.value} lines need ${tickedLineCount.value} rolls, and a round shows at most six. Untick some lines, then plan the rest next round.`);
+const tooManyWarning = computed(() => `${tickedLineCount.value} lines need ${tickedLineCount.value} rolls, and a round shows at most ${MAX_ROLLS_PER_ROUND}. Untick some lines, then plan the rest next round.`);
 const goldDisabled = computed(() => {
   if (busy.value) return true;
   if (gold.value === 'resume') return false;
@@ -189,6 +189,13 @@ function checkedContracts() {
 }
 
 function openBeat(mode: 'conversation' | 'action') { return runBar(() => send({ type: 'open_beat', commandId: crypto.randomUUID(), expectedInputEpoch: snapshot.value!.session.inputEpoch, kind: mode })); }
+function narrateScene() {
+  return runBar(async () => {
+    await send({ type: 'narrate_scene', commandId: crypto.randomUUID(), expectedInputEpoch: snapshot.value!.session.inputEpoch });
+    if (!beat.value || !reached(beat.value.id, 'locked')) return;
+    await renderStep();
+  });
+}
 function answerLines() {
   const ids = tickedIds.value;
   if (!ids.length) return;
@@ -357,12 +364,14 @@ function runGold() {
           <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
           <p v-if="tooManyLines" class="beat-status" data-testid="too-many-lines">{{ tooManyWarning }}</p>
           <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-action" @click="openBeat('action')">Open action round</button>
+          <button v-if="step.step === 'open' && !snapshot.history.length" class="secondary" :disabled="locked" data-testid="narrate-scene" @click="narrateScene">Narrate the opening</button>
           <button v-if="hasDraft && voice.status !== 'unavailable'" class="secondary" :disabled="locked || scriptDirty || rendering || Boolean(working)" data-testid="publish-text-only" @click="publishTextOnly">Publish without voice</button>
           <button v-if="step.step === 'draft' && !idle && beat?.lastError" class="secondary" :disabled="locked" data-testid="write-it-myself" @click="writeItMyself">Write it myself</button>
         </div>
         <details ref="more" class="beat-more" data-testid="beat-more"><summary>More</summary>
           <div class="actions">
             <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-conversation" @click="openBeat('conversation')">Open conversation</button>
+            <button v-if="step.step === 'open' && snapshot.history.length" class="secondary" :disabled="locked" data-testid="narrate-scene" @click="narrateScene">Narrate the scene</button>
             <template v-if="!idle && (step.step === 'stakes' || step.step === 'lock')">
               <button class="secondary" :disabled="locked" data-testid="approve-stakes" @click="approveStakes">Approve stakes</button>
               <button class="secondary" :disabled="locked || !beat?.stakesApproved || contractsDirty" data-testid="lock" @click="lock">Roll the dice</button>

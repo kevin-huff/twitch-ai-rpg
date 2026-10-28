@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
         <span v-if="stakes.length > 1" class="wager-marker">{{ spotlight + 1 }} of {{ stakes.length }}</span>
       </div>
 
-      <div v-if="rolls.length" class="dice" :class="{ 'dice-held': stakes.length > 0, 'dice-dense': rolls.length > 4 }">
+      <div v-if="rolls.length" class="dice" :class="{ 'dice-held': stakes.length > 0, 'dice-dense': rolls.length > 4, 'dice-rows': rolls.length > 6 }">
         <div v-for="roll in rolls" :key="roll.id" class="roll" :data-band="roll.band">
           <span class="roll-total">{{ roll.total }}</span>
           <span class="roll-text">
@@ -509,6 +509,9 @@ onBeforeUnmount(() => {
 .roll:first-child:nth-last-child(n+6) .roll-total, .roll:first-child:nth-last-child(n+6) ~ .roll .roll-total { width: 44px; }
 .roll:first-child:nth-last-child(n+6) .roll-text, .roll:first-child:nth-last-child(n+6) ~ .roll .roll-text { padding: 0; box-shadow: none; }
 .roll:first-child:nth-last-child(n+6)[data-band="critical"] .roll-text, .roll:first-child:nth-last-child(n+6) ~ .roll[data-band="critical"] .roll-text { padding: 0 4px; }
+/* Past six rolls the dice take a second row, growing up into the clear strip above. */
+.dice-rows { top: 686px; height: 144px; flex-wrap: wrap; align-content: space-between; }
+.dice-rows .roll { flex: 0 0 calc((100% - 40px) / 6); }
 
 .stage-story {
   left: 240px; top: 836px; width: 1440px; height: 184px; min-height: 0; margin: 0; padding: 20px 24px;

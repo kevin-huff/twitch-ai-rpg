@@ -162,6 +162,10 @@ export class FakeAiProvider implements AiProvider {
     return { classification: 'action', contracts, directorSummary: 'Review these fixture stakes before accepting. They are deterministic rehearsal proposals.' };
   }
   async render(context: ProviderContext): Promise<AiDraft> {
+    if (!context.submissions.length) return {
+      segments: [{ kind: 'narration', text: context.state.session.scene.description.trim() || `The story opens at ${context.state.session.scene.title}.`, recipientCharacterIds: [], delivery: 'neutral' }],
+      continuity: [], directorSummary: 'The opening narration sets the scene from the scenario.',
+    };
     const submission = context.submissions.at(-1);
     const available = context.state.npcs.filter((npc) => npc.status === 'present' || npc.communicationChannel);
     const recipients = submission?.recipientNpcIds ?? [];

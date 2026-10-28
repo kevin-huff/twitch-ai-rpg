@@ -113,7 +113,7 @@ suite('player lines and actions in one round', () => {
     expect(refused.json().message).toContain('cannot help their own action');
   });
 
-  it('leaves a plan with more than six rolls in collecting with the six-roll message', async () => {
+  it('plans eight rolls in one round now that a round holds twelve', async () => {
     const table = await newTable();
     await table.openAction();
     for (const [index] of table.players.entries()) {
@@ -123,8 +123,26 @@ suite('player lines and actions in one round', () => {
     await table.refresh();
     expect(table.queuedIds()).toHaveLength(8);
     await table.beat('plan_beat', { submissionIds: table.queuedIds() });
-    expect(table.snapshot.activeBeat!.phase).toBe('collecting');
-    expect(table.snapshot.activeBeat!.lastError).toBe(tooManyRollsMessage(8));
-    expect(table.snapshot.activeBeat!.contracts).toEqual([]);
+    expect(table.snapshot.activeBeat!.lastError).toBeNull();
+    expect(table.snapshot.activeBeat!.phase).toBe('stakes_review');
+    expect(table.snapshot.activeBeat!.contracts).toHaveLength(8);
+    expect(tooManyRollsMessage(13)).toContain('at most 12 rolls');
+  });
+
+  it('narrates the scene before the first round, with no lines and no dice, and again after it', async () => {
+    const table = await newTable();
+    await table.send({ type: 'narrate_scene', expectedInputEpoch: table.snapshot.session.inputEpoch });
+    expect(table.snapshot.activeBeat).toMatchObject({ kind: 'conversation', phase: 'locked', selectedSubmissionIds: [], contracts: [] });
+    await table.beat('render_beat');
+    expect(table.snapshot.activeBeat!.phase).toBe('draft_review');
+    const scene = table.snapshot.session.scene;
+    expect(table.snapshot.activeBeat!.draft!.segments).toEqual([expect.objectContaining({ kind: 'narration', text: scene.description.trim() || `The story opens at ${scene.title}.` })]);
+    await table.beat('publish_beat', { expectedStateRevision: table.snapshot.session.stateRevision, draftRevision: table.snapshot.activeBeat!.draftRevision, textOnly: true });
+    expect(table.snapshot.history).toHaveLength(1);
+    expect(table.snapshot.history[0]!.rolls).toEqual([]);
+    expect(table.snapshot.history[0]!.segments.map((segment) => segment.kind)).toEqual(['narration']);
+    await table.send({ type: 'narrate_scene', expectedInputEpoch: table.snapshot.session.inputEpoch });
+    expect(table.snapshot.activeBeat!.phase).toBe('locked');
+    await table.send({ type: 'narrate_scene', expectedInputEpoch: table.snapshot.session.inputEpoch }, undefined, 409);
   });
 });

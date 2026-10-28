@@ -90,10 +90,11 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
   return next;
 }
 
-export const MAX_ROLLS_PER_ROUND = 6;
+// Six seats with two lines each.
+export const MAX_ROLLS_PER_ROUND = 12;
 
 export function tooManyRollsMessage(count: number): string {
-  return `A round can show at most six rolls, and this plan needs ${count}. Untick some lines and plan again, then plan the rest in the next round.`;
+  return `A round can show at most ${MAX_ROLLS_PER_ROUND} rolls, and this plan needs ${count}. Untick some lines and plan again, then plan the rest in the next round.`;
 }
 
 export interface ContractLine { id: string; characterId: string; kind?: 'say' | 'act' | 'ooc' }

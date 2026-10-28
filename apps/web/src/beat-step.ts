@@ -56,7 +56,7 @@ function decide(input: BeatStepInput): BeatStepResult {
   if ((beat.phase === 'locked' || beat.phase === 'draft_review') && !hasDraft) {
     return {
       step: 'draft',
-      next: beat.lastError ? 'The script could not be written. Try again, or write it yourself.' : 'Draft the scene from the locked lines.',
+      next: beat.lastError ? 'The script could not be written. Try again, or write it yourself.' : beat.selectedSubmissionIds.length ? 'Draft the scene from the locked lines.' : 'Draft the narration that sets the scene.',
       reason: input.rendering ? 'The script is being drafted.' : null,
     };
   }

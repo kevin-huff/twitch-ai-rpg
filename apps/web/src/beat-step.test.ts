@@ -50,7 +50,8 @@ describe('beatStep', () => {
     expect(run(approved)).toMatchObject({ step: 'lock', next: 'Approve and roll to lock the lines. The dice roll once and never change.' });
   });
   it('drafts when locked without a draft, with a retry sentence after an error', () => {
-    expect(run(beatOf({ phase: 'locked' }))).toMatchObject({ step: 'draft', next: 'Draft the scene from the locked lines.', reason: null });
+    expect(run(beatOf({ phase: 'locked', selectedSubmissionIds: ['say-1'] }))).toMatchObject({ step: 'draft', next: 'Draft the scene from the locked lines.', reason: null });
+    expect(run(beatOf({ phase: 'locked' }))).toMatchObject({ step: 'draft', next: 'Draft the narration that sets the scene.', reason: null });
     expect(run(beatOf({ phase: 'locked' }), { rendering: true })).toMatchObject({ step: 'draft', reason: 'The script is being drafted.' });
     expect(run(beatOf({ phase: 'locked', lastError: 'x' }))).toMatchObject({ step: 'draft', next: 'The script could not be written. Try again, or write it yourself.' });
   });

@@ -138,7 +138,7 @@ describe('help page', () => {
     const running = wrapper.get('#running-a-show').text();
     for (const phrase of [
       'Every line rolls, in conversations and in action rounds alike', 'Critical failure', 'Lock and draft appears only when you set a round to Ordinary conversation',
-      'Only action rounds tick countdowns', 'conversation round rolls its dice without ticking them', 'at most six rolls', 'No check', 'Blocked',
+      'Only action rounds tick countdowns', 'conversation round rolls its dice without ticking them', 'at most 12 rolls', 'Narrate the opening', 'No check', 'Blocked',
     ]) expect(running).toContain(phrase);
     const players = wrapper.get('#players').text();
     expect(players).toContain('Every line you send can be rolled');

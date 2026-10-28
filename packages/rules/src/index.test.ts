@@ -358,10 +358,10 @@ describe('one action per line', () => {
     expect(() => validateContracts([contract(), second()], current, lines('lead'))).toThrow(/^Dash has more actions/);
   });
 
-  it('refuses more than six contracts with the exact message', () => {
+  it('refuses more than twelve contracts with the exact message', () => {
     const many = Array.from({ length: MAX_ROLLS_PER_ROUND + 1 }, (_, index) => contract({ id: `c${index}` }));
-    expect(() => validateContracts(many, state())).toThrow(tooManyRollsMessage(7));
-    expect(tooManyRollsMessage(7)).toBe('A round can show at most six rolls, and this plan needs 7. Untick some lines and plan again, then plan the rest in the next round.');
+    expect(() => validateContracts(many, state())).toThrow(tooManyRollsMessage(13));
+    expect(tooManyRollsMessage(13)).toBe('A round can show at most 12 rolls, and this plan needs 13. Untick some lines and plan again, then plan the rest in the next round.');
   });
 });
 

@@ -22,7 +22,7 @@ function dropBlankCritical<T extends { outcomes: { critical?: { publicText: stri
   return contract;
 }
 
-const directorCommands = new Set([...liveCommands, 'approve_character', 'remove_seat', 'set_boundaries', 'start_session', 'open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
+const directorCommands = new Set([...liveCommands, 'approve_character', 'remove_seat', 'set_boundaries', 'start_session', 'open_beat', 'narrate_scene', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
 
 export function applyCard(character: Character, card: CharacterCardDefinition, source: 'host' | 'player') {
   const { schemaVersion: _schemaVersion, extensions: _extensions, ...fields } = card;
@@ -406,6 +406,18 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       state.session.inputEpoch++; state.session.mode = command.kind; state.session.status = 'live';
       beat = { id: randomUUID(), sessionId, kind: command.kind, phase: 'collecting', revision: 0, inputEpoch: state.session.inputEpoch, sourceStateRevision: state.session.stateRevision,
         selectedSubmissionIds: [], lockedSubmissions: [], contracts: [], stakesApproved: false, classification: null, inputSnapshotHash: null, resolution: null, draft: null, draftRevision: 0, approvedContinuity: [], generation: 0, lastError: null, steering: '' };
+      await saveBeat(client, beat); await saveState(client, state);
+      await client.query('UPDATE sessions SET current_beat_id=$2 WHERE id=$1', [sessionId, beat.id]);
+    } else if (command.type === 'narrate_scene') {
+      // A beat with no player lines, already locked with no dice, so the storyteller can narrate where the players are.
+      if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
+      if (beat) conflict('Finish or abort the active beat first.');
+      if (command.expectedInputEpoch !== state.session.inputEpoch) conflict('The input window changed.');
+      state.session.status = 'live';
+      beat = { id: randomUUID(), sessionId, kind: 'conversation', phase: 'locked', revision: 0, inputEpoch: state.session.inputEpoch, sourceStateRevision: state.session.stateRevision,
+        selectedSubmissionIds: [], lockedSubmissions: [], contracts: [], stakesApproved: true, classification: 'ordinary',
+        inputSnapshotHash: digest({ scene: state.session.scene, stateRevision: state.session.stateRevision }), resolution: { rolls: [], outcomes: [], effects: [] },
+        draft: null, draftRevision: 0, approvedContinuity: [], generation: 0, lastError: null, steering: '' };
       await saveBeat(client, beat); await saveState(client, state);
       await client.query('UPDATE sessions SET current_beat_id=$2 WHERE id=$1', [sessionId, beat.id]);
     } else if (command.type === 'set_status') {

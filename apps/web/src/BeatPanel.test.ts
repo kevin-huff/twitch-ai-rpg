@@ -107,7 +107,8 @@ describe('beat panel action bar', () => {
   it('keeps Open action round beside the gold button and Open conversation under More', async () => {
     const wrapper = await mountPanel(snapshot(null), ['say-1']);
     const beside = outsideMore(wrapper).map(button => button.attributes('data-testid'));
-    expect(beside).toEqual(['answer-lines', 'open-action']);
+    expect(beside).toEqual(['answer-lines', 'open-action', 'narrate-scene']);
+    expect(wrapper.get('[data-testid="narrate-scene"]').text()).toBe('Narrate the opening');
     expect(wrapper.get('[data-testid="open-action"]').classes()).toContain('secondary');
     expect(more(wrapper).find('[data-testid="open-conversation"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="abort-beat"]').exists()).toBe(false);
@@ -308,7 +309,7 @@ describe('beat panel chains', () => {
     wrapper.unmount();
   });
 
-  it('sends nothing for more than six ticked lines, however many are ticked', async () => {
+  it('sends nothing for more than twelve ticked lines, however many are ticked', async () => {
     const many = { submissions: Array.from({ length: 14 }, (_, index) => line(`say-${index + 1}`)) };
     const ticked = many.submissions.map(item => item.id).reverse();
     const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', many), ticked);
@@ -368,31 +369,31 @@ describe('beat panel chains', () => {
     wrapper.unmount();
   });
 
-  describe('six-line limit and the manual fallback', () => {
+  describe('twelve-line limit and the manual fallback', () => {
     const many = (count: number) => ({ submissions: Array.from({ length: count }, (_, index) => line(`say-${index + 1}`)) });
     const ids = (count: number) => Array.from({ length: count }, (_, index) => `say-${index + 1}`);
-    const warning = (count: number) => `${count} lines need ${count} rolls, and a round shows at most six. Untick some lines, then plan the rest next round.`;
+    const warning = (count: number) => `${count} lines need ${count} rolls, and a round shows at most 12. Untick some lines, then plan the rest next round.`;
 
-    it('warns and disables the gold button above six ticked lines, sending nothing', async () => {
-      const wrapper = await mountPanel(snapshot(null, 'live', many(7)), ids(7));
+    it('warns and disables the gold button above twelve ticked lines, sending nothing', async () => {
+      const wrapper = await mountPanel(snapshot(null, 'live', many(13)), ids(13));
       const gold = wrapper.get('[data-testid="answer-lines"]');
       expect(gold.attributes('disabled')).toBeDefined();
-      expect(wrapper.get('[data-testid="too-many-lines"]').text()).toBe(warning(7));
+      expect(wrapper.get('[data-testid="too-many-lines"]').text()).toBe(warning(13));
       await gold.trigger('click'); await flushPromises();
       expect(transport.command).not.toHaveBeenCalled();
       wrapper.unmount();
     });
 
-    it('does not warn at six lines', async () => {
-      const wrapper = await mountPanel(snapshot(null, 'live', many(6)), ids(6));
+    it('does not warn at twelve lines', async () => {
+      const wrapper = await mountPanel(snapshot(null, 'live', many(12)), ids(12));
       expect(wrapper.find('[data-testid="too-many-lines"]').exists()).toBe(false);
       expect(wrapper.get('[data-testid="answer-lines"]').attributes('disabled')).toBeUndefined();
       wrapper.unmount();
     });
 
     it('does not count out-of-character lines', async () => {
-      const extra = { submissions: [...many(6).submissions, line('ooc-1', 'ooc')] };
-      const wrapper = await mountPanel(snapshot(null, 'live', extra), [...ids(6), 'ooc-1']);
+      const extra = { submissions: [...many(12).submissions, line('ooc-1', 'ooc')] };
+      const wrapper = await mountPanel(snapshot(null, 'live', extra), [...ids(12), 'ooc-1']);
       expect(wrapper.find('[data-testid="too-many-lines"]').exists()).toBe(false);
       wrapper.unmount();
     });

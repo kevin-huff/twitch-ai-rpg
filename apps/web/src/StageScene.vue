@@ -354,7 +354,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-        <div v-if="rolls.length" class="dice" :class="{ 'dice-dense': rolls.length > DENSE_ROLLS, 'dice-held': stakes.length > 0 }">
+        <div v-if="rolls.length" class="dice" :class="{ 'dice-dense': rolls.length > DENSE_ROLLS, 'dice-many': rolls.length > 9, 'dice-held': stakes.length > 0 }">
           <div
             v-for="(roll, index) in rolls"
             :key="roll.id"
@@ -511,6 +511,7 @@ onBeforeUnmount(() => {
 .dice { flex: 0 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
 .dice-held { display: none; }
 .dice-dense { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dice-many { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dice-dense .roll-total { min-width: 64px; padding: 4px 12px 8px; font-size: 40px; line-height: 40px; }
 .dice-dense .roll-detail { padding: 8px 12px; }
 .dice-dense .roll-head { gap: 8px; }
