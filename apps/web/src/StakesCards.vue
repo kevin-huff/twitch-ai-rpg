@@ -8,6 +8,7 @@ const STAGE_GOAL_CHARS = 90;
 const STAGE_OUTCOME_CHARS = 110;
 const BANDS = ['clean', 'costly', 'setback'] as const;
 const BAND_LABELS = { clean: '10 or more: Clean success', costly: '7 to 9: Success with a cost', setback: '6 or less: Setback' } as const;
+const CRITICAL_LABEL = 'Double 1s: Critical failure';
 const TRAITS = ['force', 'finesse', 'wits', 'presence'] as const;
 
 const props = defineProps<{ beat: Beat; contracts: ActionContract[]; classification: 'ordinary' | 'action'; busy: boolean }>();
@@ -40,6 +41,13 @@ function rollWords(contract: ActionContract) {
   if (contract.ruling === 'blocked') return 'Blocked: it can\'t happen yet.';
   const trait = contract.trait.charAt(0).toUpperCase() + contract.trait.slice(1);
   return `Roll: two dice + ${trait}${traitValue(contract)}${contract.edge === 1 ? ' + 1 edge' : ''}`;
+}
+function setCritical(contract: ActionContract, text: string) {
+  if (contract.outcomes.critical) contract.outcomes.critical.publicText = text;
+  else contract.outcomes.critical = { publicText: text, effects: [] };
+}
+function onCriticalInput(contract: ActionContract, event: Event) {
+  setCritical(contract, (event.target as HTMLTextAreaElement).value);
 }
 function changeClassification(event: Event) {
   emit('update:classification', (event.target as HTMLSelectElement).value as 'ordinary' | 'action');
@@ -85,6 +93,7 @@ function loadJson() {
           <p class="roll-words">{{ rollWords(contract) }}</p>
           <ul class="outcomes">
             <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
+            <li v-if="contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
           </ul>
         </template>
         <template v-else>
@@ -107,6 +116,11 @@ function loadJson() {
             <label>{{ BAND_LABELS[band] }}<textarea v-model="contract.outcomes[band].publicText" :data-testid="`outcome-${band}`" rows="2" placeholder="Write the agreed outcome and consequences" /></label>
             <p v-if="overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS)" class="stage-length over" :data-testid="`stage-length-${band}`">{{ overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS) }}</p>
             <small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small>
+          </div>
+          <div class="branch">
+            <label>{{ CRITICAL_LABEL }}<textarea :value="contract.outcomes.critical?.publicText ?? ''" data-testid="outcome-critical" rows="2" placeholder="Write what happens on double 1s" @input="onCriticalInput(contract, $event)" /></label>
+            <p v-if="overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS)" class="stage-length over" data-testid="stage-length-critical">{{ overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS) }}</p>
+            <small v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" style="display: block">{{ effectLabel(effect) }}</small>
           </div>
         </template>
       </article>

@@ -38,6 +38,30 @@ describe('fake narrator speaker identity', () => {
     expect(result.contracts[0]!.outcomes.costly.effects).toEqual([{ kind: 'strain_delta', characterId: input.submissions[0]!.characterId, delta: 1 }]);
     expect(JSON.stringify(result)).not.toMatch(/security|archive|club/i);
   });
+  it.each(['conversation', 'action'] as const)('rolls every selected line with four outcomes in a %s round', async (kind) => {
+    const input = context(kind);
+    const act: Submission = { ...input.submissions[0]!, id: 'second', kind: 'act', text: 'I pick the lock.' };
+    input.submissions.push(act);
+    const result = await provider.plan(input);
+    expect(result.classification).toBe('action');
+    expect(result.contracts).toHaveLength(2);
+    for (const submission of input.submissions) {
+      const contract = result.contracts.find((candidate) => candidate.submissionIds.includes(submission.id))!;
+      expect(contract.ruling).toBe('check');
+      expect(Object.keys(contract.outcomes).sort()).toEqual(['clean', 'costly', 'critical', 'setback']);
+      expect(contract.outcomes.critical!.publicText.length).toBeLessThanOrEqual(110);
+    }
+    expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
+  });
+  it('blocks a Do line from a character at four strain and keeps four outcomes', async () => {
+    const input = context();
+    input.state.characters[0]!.strain = 4;
+    input.submissions[0]!.kind = 'act';
+    const result = await provider.plan(input);
+    expect(result.contracts[0]!.ruling).toBe('blocked');
+    expect(Object.keys(result.contracts[0]!.outcomes).sort()).toEqual(['clean', 'costly', 'critical', 'setback']);
+    expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
+  });
   it('does not import the Ledger story into an authored NPC’s sale memory', async () => {
     const input = context();
     const npc = input.state.npcs[1]!;

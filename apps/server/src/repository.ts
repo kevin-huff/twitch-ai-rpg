@@ -96,7 +96,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
       id: contract.id, version: contract.version, actorCharacterId: contract.actorCharacterId, helperCharacterIds: contract.helperCharacterIds,
       intent: contract.intent, approach: contract.approach, ruling: contract.ruling, trait: contract.trait,
       edge: contract.edge, edgeReason: contract.edgeReason, risk: contract.risk,
-      outcomes: { clean: contract.outcomes.clean.publicText, costly: contract.outcomes.costly.publicText, setback: contract.outcomes.setback.publicText },
+      outcomes: { clean: contract.outcomes.clean.publicText, costly: contract.outcomes.costly.publicText, setback: contract.outcomes.setback.publicText, ...(contract.outcomes.critical ? { critical: contract.outcomes.critical.publicText } : {}) },
     })) : [],
   } : null;
   const picturesEnabled = Boolean(options.picturesEnabled);

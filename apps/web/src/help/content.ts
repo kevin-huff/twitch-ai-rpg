@@ -12,7 +12,7 @@ export const firstSteps: Record<HelpRole, string[]> = {
     'Press Make a show, or Try it now to practise with no setup.',
     'Press Copy all invitations and send them to your cast.',
     'When every seat has a card, press Start show.',
-    'Press Answer these lines, read the script, then press Publish.',
+    'Press Answer these lines, then Approve and roll, read the script, then press Publish.',
   ],
   player: [
     'Open your invitation link and press Join.',
@@ -116,25 +116,36 @@ export const topics: HelpTopic[] = [
       {
         heading: 'One beat from start to finish',
         paragraphs: [
-          'A beat is one round of play: the players send lines, you choose what goes in, and the AI writes the scene. The director page has one bar of actions with a single gold button, and the gold button is always the next thing to do. Above it the page says Step 1 of 3 for a conversation or Step 1 of 5 for an action round, and a sentence says what comes next. A status line shows the work in progress, for example Planning… or Writing the script…. Everything else you might need sits in the closed More fold.',
+          'A beat is one round of play: the players send lines, you choose what goes in, and the AI writes the scene. The director page has one bar of actions with a single gold button, and the gold button is always the next thing to do. Above it the page says Step 1 of 5, and Step 1 of 3 only for an ordinary round, which is a plain conversation with no dice. A sentence says what comes next. A status line shows the work in progress, for example Planning… or Writing the script…. Everything else you might need sits in the closed More fold.',
         ],
         steps: [
           'Lines from players arrive already ticked. Untick any line you want to leave out of this beat.',
-          'For a conversation, press Answer these lines. It opens the conversation, then does Plan and draft: it plans it and, when it is plain talk with no dice, locks it (Lock and draft) and writes the script (Draft the scene) in one go. If the lines call for something risky, it stops at the stakes so you can look first.',
-          'For something risky, press Open action round instead, then Plan. The AI proposes what each line means for the story.',
-          'In an action round, read the What\'s at risk cards. Each card shows the goal, the roll in words and the three results: 10 or more is a clean success, 7 to 9 is a success with a cost, and 6 or less is a setback. Press Edit on a card to change it, then Done. The stage fits about 90 characters of a goal and 110 of each result. The character counts appear only inside a card\'s Edit, and only when a line runs over, so shorten anything over before you approve.',
+          'For a conversation, press Answer these lines. It opens the conversation, plans it and stops at What\'s at risk so you can look first. The gold button then reads Approve and roll.',
+          'For something risky, press Open action round instead, then Plan. Plan plans the ticked lines in any round. The AI proposes what each line means for the story.',
+          'Read the What\'s at risk cards. Each card shows the goal, the roll in words and four results: 10 or more is a clean success, 7 to 9 is a success with a cost, 6 or less is a setback, and a double 1 is a Critical failure whatever the total. Press Edit on a card to change it, then Done. The stage fits about 90 characters of a goal and 110 of each result. The character counts appear only inside a card\'s Edit, and only when a line runs over, so shorten anything over before you approve.',
           'Press Approve and roll. It approves the stakes, locks the lines and writes the script. The server rolls the dice once, at the lock, and the result never changes after that, however many times you retry.',
           'Read the script. You can edit a line, remove it, or pick Add a line to add narration or a non-player character line. When you have edited it, open More and press Save edits.',
           'Press Publish. The audience sees the beat once you do.',
         ],
       },
       {
+        heading: 'Rolls, results and countdowns',
+        paragraphs: [
+          'Every line rolls, in conversations and in action rounds alike. Each ticked line gets a roll of its own, or it helps another line\'s roll.',
+          'The AI sets how bad each result can get from the moment. A light or funny moment gets a small cost, and a dangerous one gets a heavy cost. Read the cards and edit anything that does not fit the scene.',
+          'A double 1 is a Critical failure whatever the total, and the AI writes what happens in that case on its own line of the card. The stage shows it as Critical failure wherever results show. A card with no Critical failure line treats a double 1 as a setback.',
+          'You can still waive a roll. Set a card to No check, so the action simply works, or to Blocked, so it cannot happen yet. You can also untick a line to leave it out of the round.',
+          'Lock and draft appears only when you set a round to Ordinary conversation, which means no dice and nothing changes. Every other round goes through Approve and roll.',
+          'Only action rounds tick countdowns. A conversation round rolls its dice without ticking them.',
+        ],
+      },
+      {
         heading: 'The More fold',
         paragraphs: [
           'More holds the steps you need less often. Open conversation starts a plain conversation when you have no lines to answer. Approve stakes only approves the stakes. Roll the dice locks the lines and rolls once, and it is on only when the stakes are approved and unchanged. Plan again goes back and plans the lines afresh. Regenerate script writes the script again, and the box Tell the AI what to change lets you steer it. Save edits keeps the changes you made to the script. When the beat already has a Note for the AI, the box shows it as Current note, and what you type there replaces it. Regenerate script asks Replace the current draft? first; press Yes, regenerate, or Keep draft. With text in Tell the AI what to change, it asks only when the script has unsaved edits. Abandon this beat opens a short form where you give a reason, then press Abandon beat. Published history stays as it was.',
-          'Players write an action as one plain description, so the queue shows a single line for it. The What\'s at risk cards turn it into a goal and results.',
-          'Each of a player\'s lines can be one action. An action can lead its own roll or help someone else\'s. A character can help only one action in a round, and never their own.',
-          'A round shows at most six rolls. When a plan needs more, the bar says how many it needs. Untick some lines, plan again, and plan the rest in the next round.',
+          'Players write a Do line as one plain description, so the queue shows a single line for it. The What\'s at risk cards turn each line into a goal and results.',
+          'Every line a player sends can lead its own roll or help someone else\'s. A character can help only one roll in a round, and never their own. A character at 4 strain can still speak and roll on a Say line, but a Do line from them is blocked or helps someone else.',
+          'A round shows at most six rolls, because the stream layouts have room for six. When a plan needs more, the bar says how many it needs. Untick the extra lines, plan again, and plan the rest in the next round.',
         ],
       },
       {
@@ -411,7 +422,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'The story',
         paragraphs: [
-          'The story sits under the banner on your seat page. It shows the latest beat: the lines players sent, with their names, then the rolls, then the rest of the scene. A Do something line is tagged Action. A roll is written in words, for example Dash rolled 11: Clean success. It updates by itself when the director publishes a beat.',
+          'The story sits under the banner on your seat page. It shows the latest beat: the lines players sent, with their names, then the rolls, then the rest of the scene. A Do something line is tagged Action. A roll is written in words, for example Dash rolled 11: Clean success, or Dash rolled 3: Critical failure. It updates by itself when the director publishes a beat.',
           'Press Show the whole story to open every beat, oldest first, with the newest at the bottom. Press Hide the whole story to close it again. Before the first beat it says: The story starts when the director publishes the first beat.',
         ],
       },
@@ -426,9 +437,10 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Say something or Do something',
         paragraphs: [
-          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, exactly as you typed them, and hear the narrator read them aloud, once the director puts them in the story.',
-          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, exactly as you typed them, tagged Action, and hear the narrator read them aloud. The storyteller then tells what happens. Sometimes dice decide how it goes.',
+          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, exactly as you typed them, and hear the narrator read them aloud, once the director puts them in the story. Your words can be rolled too, so the dice may decide how they land.',
+          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, exactly as you typed them, tagged Action, and hear the narrator read them aloud. The storyteller then tells what happens, and the dice decide how it goes.',
           'When other characters are in the scene, Say something also shows who you are talking to, such as Talking to Mara or Talking to your group. Press Change to pick someone else. Your group means the other players\' characters.',
+          'Every line you send can be rolled, whether you say it or do it. Most rolls end well or with a cost. A double 1 is a critical failure, whatever the total, and the story shows it as Critical failure.',
           'You can write at any time. If the story isn\'t taking new lines yet, yours waits for the next turn.',
         ],
       },
@@ -505,7 +517,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What are the dice for?',
         paragraphs: [
-          'When a character tries something risky, the server rolls two dice to decide how it goes: a clean success, a success with a cost, or a setback. The stream shows the roll. You never roll anything yourself.',
+          'Every line you send can be rolled. The server rolls two dice to decide how it goes: a clean success, a success with a cost, or a setback. A double 1 is a critical failure whatever the total, and the AI writes what happens then. The stream shows the roll. You never roll anything yourself.',
         ],
       },
       {
@@ -876,7 +888,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'A player needs only two things before they can send: the show has started, and their seat has a card. There is no ready step and no rules to accept. If a player cannot send, check these in order.',
           'Before the show starts, the player sees their seat page with "The show will start soon." and cannot send yet. Start the show from Cast & lobby with Start show. If the button is off, a seat still has no card. Open Cast & lobby, find the seat that says Waiting for this player\'s card, and press Write this card for them, or ask the player to type a name under Your character and press Save my card. If the page says "Give your character a name. Nothing has been saved.", no name was typed yet.',
-          'The banner at the top of the seat says what is happening. \'The show is paused\' shows when the show is paused. \'Waiting for the next turn\' shows between beats. \'Getting the dice ready\' shows while you review the stakes of an action round, and \'The director is checking the lines\' while you review a conversation. In both, the player can still change their line. \'Lines locked in. The story is being written\' shows once a beat is locked with no roll. \'Dice rolled. The story is being written\' shows once a locked action round has a roll.',
+          'The banner at the top of the seat says what is happening. \'The show is paused\' shows when the show is paused. \'Waiting for the next turn\' shows between beats. \'Getting the dice ready\' shows while you review the stakes of an action round, and \'The director is checking the lines\' while you review a conversation. In both, the player can still change their line. \'Lines locked in. The story is being written\' shows once a beat is locked with no roll. \'Dice rolled. The story is being written\' shows once a locked round has a roll.',
           'After the director ends the show, the seat says The show is over and sends nothing. If the page still looks wrong, ask the player to reload it.',
         ],
       },
@@ -885,16 +897,17 @@ export const topics: HelpTopic[] = [
 ];
 
 export const glossary: Array<{ term: string; definition: string }> = [
-  { term: 'Beat', definition: 'One round of play. Players send lines, you pick which to use, and the AI writes a short scene. A beat ends when you publish it. The page counts it as Step 1 of 3 for a conversation or Step 1 of 5 for an action round.' },
-  { term: 'Conversation', definition: 'A beat for talking. Players send Say something lines and private notes, and there are no dice.' },
-  { term: 'Action round', definition: 'A beat for something risky. Each line a player sends can be one action: it leads its own roll or helps another character\'s. You set the stakes, and the server rolls dice once per roll. A round shows at most six rolls.' },
-  { term: 'What\'s at risk', definition: 'The cards that show what a success, a cost or a setback would mean in the story. You approve them with Approve and roll before the dice roll.' },
-  { term: 'Contract', definition: 'The agreement for one roll in an action round: the goal, the ruling, the trait, the risk and the outcomes. A character leads it, and others may help. A character helps only one contract in a round.' },
+  { term: 'Beat', definition: 'One round of play. Players send lines, you pick which to use, and the AI writes a short scene. A beat ends when you publish it. The page counts it as Step 1 of 5, and as Step 1 of 3 only for an ordinary round.' },
+  { term: 'Conversation', definition: 'A beat for talking. Players send Say something lines and private notes. The lines roll like an action round\'s, but a conversation round does not tick countdowns. Only a round you set to Ordinary conversation has no dice.' },
+  { term: 'Action round', definition: 'A beat for something risky. Each line a player sends rolls: it leads its own roll or helps another character\'s. You set the stakes, and the server rolls dice once per roll. Only action rounds tick countdowns. A round shows at most six rolls.' },
+  { term: 'What\'s at risk', definition: 'The cards that show what a success, a cost, a setback or a Critical failure would mean in the story. Conversation rounds and action rounds both stop here. You approve them with Approve and roll before the dice roll.' },
+  { term: 'Contract', definition: 'The agreement for one roll: the goal, the ruling, the trait, the risk and the outcomes, including the Critical failure. A character leads it, and others may help. A character helps only one contract in a round.' },
   { term: 'Ruling', definition: 'Your decision on whether an action needs dice. Check means roll. No check means it works. Blocked means it cannot happen yet, and you explain what is missing. For No check and Blocked, the stage shows only the outcome that will happen, marked No roll needed or Blocked.' },
   { term: 'Trait', definition: 'One of a character\'s strengths, such as Wits. The server adds its value to the dice.' },
-  { term: 'Risk', definition: 'How dangerous an action is. It is written in the contract and shown to viewers with the wager.' },
+  { term: 'Risk', definition: 'How dangerous an action is: low for light or funny stakes, normal for humiliating or costly ones, high for dangerous ones. The AI sets it from the moment. It is written in the contract and shown to viewers with the wager.' },
   { term: 'Edge', definition: 'A bonus of 1 that a character gets when a teammate helps with the action.' },
-  { term: 'Outcome bands', definition: 'The three result groups. A total of 10 or more is a clean success. A total of 7 to 9 is a success with a cost. A total of 6 or less is a setback.' },
+  { term: 'Outcome bands', definition: 'The four result groups. A total of 10 or more is a clean success. A total of 7 to 9 is a success with a cost. A total of 6 or less is a setback. A double 1 is a Critical failure, whatever the total.' },
+  { term: 'Critical failure', definition: 'The result of a double 1, whatever the total. The AI writes its own outcome for each roll, a clear step worse than the setback, and the stage shows it as Critical failure. A card without one treats a double 1 as a setback.' },
   { term: 'Strain', definition: 'How much pressure a character is under, from 0 to 4. At 4 the stage shows Needs help next to the character.' },
   { term: 'Track', definition: 'A meter for something that moves over time, such as progress, danger or a countdown. The scene layout shows up to three and the overlay layout shows up to two.' },
   { term: 'Facts to remember', definition: 'The facts the story must keep true, such as who is hurt or where an item is. They are listed above the bar when a script proposes them, and publishing keeps them unless you tick Don\'t keep these.' },

@@ -21,11 +21,13 @@ export function speakerRole(segment: Pick<ScriptSegment, 'kind'>): 'Narrator' | 
 }
 
 export function bandLabel(band: OutcomeBand): string {
-  return band === 'clean' ? 'Clean success' : band === 'costly' ? 'Success with a cost' : 'Setback';
+  const name: string = band;
+  return name === 'clean' ? 'Clean success' : name === 'costly' ? 'Success with a cost' : name === 'critical' ? 'Critical failure' : 'Setback';
 }
 
 export function bandSymbol(band: OutcomeBand): string {
-  return band === 'clean' ? '+' : band === 'costly' ? '~' : 'x';
+  const name: string = band;
+  return name === 'clean' ? '+' : name === 'costly' ? '~' : name === 'critical' ? '!' : 'x';
 }
 
 export function traitName(trait: Trait): string {
@@ -42,11 +44,14 @@ export function rollBreakdown(roll: Pick<Roll, 'faces' | 'trait' | 'traitModifie
 export function wagerOutcomes(stake: Pick<PublicActionContract, 'ruling' | 'outcomes'>): Array<{ label: string; text: string }> {
   if (stake.ruling === 'no_check') return [{ label: 'No roll needed', text: stake.outcomes.clean }];
   if (stake.ruling === 'blocked') return [{ label: 'Blocked', text: stake.outcomes.setback }];
-  return [
+  const rows = [
     { label: '10+ Clean success', text: stake.outcomes.clean },
     { label: '7-9 Success with a cost', text: stake.outcomes.costly },
     { label: '6 or less Setback', text: stake.outcomes.setback },
   ];
+  const critical = (stake.outcomes as { critical?: string }).critical;
+  if (typeof critical === 'string' && critical.trim()) rows.push({ label: 'Double 1s Critical failure', text: critical });
+  return rows;
 }
 
 export function helperCredit(stake: Pick<PublicActionContract, 'ruling' | 'edge'>, names: string[]): string {

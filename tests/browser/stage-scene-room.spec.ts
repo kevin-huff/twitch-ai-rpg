@@ -169,12 +169,12 @@ const GOALS = [
   'Talk the night porter into looking the other way for a full hour while the others work',
   'Carry the wounded courier up the coal chute and across the yard before the bells ring',
 ];
-// Each text sits at the stage budget: a goal of at most 90 characters, each outcome of at most 110.
+// Each text sits at the stage budget: a goal of at most 90 characters, each of the four outcomes (critical failure too) of at most 110.
 const OUTCOMES = [
-  { clean: 'You reach the river unseen, the ledger stays dry and whole, and the ferryman is already waiting for you.', costly: 'You reach the river with the ledger, but a watcher saw your lantern and follows you down to the water.', setback: 'The stairs creak, the watchers turn as one, and the ledger is left behind on the cold, hard stone steps.' },
-  { clean: 'The lock gives way at once and the heavy door swings open without a sound, leaving the cellar all yours.', costly: 'The lock opens, but the pick snaps loudly inside it and the noise carries upstairs to the waiting guards.', setback: 'The lock jams hard, the guards come back early, and you are caught in the hall with the pick in hand.' },
-  { clean: 'The porter shrugs, pockets the coin, and sleeps soundly through the whole hour without asking a question.', costly: 'The porter agrees, but he will tell the captain who paid him, and why, the moment he is asked directly.', setback: 'The porter shouts for help, the alarm bell rings, and every door in the whole building is barred shut.' },
-  { clean: 'The courier is carried clear of the yard and thanks you, then gives you the name of his master at last.', costly: 'The courier is saved, but his wound reopens on the way and he will need a good healer long before dawn.', setback: 'The chute collapses under you both and the courier is left behind in the dark, calling out for help.' },
+  { clean: 'You reach the river unseen, the ledger stays dry and whole, and the ferryman is already waiting for you.', costly: 'You reach the river with the ledger, but a watcher saw your lantern and follows you down to the water.', setback: 'The stairs creak, the watchers turn as one, and the ledger is left behind on the cold, hard stone steps.', critical: 'The watchers seize the ledger and you, and by dawn the whole city knows your name and what you tried to steal.' },
+  { clean: 'The lock gives way at once and the heavy door swings open without a sound, leaving the cellar all yours.', costly: 'The lock opens, but the pick snaps loudly inside it and the noise carries upstairs to the waiting guards.', setback: 'The lock jams hard, the guards come back early, and you are caught in the hall with the pick in hand.', critical: 'The pick breaks off deep in the lock, the alarm wakes the house, and the cellar door is sealed for the night.' },
+  { clean: 'The porter shrugs, pockets the coin, and sleeps soundly through the whole hour without asking a question.', costly: 'The porter agrees, but he will tell the captain who paid him, and why, the moment he is asked directly.', setback: 'The porter shouts for help, the alarm bell rings, and every door in the whole building is barred shut.', critical: 'The porter knocks you down the steps, takes your coin and knife, and sends a runner straight to the captain.' },
+  { clean: 'The courier is carried clear of the yard and thanks you, then gives you the name of his master at last.', costly: 'The courier is saved, but his wound reopens on the way and he will need a good healer long before dawn.', setback: 'The chute collapses under you both and the courier is left behind in the dark, calling out for help.', critical: 'The chute gives way on top of you both, and the courier is lost while the bells bring the whole watch running.' },
 ];
 
 // stakes is the number of pending wagers (0 drops them so the dice show); rolls is the number of dice cards; doubleText repeats each line so a page marker appears.
@@ -256,7 +256,7 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
   for (const scenario of CASES) {
     const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
     try {
-      // Only this stream page sees the rewritten snapshot: more players, longer names, every roll a costly success.
+      // Only this stream page sees the rewritten snapshot: more players, longer names, every roll a costly success but the last, a critical failure.
       await context.route(/\/api\/sessions\/[^/?]+\?view=stage$/, async route => {
         const response = await route.fetch();
         const body = await response.json();
@@ -270,6 +270,8 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
         if (scenario.doubleText) for (const segment of latest.segments) segment.text = `${segment.text} ${segment.text}`;
         const baseRoll = latest.rolls[0];
         latest.rolls = Array.from({ length: scenario.rolls }, (_, index) => ({ ...baseRoll, id: `roll-${index}`, actorCharacterId: body.characters[index].id, band: 'costly', faces: [4, 3], edge: 1, total: 9 }));
+        // The last roll is a double 1, so its Critical failure plate must fit whole beside the costly ones.
+        latest.rolls[scenario.rolls - 1] = { ...latest.rolls[scenario.rolls - 1], band: 'critical', faces: [1, 1], edge: 0, total: 2 + baseRoll.traitModifier };
         if (!scenario.stakes) {
           if (body.activeBeat) delete body.activeBeat.stakes;
         } else if (body.activeBeat?.stakes?.length) {
@@ -301,7 +303,7 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
         if (scenario.doubleText) expect(m.markerShown, `${where} / the doubled text should need a second page`).toBe(true);
         if (scenario.stakes) {
           expect(m.textIssues, where).toEqual([]);
-          expect(m.outcomeLengths.length, where).toBe(3);
+          expect(m.outcomeLengths.length, where).toBe(4);
           for (const length of m.outcomeLengths) expect(length, `${where} / outcome text length`).toBeGreaterThanOrEqual(100);
           expect(m.wagerCards.length, where).toBe(1);
           for (const card of m.wagerCards) expect(card.bottom, `${where} / stake: ${card.text}`).toBeLessThanOrEqual(card.wagerBottom + 0.5);
@@ -338,7 +340,35 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
         expect(seen.size).toBe(scenario.stakes);
       } else {
         await check();
+        // A critical failure fills its result plate with heart and sets every word on it in void; a costly roll keeps the night plate.
+        const plates = await stream.evaluate(() => {
+          const look = (selector: string) => {
+            const roll = document.querySelector<HTMLElement>(selector)!;
+            const color = (part: string) => getComputedStyle(roll.querySelector(part)!).color;
+            return {
+              plate: getComputedStyle(roll.querySelector('.roll-detail')!).backgroundColor,
+              words: [color('.roll-name'), color('.roll-breakdown'), color('.roll-symbol'), color('.roll-result')],
+              result: roll.querySelector('.roll-result')!.textContent,
+            };
+          };
+          const root = getComputedStyle(document.documentElement);
+          const token = (name: string) => {
+            const probe = document.createElement('span');
+            probe.style.color = root.getPropertyValue(name).trim();
+            document.body.appendChild(probe);
+            const value = getComputedStyle(probe).color;
+            probe.remove();
+            return value;
+          };
+          return { critical: look('.stage-story .roll[data-band="critical"]'), costly: look('.stage-story .roll[data-band="costly"]'), heart: token('--heart'), void: token('--void'), night: token('--night') };
+        });
+        expect(plates.critical.result, scenario.label).toBe('Critical failure');
+        expect(plates.critical.plate, scenario.label).toBe(plates.heart);
+        expect(plates.critical.words, scenario.label).toEqual([plates.void, plates.void, plates.void, plates.void]);
+        expect(plates.costly.plate, scenario.label).toBe(plates.night);
       }
+      await expect(stream.locator('.scene-reveal-titles, .scene-picture.revealing, .scene-picture.shrinking')).toHaveCount(0, { timeout: 10000 });
+      await stream.screenshot({ path: test.info().outputPath(`scene-${scenario.label.replace(/\s+/g, '-')}.png`) });
     } finally { await context.close(); }
   }
 });

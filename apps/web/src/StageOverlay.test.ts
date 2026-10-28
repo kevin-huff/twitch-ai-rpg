@@ -141,6 +141,43 @@ describe('StageOverlay', () => {
     expect(wrapper.findAll('.wager-outcomes p')).toHaveLength(1);
   });
 
+  it('adds a fourth Double 1s row with the critical text when a check carries one', () => {
+    const critical = snapshot();
+    const beat = critical.activeBeat as unknown as { stakes: Array<Record<string, unknown>> };
+    beat.stakes = [{ ...beat.stakes[0], outcomes: { clean: 'It opens.', costly: 'It opens, loudly.', setback: 'It jams.', critical: 'The lock bites shut on your fingers and the alarm bell rings.' } }];
+    const rows = mount(StageOverlay, { props: { snapshot: critical, connected: true } }).findAll('.wager-outcomes p');
+    expect(rows.map(row => row.get('span').text())).toEqual(['10+ Clean success', '7-9 Success with a cost', '6 or less Setback', 'Double 1s Critical failure']);
+    expect(rows[3]!.get('em').text()).toBe('The lock bites shut on your fingers and the alarm bell rings.');
+    beat.stakes = [{ ...beat.stakes[0], outcomes: { clean: 'It opens.', costly: 'It opens, loudly.', setback: 'It jams.', critical: '   ' } }];
+    expect(mount(StageOverlay, { props: { snapshot: critical, connected: true } }).findAll('.wager-outcomes p')).toHaveLength(3);
+  });
+
+  it('shows a double 1 as Critical failure on a heart plate with void text, while a setback colours only its symbol', () => {
+    const base = snapshot();
+    const rolls = [
+      { ...base.history[0]!.rolls[0]!, id: 'rc', actorCharacterId: 'c1', faces: [1, 1], edge: 0, total: 3, band: 'critical' },
+      { ...base.history[0]!.rolls[0]!, id: 'rs', actorCharacterId: 'c2', faces: [2, 1], edge: 0, total: 5, band: 'setback' }
+    ];
+    const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history: [{ ...base.history[0]!, rolls }] }), connected: true } });
+    const [critical, setback] = wrapper.findAll('.roll');
+    expect(critical!.attributes('data-band')).toBe('critical');
+    expect(critical!.get('.roll-result').text()).toBe('Critical failure');
+    expect(critical!.get('.roll-symbol').text()).toBe('!');
+    expect(critical!.get('.roll-total').text()).toBe('3');
+    expect(setback!.get('.roll-result').text()).toBe('Setback');
+    const rule = (selector: string) => {
+      const start = overlaySource.indexOf('\n' + selector + ' {');
+      return start === -1 ? '' : overlaySource.slice(start, overlaySource.indexOf('}', start));
+    };
+    expect(rule('.roll[data-band="critical"] .roll-text')).toMatch(/background: var\(--heart\)/);
+    const voidText = rule('.roll[data-band="critical"] .roll-who, .roll[data-band="critical"] .roll-sum, .roll[data-band="critical"] .roll-band');
+    expect(voidText).toMatch(/color: var\(--void\)/);
+    expect(rule('.roll[data-band="critical"] .roll-total')).toMatch(/var\(--heart\)/);
+    expect(overlaySource).not.toMatch(/\.roll\[data-band="setback"\] \.roll-(?:text|band|result|who|sum)/);
+    expect(rule('.roll[data-band="setback"] .roll-symbol')).toMatch(/background: var\(--heart\)/);
+    expect(overlaySource).not.toMatch(/color: var\(--heart\)/);
+  });
+
   describe('wager spotlight', () => {
     const cast = [
       { id: 'c1', displayName: 'Mara Vale', traits: { force: 0, finesse: 1, wits: 2, presence: 1 }, strain: 0, appearance: '', approved: true, ready: true },
@@ -236,6 +273,7 @@ describe('StageOverlay', () => {
     expect(em).not.toMatch(/nowrap|ellipsis/);
     expect(em).toMatch(/line-clamp: 3/);
     expect(Number(em.match(/font-size: (\d+)px/)?.[1])).toBeGreaterThanOrEqual(24);
+    expect(Number(em.match(/line-height: (\d+)px/)?.[1]) % 4).toBe(0);
     expect(overlaySource).not.toContain('more`');
     const animated = overlaySource.match(/animation:[^;]*/g) ?? [];
     expect(animated.length).toBeGreaterThan(0);

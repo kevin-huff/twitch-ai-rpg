@@ -69,7 +69,8 @@ test('the full scene and the overlay both show every line of the latest beat, pl
   // The director selects both players, plans, locks and drafts.
   await page.reload();
   for (const name of names) await expect(page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox')).toBeChecked();
-  await page.getByRole('button', { name: 'Plan and draft', exact: true }).click();
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  await page.getByRole('button', { name: 'Approve and roll', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeEnabled();
 
   // Rewrite the script to four non-player segments of about 110 words.
@@ -186,16 +187,17 @@ const WAGER_GOALS = [
   'Carry the wounded courier up the coal chute before the smoke fills the narrow shaft',
 ];
 const WAGER_OUTCOMES = [
-  {clean:'You reach the river unseen, the ledger stays dry and whole in your coat, and no watcher learns your name.',costly:'You reach the river with the ledger, but a watcher saw your lantern and follows you along the muddy bank.',setback:'The stairs creak, the watchers turn as one, and the ledger is torn from your hands and left behind for good.'},
-  {clean:'The lock gives way at once, the door swings open without a single sound, and the cellar lies open before you.',costly:'The lock opens, but the pick snaps in the keyhole and the noise carries up the stairs to the guards.',setback:'The lock jams solid, the guards come back early, and you are caught in the hall with the broken pick in hand.'},
-  {clean:'The porter shrugs, pockets the coin, and sleeps soundly through the whole hour while you search every room.',costly:'The porter agrees, but he will tell the captain exactly who paid him and why, when the morning bell rings.',setback:'The porter raises the alarm, every door in the building is barred, and the captain is sent for at once.'},
-  {clean:'The courier is carried clear and thanks you with the name of his master, and a seat at his own table.',costly:'The courier is saved, but his wound reopens on the climb and he needs a healer within the hour or he is lost.',setback:'The chute collapses under you both and the courier is left behind in the dark, calling out for you to return.'},
+  {clean:'You reach the river unseen, the ledger stays dry and whole in your coat, and no watcher learns your name.',costly:'You reach the river with the ledger, but a watcher saw your lantern and follows you along the muddy bank.',setback:'The stairs creak, the watchers turn as one, and the ledger is torn from your hands and left behind for good.',critical:'The watchers seize you on the stairs, the ledger burns in their lantern, and the bells ring out your name.'},
+  {clean:'The lock gives way at once, the door swings open without a single sound, and the cellar lies open before you.',costly:'The lock opens, but the pick snaps in the keyhole and the noise carries up the stairs to the guards.',setback:'The lock jams solid, the guards come back early, and you are caught in the hall with the broken pick in hand.',critical:'The pick snaps, the door bolts itself shut behind you, and the guards lock you in the flooding cellar overnight.'},
+  {clean:'The porter shrugs, pockets the coin, and sleeps soundly through the whole hour while you search every room.',costly:'The porter agrees, but he will tell the captain exactly who paid him and why, when the morning bell rings.',setback:'The porter raises the alarm, every door in the building is barred, and the captain is sent for at once.',critical:'The porter calls the captain, names you as the thief, and every exit is barred while the whole guard closes in.'},
+  {clean:'The courier is carried clear and thanks you with the name of his master, and a seat at his own table.',costly:'The courier is saved, but his wound reopens on the climb and he needs a healer within the hour or he is lost.',setback:'The chute collapses under you both and the courier is left behind in the dark, calling out for you to return.',critical:"The chute gives way, you both fall into the smoke below, and the courier's message is lost in the fire for ever."},
 ];
-const BANDS = ['clean', 'costly', 'setback', 'costly'];
+const BANDS = ['clean', 'costly', 'setback', 'critical'];
 const BAND_FACES: Record<string, { faces: number[]; edge: number; total: number }> = {
   clean: { faces: [6, 5], edge: 1, total: 12 },
   costly: { faces: [4, 3], edge: 1, total: 9 },
   setback: { faces: [2, 1], edge: 0, total: 3 },
+  critical: { faces: [1, 1], edge: 0, total: 3 },
 };
 
 test.setTimeout(240000);
@@ -288,7 +290,7 @@ test('the overlay shows each wager in turn without cutting it, then every dice c
     return { context, stream };
   };
 
-  // Wager pass: every actor takes the banner in cast order, with three whole outcome texts, while the old dice stay held.
+  // Wager pass: every actor takes the banner in cast order, with four whole outcome texts, while the old dice stay held.
   {
     const { context, stream } = await open(true);
     try {
@@ -324,7 +326,7 @@ test('the overlay shows each wager in turn without cutting it, then every dice c
         expect(read.bottom, where).toBeLessThanOrEqual(752);
         expect(read.left, where).toBe(480);
         expect(read.width, where).toBe(960);
-        expect(read.outcomes, where).toHaveLength(3);
+        expect(read.outcomes, where).toHaveLength(4);
         for (const outcome of read.outcomes) {
           expect(outcome.text.length, where).toBeGreaterThanOrEqual(100);
           expect(outcome.scrollHeight, where).toBeLessThanOrEqual(outcome.clientHeight + 1);
@@ -385,7 +387,7 @@ test('the overlay shows each wager in turn without cutting it, then every dice c
       read.cards.forEach((card, index) => {
         const what = `${card.who} / ${card.label}: ${where}`;
         expect(card.who, what).toBe(WAGER_NAMES[index]);
-        expect(card.label, what).toMatch(new RegExp(['Clean success', 'Success with a cost', 'Setback', 'Success with a cost'][index]!));
+        expect(card.label, what).toMatch(new RegExp(['Clean success', 'Success with a cost', 'Setback', 'Critical failure'][index]!));
         expect(card.whoWidth, what).toBeGreaterThanOrEqual(card.whoWanted - 0.5);
         expect(card.whoScrollWidth, what).toBeLessThanOrEqual(card.whoClientWidth);
         expect(card.symbolShown, what).toBe(true);

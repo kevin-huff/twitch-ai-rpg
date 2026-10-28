@@ -195,6 +195,50 @@ describe('StageScene', () => {
     expect(text).toContain('The lock jams.');
   });
 
+  it('lists a fourth Double 1s row with the critical failure text for a check stake that has one', () => {
+    const stake = {
+      id: 'k7', version: 1, actorCharacterId: 'c1', helperCharacterIds: [], intent: 'Pick the vault lock', approach: 'Quietly',
+      ruling: 'check', trait: 'wits', edge: 0, edgeReason: null, risk: 'high',
+      outcomes: { clean: 'The door opens.', costly: 'The door opens but a bell rings.', setback: 'The lock jams.', critical: 'The pick snaps inside and the vault seals for good.' },
+    };
+    const wrapper = mountScene(snapshot({ activeBeat: { id: 'b2', kind: 'action', phase: 'stakes_review', revision: 1, stakes: [stake], locked: false } }));
+    const card = wrapper.get('.wager-card');
+    expect(card.findAll('.wager-outcome b').map(label => label.text())).toEqual(['10+ Clean success', '7-9 Success with a cost', '6 or less Setback', 'Double 1s Critical failure']);
+    expect(card.findAll('.wager-outcome-text').map(text => text.text())).toEqual(['The door opens.', 'The door opens but a bell rings.', 'The lock jams.', 'The pick snaps inside and the vault seals for good.']);
+    const plain = mountScene(snapshot({ activeBeat: { id: 'b2', kind: 'action', phase: 'stakes_review', revision: 1, stakes: [{ ...stake, outcomes: { ...stake.outcomes, critical: '  ' } }], locked: false } }));
+    expect(plain.findAll('.wager-outcome')).toHaveLength(3);
+    expect(plain.text()).not.toContain('Double 1s');
+  });
+
+  it('shows a double 1 as a Critical failure on a heart plate with void words, and keeps the setback look', () => {
+    const rolls = [
+      { id: 'b1-r1', contractId: 'k1', contractVersion: 1, actorCharacterId: 'c1', faces: [1, 1], trait: 'wits', traitModifier: 2, edge: 0, total: 4, band: 'critical' },
+      { id: 'b1-r2', contractId: 'k2', contractVersion: 1, actorCharacterId: 'c2', faces: [1, 3], trait: 'wits', traitModifier: 0, edge: 0, total: 4, band: 'setback' },
+    ];
+    const wrapper = mountScene(snapshot({ history: [beat('b1', 1, { rolls })] }));
+    const [critical, setback] = wrapper.findAll('.roll');
+    expect(critical!.attributes('data-band')).toBe('critical');
+    expect(critical!.get('.roll-result').text()).toBe('Critical failure');
+    expect(critical!.get('.roll-symbol').text()).toBe('!');
+    expect(critical!.get('.roll-breakdown').text()).toBe('1 + 1 + Wits 2');
+    expect(setback!.attributes('data-band')).toBe('setback');
+    expect(setback!.get('.roll-result').text()).toBe('Setback');
+
+    const source = readFileSync(resolve(process.cwd(), 'apps/web/src/StageScene.vue'), 'utf8');
+    const css = source.slice(source.indexOf('<style'));
+    const rule = (selector: string) => new RegExp(`\\n${selector.replace(/[.[\]()']/g, '\\$&')} \\{[^}]*\\}`).exec(css)?.[0] ?? '';
+    expect(rule(".roll[data-band='critical']")).toMatch(/--band:\s*var\(--heart\)/);
+    expect(rule(".roll[data-band='critical'] .roll-detail")).toMatch(/background:\s*var\(--heart\)/);
+    const words = /\n(\.roll\[data-band='critical'\] \.roll-name, [^{]*)\{([^}]*)\}/.exec(css)!;
+    for (const part of ['.roll-name', '.roll-breakdown', '.roll-result']) expect(words[1]).toContain(`.roll[data-band='critical'] ${part}`);
+    expect(words[2]).toMatch(/color:\s*var\(--void\)/);
+    expect(rule(".roll[data-band='critical'] .roll-symbol")).toMatch(/color:\s*var\(--void\)/);
+    // Nothing on the plate is heart-coloured text, and the setback keeps colouring only its symbol ring and its 40px word.
+    expect(css).not.toMatch(/critical[^{]*\{[^}]*[^-]color:\s*var\(--heart\)/);
+    expect(rule(".roll[data-band='setback']")).toMatch(/^\n\.roll\[data-band='setback'\] \{ --band: var\(--heart\); \}$/);
+    expect(css).not.toMatch(/setback'\] \.roll-detail/);
+  });
+
   it('shows only the outcome a no-check ruling can produce, with no trait line or Edge', () => {
     const stake = {
       id: 'k5', version: 1, actorCharacterId: 'c1', helperCharacterIds: ['c2'], intent: 'Walk in through the open door', approach: 'Calmly',
@@ -391,7 +435,8 @@ describe('StageScene', () => {
       expect(css).not.toMatch(/\.wager-list \{[^}]*repeat\(2/);
       const spotlightHeight = /\n\.wager-card\.spotlight \{ height:\s*(\d+)px; \}/.exec(css);
       expect(Number(spotlightHeight![1])).toBeGreaterThanOrEqual(300);
-      expect(Number(spotlightHeight![1])).toBeLessThanOrEqual(320);
+      expect(Number(spotlightHeight![1])).toBeLessThanOrEqual(348);
+      expect(Number(spotlightHeight![1]) % 4).toBe(0);
       expect(css).toMatch(/\n\.wager-card\.spotlight \{ grid-template-rows: minmax\(0, 1fr\); \}/);
       expect(/\n\.wager-card\.spotlight > \.wager-main, \.wager-card\.spotlight > \.wager-results \{[^}]*min-height:\s*0[^}]*overflow:\s*hidden[^}]*align-self:\s*stretch[^}]*\}/.test(css)).toBe(true);
       expect(/\n\.dice-held \{[^}]*\}/.exec(css)![0]).toMatch(/display:\s*none/);

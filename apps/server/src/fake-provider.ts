@@ -127,8 +127,6 @@ export class FakeAiProvider implements AiProvider {
 
   async plan(context: ProviderContext): Promise<PlanResult> {
     const { beat, submissions, state } = context;
-    const risky = submissions.some((submission) => submission.kind === 'act' || /give me|hand over|threaten|steal|persuad|intimidat/i.test(submission.text));
-    if (beat.kind === 'conversation' && !risky) return { classification: 'ordinary', contracts: [], directorSummary: 'An ordinary exchange. No automatic concession or mechanical effect.' };
     const progress = state.tracks.find((track) => track.kind === 'progress' && track.visibility === 'public' && track.enabled);
     const danger = state.tracks.find((track) => track.kind === 'danger' && track.visibility === 'public' && track.enabled);
     const progressEffects: Effect[] = progress ? [{ kind: 'track_delta', trackId: progress.id, delta: 2 }] : [];
@@ -136,14 +134,15 @@ export class FakeAiProvider implements AiProvider {
     const contracts: ActionContract[] = submissions.filter((submission) => submission.kind !== 'ooc').map((submission) => ({
       id: randomUUID(), version: 1, actorCharacterId: submission.characterId, helperCharacterIds: [], submissionIds: [submission.id],
       intent: submission.intent || submission.text, approach: submission.approach || 'Ask the addressed NPC for a consequential concession',
-      ruling: 'check', trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
+      ruling: submission.kind === 'act' && (state.characters.find((character) => character.id === submission.characterId)?.strain ?? 0) >= 4 ? 'blocked' : 'check', trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
       outcomes: {
         clean: { publicText: 'The agreed objective succeeds quietly.', effects: [...progressEffects] },
         costly: { publicText: danger ? 'The agreed objective succeeds, drawing attention.' : 'The agreed objective succeeds at the cost of 1 strain.', effects: [...progressEffects, cost(submission.characterId, 1)] },
         setback: { publicText: danger ? 'The objective remains out of reach and danger increases.' : 'The objective remains out of reach; the effort causes 2 strain.', effects: [cost(submission.characterId, 2)] },
+        critical: { publicText: danger ? 'It goes as badly as it could, and the danger jumps.' : 'It goes as badly as it could; the effort causes 3 strain.', effects: [cost(submission.characterId, 3)] },
       },
     }));
-    return { classification: beat.kind === 'conversation' ? 'needs_action' : 'action', contracts, directorSummary: 'Review these fixture stakes before accepting. They are deterministic rehearsal proposals.' };
+    return { classification: 'action', contracts, directorSummary: 'Review these fixture stakes before accepting. They are deterministic rehearsal proposals.' };
   }
   async render(context: ProviderContext): Promise<AiDraft> {
     const submission = context.submissions.at(-1);

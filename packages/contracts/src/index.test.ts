@@ -14,6 +14,10 @@ import {
   isSpokenSegmentKind,
   playerWords,
   spokenText,
+  OutcomeBandSchema,
+  ActionContractSchema,
+  PublicActionContractSchema,
+  RollSchema,
   TraitsSchema,
 } from './index.js';
 
@@ -155,5 +159,55 @@ describe('player line helpers', () => {
     const kinds = ['narration', 'npc_dialogue', 'player_dialogue', 'player_action', 'system'];
     expect(kinds.map(isSpokenSegmentKind)).toEqual([true, true, true, true, false]);
     expect(kinds.map(isPlayerSegmentKind)).toEqual([false, false, true, true, false]);
+  });
+});
+
+describe('critical band and tag-free speech', () => {
+  const branch = { publicText: 'It works.', effects: [] };
+  const contract = {
+    id: 'c1', version: 1, actorCharacterId: 'a', helperCharacterIds: [], submissionIds: ['s1'],
+    intent: 'Pick the lock', approach: 'Carefully', ruling: 'check', trait: 'finesse', edge: 0, edgeReason: null,
+    risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
+    outcomes: { clean: branch, costly: branch, setback: branch },
+  };
+  const publicContract = {
+    id: 'c1', version: 1, actorCharacterId: 'a', helperCharacterIds: [], intent: 'Pick the lock',
+    approach: 'Carefully', ruling: 'check', trait: 'finesse', edge: 0, edgeReason: null, risk: 'normal',
+    outcomes: { clean: 'a', costly: 'b', setback: 'c' },
+  };
+  it('has four bands', () => {
+    expect(OutcomeBandSchema.options).toEqual(['clean', 'costly', 'setback', 'critical']);
+  });
+  it('parses contracts with and without a critical branch', () => {
+    expect(ActionContractSchema.safeParse(contract).success).toBe(true);
+    const withCritical = { ...contract, outcomes: { ...contract.outcomes, critical: branch } };
+    expect(ActionContractSchema.safeParse(withCritical).success).toBe(true);
+    expect(ActionContractSchema.safeParse({ ...contract, outcomes: { ...contract.outcomes, extra: branch } }).success).toBe(false);
+  });
+  it('parses public contracts with and without a critical text', () => {
+    expect(PublicActionContractSchema.safeParse(publicContract).success).toBe(true);
+    expect(PublicActionContractSchema.safeParse({ ...publicContract, outcomes: { ...publicContract.outcomes, critical: 'd' } }).success).toBe(true);
+    expect(PublicActionContractSchema.safeParse({ ...publicContract, outcomes: { ...publicContract.outcomes, extra: 'd' } }).success).toBe(false);
+  });
+  it('accepts a critical roll', () => {
+    const roll = { id: 'r1', contractId: 'c1', contractVersion: 1, actorCharacterId: 'a', faces: [1, 1], trait: 'finesse', traitModifier: 0, edge: 0, total: 2, band: 'critical' };
+    const parsed = RollSchema.safeParse(roll);
+    expect(parsed.success).toBe(true);
+  });
+  it('drops tags from the spoken copy', () => {
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: '<grin> Nice hat.' })).toBe('Dash: Nice hat.');
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: 'Nice</b> hat.' })).toBe('Dash: Nice hat.');
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: 'Nice <wink> hat.' })).toBe('Dash: Nice hat.');
+  });
+  it('keeps non-tags', () => {
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: 'I <3 you' })).toBe('Dash: I <3 you');
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: 'a < b' })).toBe('Dash: a < b');
+  });
+  it('cleans narration and keeps newlines', () => {
+    expect(spokenText({ kind: 'narration', speaker: 'Narrator', text: 'Night <pause> falls.' })).toBe('Night falls.');
+    expect(spokenText({ kind: 'player_action', speaker: 'Dash', text: 'Get in\nquietly' })).toBe('Dash: Get in\nquietly');
+  });
+  it('speaks a tag-only line as the name', () => {
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: '<grin>' })).toBe('Dash:');
   });
 });

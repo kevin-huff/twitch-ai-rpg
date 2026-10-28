@@ -24,7 +24,7 @@ describe('beatStep', () => {
   });
   it('asks to tick lines, then plan', () => {
     expect(run(beatOf({}))).toMatchObject({ step: 'select', next: 'Tick the lines this beat should answer.' });
-    expect(run(beatOf({}), { selectedCount: 2 })).toMatchObject({ step: 'plan', next: 'Plan and draft the ticked lines.', reason: null });
+    expect(run(beatOf({}), { selectedCount: 2 })).toMatchObject({ step: 'plan', next: "Plan the ticked lines to see what's at risk.", reason: null });
     expect(run(beatOf({ kind: 'action' }), { selectedCount: 2 })).toMatchObject({ step: 'plan', next: "Plan the ticked actions to see what's at risk." });
   });
   it('checks the planning-failed case first', () => {
@@ -67,9 +67,12 @@ describe('beatStep', () => {
 });
 
 describe('usesActionSteps', () => {
-  it('is true for action beats, action classifications and an action review', () => {
-    expect(usesActionSteps(null)).toBe(false);
-    expect(usesActionSteps(beatOf({}))).toBe(false);
+  it('is true for every beat except one classified or reviewed as ordinary', () => {
+    expect(usesActionSteps(null)).toBe(true);
+    expect(usesActionSteps(beatOf({}))).toBe(true);
+    expect(usesActionSteps(beatOf({ classification: 'ordinary' }))).toBe(false);
+    expect(usesActionSteps(beatOf({ classification: 'ordinary' }), 'action')).toBe(true);
+    expect(usesActionSteps(beatOf({ kind: 'action', classification: 'ordinary' }), 'ordinary')).toBe(true);
     expect(usesActionSteps(beatOf({ kind: 'action' }))).toBe(true);
     expect(usesActionSteps(beatOf({ classification: 'needs_action' }))).toBe(true);
     expect(usesActionSteps(beatOf({ classification: 'action' as Beat['classification'] }))).toBe(true);
@@ -98,8 +101,8 @@ describe('goldAction', () => {
     goldAction({ step, beat: beatOf({}), paused: false, ordinary: false, ...patch });
   it('picks one action per step', () => {
     expect(g('open', { beat: null })).toBe('answer');
-    expect(g('select')).toBe('plan-and-draft');
-    expect(g('plan')).toBe('plan-and-draft');
+    expect(g('select')).toBe('plan');
+    expect(g('plan')).toBe('plan');
     expect(g('select', { beat: beatOf({ kind: 'action' }) })).toBe('plan');
     expect(g('plan', { beat: beatOf({ kind: 'action' }) })).toBe('plan');
     for (const step of ['stakes', 'lock'] as const) {
@@ -115,8 +118,8 @@ describe('goldAction', () => {
     for (const step of STEP_ORDER) expect(g(step, { paused: true })).toBe('resume');
   });
   it('has a label and test id for every action', () => {
-    expect(Object.values(GOLD_LABELS)).toEqual(['Answer these lines', 'Plan and draft', 'Plan', 'Lock and draft', 'Approve and roll', 'Draft the scene', 'Try again', 'Publish', 'Resume show']);
-    expect(Object.values(GOLD_TEST_IDS)).toEqual(['answer-lines', 'plan-and-draft', 'plan', 'lock-and-draft', 'approve-and-roll', 'render', 'render', 'publish', 'resume-show']);
+    expect(Object.values(GOLD_LABELS)).toEqual(['Answer these lines', 'Plan', 'Lock and draft', 'Approve and roll', 'Draft the scene', 'Try again', 'Publish', 'Resume show']);
+    expect(Object.values(GOLD_TEST_IDS)).toEqual(['answer-lines', 'plan', 'lock-and-draft', 'approve-and-roll', 'render', 'render', 'publish', 'resume-show']);
   });
 });
 

@@ -179,7 +179,7 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
   };
   return {
     task, rulesVersion: context.state.rulesVersion,
-    rules: '2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character\'s contract. A character helps at most one contract per round, and never one they lead. Strain 4 prevents another risky action, never speech.',
+    rules: '2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character\'s contract. A character helps at most one contract per round, and never one they lead. Strain 4 prevents another risky action, never speech.',
     scene: { id: scene.id, title: scene.title, description: scene.description, locationId: scene.locationId },
     ...(brief ? { scenario: { premise: brief.premise, genre: brief.genre, tone: brief.tone,
       objectives: brief.objectives, playerHooks: brief.playerHooks,
@@ -237,9 +237,8 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
   const characterIds = new Set(context.state.characters.map((character) => character.id));
   const contractIds = new Set(result.contracts.map((contract) => contract.id));
   if (contractIds.size !== result.contracts.length) return 'Two contracts share an id.';
-  if (result.classification === 'ordinary' && result.contracts.length) return 'An ordinary classification cannot carry contracts.';
-  if (result.classification === 'ordinary' && submissions.some((submission) => submission.kind === 'act')) {
-    return 'Act submissions are selected, so the classification cannot be ordinary. Cite every act submission in a contract, and use ruling "no_check" for an action that simply works without a roll.';
+  if (result.classification !== 'action') {
+    return `Lines are selected, so the classification must be "action", not "${result.classification}". Every selected line, Say or Do, gets a "check" contract, or helps one.`;
   }
   const lineCounts = new Map<string, number>();
   for (const submission of submissions) lineCounts.set(submission.characterId, (lineCounts.get(submission.characterId) ?? 0) + 1);
@@ -262,11 +261,25 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
     if (!submissions.some((submission) => contract.submissionIds.includes(submission.id) && submission.characterId === contract.actorCharacterId)) {
       return `${name} cites no submission written by its actor.`;
     }
+    if (contract.ruling === 'no_check') return `${name} uses ruling "no_check". Never use "no_check": give every line a "check" contract with light, funny stakes when little is at risk, or use "blocked" for a line that cannot happen.`;
+    if (contract.ruling === 'check') {
+      if (!contract.outcomes.critical) return `${name} is a "check" without outcomes.critical. Every check needs a critical outcome: the worst plausible turn of that action, a clear step beyond its setback, with its own effects.`;
+      const actor = context.state.characters.find((character) => character.id === contract.actorCharacterId)!;
+      const own = submissions.filter((submission) => contract.submissionIds.includes(submission.id) && submission.characterId === contract.actorCharacterId);
+      if (actor.strain >= 4 && own.some((submission) => submission.kind !== 'say')) {
+        return `${name} lets ${actor.displayName}, who is at 4 strain, lead a "check" from a Do line. Strain 4 stops risky actions, never speech: mark that Do line "blocked" or have it help another contract, and let only Say lines lead a check.`;
+      }
+    }
     if (contract.prerequisites.some((prerequisite) => !contractIds.has(prerequisite.contractId))) return `${name} has a prerequisite that is not a contract in this plan.`;
     for (const branch of Object.values(contract.outcomes)) for (const effect of branch.effects) {
       if (effect.kind === 'track_delta' && !context.state.tracks.some((track) => track.id === effect.trackId && track.visibility === 'public')) return `${name} changes a track that was not supplied.`;
       if ('characterId' in effect && !characterIds.has(effect.characterId)) return `${name} has a ${effect.kind} effect on someone who is not a supplied player character.`;
     }
+  }
+  const cited = new Set(result.contracts.flatMap((contract) => contract.submissionIds));
+  const uncited = submissions.find((submission) => !cited.has(submission.id));
+  if (uncited) {
+    return `The selected ${uncited.kind === 'say' ? 'Say' : 'Do'} line ${uncited.id} is cited by no contract. Every selected line must lead a "check" contract, or be cited by the contract it helps.`;
   }
   return null;
 }
@@ -496,9 +509,11 @@ export class ClewdrAiProvider implements AiProvider {
       'Players alone choose their speech, voluntary actions, emotions, and consent. Never generate player-dialogue segments or rewrite a player quote. The application inserts player text itself. The application shows every player line and action word for word just before your script, so continue from them instead of restating them.',
       'Only supplied participating NPC IDs can speak. NPCs know their own sourced knowledge and what these accepted submissions tell them, not unrelated world events.',
       'Current state and each NPC\'s current sourced knowledge take precedence over recentNpcDialogue, which preserves historical speech and may have been corrected. A retained belief is not a fact; an NPC may still hold it without making it true. Correction notices identify amended historical beats and confer no knowledge. Neither correction notices nor directorSteering are evidence for continuity.',
-      'An ordinary question or refusal needs no check. A risky concession, resource transfer, contested secret, or consequential action needs action stakes before publication.',
       task === 'plan' ? 'Viewers read every action contract on stream before the roll. Write each contract intent as one plain sentence of at most 90 characters, and each outcome publicText as one short sentence of at most 110 characters that tells the audience what happens. Save detail for the narration.' : '',
-      task === 'plan' ? 'Every selected act submission must be cited by a contract, even a safe one: use ruling "no_check" for an action that simply works without a roll, and "blocked" for one that cannot happen. Classification "ordinary" is only for beats with no act submission and nothing that needs stakes.' : '',
+      task === 'plan' ? 'Every selected line, Say or Do, in any round gets a roll: write one contract with ruling "check", led by that line\'s character, unless the line helps another contract, which then cites it. Use ruling "blocked" only for a line that cannot happen. Never use ruling "no_check". The classification is always "action". The Do line of a character at strain 4 is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.' : '',
+      task === 'plan' ? 'Set the stakes of each roll from the action itself and the moment, and keep them local to that action instead of moving the plot. Small talk or a trivial action gets light, often funny stakes (a pratfall, an awkward silence, a joke that lands wrong) and risk "low". A tense moment gets humiliating or costly stakes (the insult lands, the NPC turns cold, something is dropped or broken) and risk "normal". Danger only when the scene is dangerous (the NPC wants to fight, a fall that hurts, the alarm goes off) and risk "high". For a Say line, clean means it lands as meant, costly means it lands with a price, setback means it comes across wrong, and critical means it comes across as badly as it possibly could. Never write or rewrite a player\'s words.' : '',
+      task === 'plan' ? 'Every "check" contract carries a fourth outcome, "critical", used when both dice show 1: the worst plausible turn of that same action, a clear step beyond its setback, scaled to the moment, as one short sentence of at most 110 characters, with its own effects.' : '',
+      task === 'render' ? 'A "critical" band is narrated as the worst turn its outcome describes, in the tone its stakes set.' : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
       'Honor fixed results and declared outcomes. Costly success achieves its goal. Do not add effects, dice, inventory, facts, or consequences beyond approved results.',
       'Continuity updates must cite supplied submission IDs. Heard assertions are claims or beliefs, never newly proven facts. Only npc_knowledge continuity is supported. Do not propose world_fact updates; the server applies approved mechanical facts itself.',

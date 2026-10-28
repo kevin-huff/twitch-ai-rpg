@@ -23,7 +23,7 @@ export const TraitsSchema = z.strictObject({
   wits: z.number().int().min(0).max(2), presence: z.number().int().min(0).max(2),
 }).refine((traits) => Object.values(traits).sort().join(',') === '0,1,1,2', 'Traits must allocate +2, +1, +1 and +0.');
 export type Traits = z.infer<typeof TraitsSchema>;
-export const OutcomeBandSchema = z.enum(['clean', 'costly', 'setback']);
+export const OutcomeBandSchema = z.enum(['clean', 'costly', 'setback', 'critical']);
 export type OutcomeBand = z.infer<typeof OutcomeBandSchema>;
 export const VisibilitySchema = z.enum(['public', 'director']);
 export const DeliverySchema = z.enum(['neutral', 'quiet', 'urgent', 'amused']);
@@ -300,7 +300,7 @@ export const ActionContractSchema = z.strictObject({
   risk: z.enum(['low', 'normal', 'high']), prerequisites: z.array(z.strictObject({
     contractId: IdSchema, requirement: z.literal('goal_achieved'),
   })).max(5), fallback: z.strictObject({ kind: z.literal('hold') }).default({ kind: 'hold' }),
-  outcomes: z.strictObject({ clean: OutcomeBranchSchema, costly: OutcomeBranchSchema, setback: OutcomeBranchSchema }),
+  outcomes: z.strictObject({ clean: OutcomeBranchSchema, costly: OutcomeBranchSchema, setback: OutcomeBranchSchema, critical: OutcomeBranchSchema.optional() }),
 });
 export type ActionContract = z.infer<typeof ActionContractSchema>;
 export const PublicActionContractSchema = z.strictObject({
@@ -308,7 +308,7 @@ export const PublicActionContractSchema = z.strictObject({
   helperCharacterIds: z.array(IdSchema), intent: TextSchema, approach: TextSchema, ruling: z.enum(['check', 'no_check', 'blocked']),
   trait: TraitSchema, edge: z.union([z.literal(0), z.literal(1)]), edgeReason: z.string().nullable(),
   risk: z.enum(['low', 'normal', 'high']),
-  outcomes: z.strictObject({ clean: TextSchema, costly: TextSchema, setback: TextSchema }),
+  outcomes: z.strictObject({ clean: TextSchema, costly: TextSchema, setback: TextSchema, critical: TextSchema.optional() }),
 });
 export type PublicActionContract = z.infer<typeof PublicActionContractSchema>;
 export const RollSchema = z.strictObject({
@@ -360,7 +360,12 @@ export function playerWords(line: Pick<Submission, 'kind' | 'text' | 'intent' | 
   return parts.join('\n');
 }
 export function spokenText(line: { kind: string; speaker: string; text: string }): string {
-  return isPlayerSegmentKind(line.kind) ? `${line.speaker}: ${line.text}` : line.text;
+  const text = line.text
+    .replace(/<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .trim();
+  return (isPlayerSegmentKind(line.kind) ? `${line.speaker}: ${text}` : text).trim();
 }
 export const ContinuityUpdateSchema = z.discriminatedUnion('kind', [
   z.strictObject({

@@ -43,11 +43,8 @@ test('four players, two Mara exchanges, a reviewed dice action, stage and refres
 
     async function direct(kind: 'conversation' | 'action', selectedNames: string[]) {
       for (const name of selectedNames) await expect(page.locator('.queue-item').filter({ has: page.getByText(name, { exact: true }) }).getByRole('checkbox')).toBeChecked();
-      if (kind === 'conversation') await page.getByRole('button', { name: 'Plan and draft', exact: true }).click();
-      else {
-        await page.getByRole('button', { name: 'Plan', exact: true }).click();
-        await page.getByRole('button', { name: 'Approve and roll', exact: true }).click();
-      }
+      await page.getByRole('button', { name: 'Plan', exact: true }).click();
+      await page.getByRole('button', { name: 'Approve and roll', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Publish without voice' })).toBeEnabled();
       await page.getByRole('button', { name: 'Publish without voice' }).click();
     }

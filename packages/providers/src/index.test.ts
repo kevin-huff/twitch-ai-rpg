@@ -35,6 +35,23 @@ function draft(ctx: ProviderContext): AiDraft {
   };
 }
 
+const rolledOutcome = { publicText: 'It goes as planned.', effects: [] };
+function rolledContract(ctx: ProviderContext, id: string, actor: number, helpers: number[], submissionId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id, version: 1, actorCharacterId: ctx.state.characters[actor].id, helperCharacterIds: helpers.map((helper) => ctx.state.characters[helper].id),
+    submissionIds: [submissionId], intent: 'Do the thing.', approach: 'Carefully.', ruling: 'check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
+    prerequisites: [], fallback: { kind: 'hold' },
+    outcomes: { clean: rolledOutcome, costly: rolledOutcome, setback: rolledOutcome, critical: { publicText: 'It goes as badly as it could.', effects: [] } },
+    ...overrides,
+  };
+}
+function rolledPlan(contracts: unknown[], directorSummary = 'Every line rolls.') {
+  return { classification: 'action', directorSummary, contracts };
+}
+function singleLinePlan(ctx: ProviderContext) {
+  return rolledPlan([rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id)]);
+}
+
 function nativeResponse(value: unknown, stopReason = 'end_turn') {
   return Response.json({ type: 'message', role: 'assistant', content: [{ type: 'text', text: JSON.stringify(value) }], stop_reason: stopReason });
 }
@@ -52,7 +69,7 @@ describe('ClewdR native adapter', () => {
   it.each(['plan', 'render'] as const)('sends private beat direction as bounded creative context for %s', async task => {
     const ctx = context();
     ctx.beat.steering = 'Keep Mara hesitant; do not answer the mystery yet.';
-    const response = task === 'plan' ? { classification: 'ordinary', contracts: [], directorSummary: 'A question.' } : draft(ctx);
+    const response = task === 'plan' ? singleLinePlan(ctx) : draft(ctx);
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(response));
     await ai(fetchMock)[task](ctx);
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
@@ -67,19 +84,47 @@ describe('ClewdR native adapter', () => {
 
   it('asks only the planner for contract length limits', async () => {
     const ctx = context();
-    const plan = { classification: 'ordinary', contracts: [], directorSummary: 'A question.' };
+    const plan = singleLinePlan(ctx);
     const planMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(plan));
     await ai(planMock).plan(ctx);
     const planBody = JSON.parse(String(planMock.mock.calls[0][1]?.body));
     expect(planBody.system).toContain('at most 90 characters');
     expect(planBody.system).toContain('at most 110 characters');
-    expect(planBody.system).toContain('Every selected act submission must be cited by a contract, even a safe one: use ruling "no_check"');
+    expect(planBody.system).toContain('Every selected line, Say or Do, in any round gets a roll: write one contract with ruling "check", led by that line\'s character');
     const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
     await ai(renderMock).render(ctx);
     const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
     expect(renderBody.system).not.toContain('at most 90 characters');
     expect(renderBody.system).not.toContain('at most 110 characters');
-    expect(renderBody.system).not.toContain('Every selected act submission');
+    expect(renderBody.system).not.toContain('Every selected line, Say or Do');
+  });
+
+  it('tells the planner that every line rolls, how to scale the stakes and what the critical outcome is', async () => {
+    const ctx = context();
+    const planMock = replying(singleLinePlan(ctx));
+    await ai(planMock).plan(ctx);
+    const planBody = JSON.parse(String(planMock.mock.calls[0][1]?.body));
+    expect(planBody.system).not.toContain('An ordinary question or refusal needs no check');
+    expect(planBody.system).not.toContain('Every selected act submission must be cited by a contract, even a safe one');
+    expect(planBody.system).toContain('Never use ruling "no_check". The classification is always "action".');
+    expect(planBody.system).toContain('Use ruling "blocked" only for a line that cannot happen.');
+    expect(planBody.system).toContain('The Do line of a character at strain 4 is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.');
+    expect(planBody.system).toContain('Small talk or a trivial action gets light, often funny stakes');
+    expect(planBody.system).toContain('risk "low"');
+    expect(planBody.system).toContain('risk "normal"');
+    expect(planBody.system).toContain('risk "high"');
+    expect(planBody.system).toContain('clean means it lands as meant, costly means it lands with a price, setback means it comes across wrong, and critical means it comes across as badly as it possibly could');
+    expect(planBody.system).toContain('carries a fourth outcome, "critical", used when both dice show 1');
+    expect(planBody.system).toContain('a clear step beyond its setback');
+    expect(planBody.system).toContain('at most 110 characters, with its own effects');
+    expect(planBody.system).not.toContain('narrated as the worst turn');
+    expect(JSON.parse(planBody.messages[0].content).rules).toContain('Both dice showing 1 is a critical failure, whatever the total.');
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderMock).render(ctx);
+    const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
+    expect(renderBody.system).toContain('A "critical" band is narrated as the worst turn its outcome describes, in the tone its stakes set.');
+    expect(renderBody.system).not.toContain('carries a fourth outcome');
+    expect(renderBody.system).not.toContain('An ordinary question or refusal needs no check');
   });
 
   it('qualifies historical dialogue without teaching correction text to an uninformed NPC', async () => {
@@ -146,7 +191,7 @@ describe('ClewdR native adapter', () => {
     ctx.state.locations = [{ id: 'future-location', title: 'PRIVATE-LOCATION', description: 'PRIVATE-DESTINATION' }];
     for (const addressed of [witness, uninformed]) {
       ctx.submissions[0].recipientNpcIds = [addressed.id];
-      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ classification: 'ordinary', contracts: [], directorSummary: 'A question.' }));
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(singleLinePlan(ctx)));
       await ai(fetchMock).plan(ctx);
       const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
       const sent = JSON.parse(body.messages[0].content);
@@ -155,7 +200,7 @@ describe('ClewdR native adapter', () => {
       if (addressed.id !== witness.id) expect(JSON.stringify(body)).not.toContain(publicText);
     }
     uninformed.status = 'offstage'; uninformed.communicationChannel = 'Radio';
-    const remote = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ classification: 'ordinary', contracts: [], directorSummary: 'A radio question.' }));
+    const remote = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(singleLinePlan(ctx)));
     await ai(remote).plan(ctx);
     expect(String(remote.mock.calls[0][1]?.body)).not.toContain(publicText);
   });
@@ -166,7 +211,7 @@ describe('ClewdR native adapter', () => {
     ctx.state.characters[0].pronouns = 'they/them';
     ctx.state.characters[0].backstory = 'PRIVATE-BACKSTORY';
     ctx.state.characters[0].draft = CharacterCardDefinitionSchema.parse({ schemaVersion: 1, displayName: 'PRIVATE-DRAFT', traits: ctx.state.characters[0].traits, extensions: { secret: 'PRIVATE-EXTENSION' } });
-    const response = task === 'plan' ? { classification: 'ordinary', contracts: [], directorSummary: 'An ordinary question.' } : draft(ctx);
+    const response = task === 'plan' ? singleLinePlan(ctx) : draft(ctx);
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(response));
     await ai(fetchMock)[task](ctx);
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
@@ -243,45 +288,109 @@ describe('ClewdR native adapter', () => {
     expect(system).toContain('must use category "claim" or "belief"');
   });
 
-  it('accepts an ordinary plan and rejects an invalid contract', async () => {
+  it('accepts a rolled plan and rejects an invalid contract', async () => {
     const ctx = context();
-    const result = { classification: 'ordinary', contracts: [], directorSummary: 'A question needs no check.' };
+    const result = singleLinePlan(ctx);
     expect(await ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(result))).plan(ctx)).toEqual(result);
     await expect(ai(replying({ ...result, contracts: [{ id: 'bad' }] })).plan(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
   });
 
-  it('sends a refused plan back once with the reason and accepts the corrected plan', async () => {
+  it('accepts a blocked contract for a line that cannot happen without a critical outcome', async () => {
     const ctx = context();
-    ctx.submissions[0] = { ...ctx.submissions[0], kind: 'act', text: '', intent: 'I check the clock.', approach: 'I walk over and look.' };
-    const refused = { classification: 'ordinary', contracts: [], directorSummary: 'A plain look needs no check.' };
-    const outcome = { publicText: 'The clock shows half the time is gone.', effects: [] };
-    const corrected = { classification: 'action', directorSummary: 'A safe look.', contracts: [{
-      id: 'look', version: 1, actorCharacterId: ctx.state.characters[0].id, helperCharacterIds: [], submissionIds: ['submission'],
-      intent: 'Check the clock.', approach: 'Walk over and look.', ruling: 'no_check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
-      prerequisites: [], fallback: { kind: 'hold' }, outcomes: { clean: outcome, costly: outcome, setback: outcome },
-    }] };
-    const fetchMock = replying(refused, corrected);
-    expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
-    expect(second.system).toBe(first.system);
-    expect(second.messages.slice(0, 2)).toEqual([first.messages[0], { role: 'assistant', content: JSON.stringify(refused) }]);
-    expect(second.messages[2].role).toBe('user');
-    expect(second.messages[2].content).toContain('the classification cannot be ordinary');
-    expect(second.messages[2].content).toContain('"no_check"');
+    const outcomes = { clean: rolledOutcome, costly: rolledOutcome, setback: rolledOutcome };
+    const result = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', { ruling: 'blocked', outcomes })]);
+    const fetchMock = replying(result);
+    expect(await ai(fetchMock).plan(ctx)).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('fails after a second refusal without a third request and keeps the reason out of the message', async () => {
-    const ctx = context();
-    ctx.submissions[0] = { ...ctx.submissions[0], kind: 'act', text: '', intent: 'I check the clock.' };
-    const fetchMock = replying({ classification: 'ordinary', contracts: [], directorSummary: 'A plain look needs no check.' });
-    const error = await ai(fetchMock).plan(ctx).catch((caught) => caught);
-    expect(error).toBeInstanceOf(ProviderError);
-    expect(error).toMatchObject({ code: 'invalid_response' });
-    expect(error.detail).toContain('the classification cannot be ordinary');
-    expect(error.message).not.toContain('ordinary');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+  describe('plan refusals', () => {
+    function actLine(ctx: ProviderContext) {
+      ctx.submissions[0] = { ...ctx.submissions[0], kind: 'act', text: '', intent: 'I check the clock.', approach: 'I walk over and look.' };
+    }
+    const noCritical = (ctx: ProviderContext) => {
+      const { critical: _critical, ...outcomes } = rolledContract(ctx, 'ask', 0, [], 'submission').outcomes;
+      return outcomes;
+    };
+    const cases: Array<[string, (ctx: ProviderContext) => unknown, string[]]> = [
+      ['a classification other than action', (ctx) => ({ ...singleLinePlan(ctx), classification: 'ordinary' }), ['the classification must be "action"', '"ordinary"']],
+      ['a needs_action classification', (ctx) => ({ ...singleLinePlan(ctx), classification: 'needs_action' }), ['the classification must be "action"']],
+      ['an ordinary plan with no contracts', () => ({ classification: 'ordinary', contracts: [], directorSummary: 'A plain look.' }), ['the classification must be "action"']],
+      ['a selected line that no contract cites', (ctx) => rolledPlan([rolledContract(ctx, 'other', 1, [], 'extra')]), ['is cited by no contract', 'line submission']],
+      ['ruling no_check', (ctx) => rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', { ruling: 'no_check' }), rolledContract(ctx, 'other', 1, [], 'extra')]), ['uses ruling "no_check"', 'Never use "no_check"']],
+      ['a check without a critical outcome', (ctx) => rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', { outcomes: noCritical(ctx) }), rolledContract(ctx, 'other', 1, [], 'extra')]), ['without outcomes.critical', 'a clear step beyond its setback']],
+    ];
+    function twoLines() {
+      const ctx = context();
+      const extra = SubmissionSchema.parse({
+        id: 'extra', sessionId: ctx.state.session.id, characterId: ctx.state.characters[1].id,
+        contextBeatId: 'beat', inputEpoch: 1, revision: 1, kind: 'say', text: 'And who are you?', recipientNpcIds: [ctx.state.npcs[0].id], status: 'locked',
+      });
+      ctx.submissions = [...ctx.submissions, extra];
+      ctx.beat = { ...ctx.beat, selectedSubmissionIds: ctx.submissions.map((submission) => submission.id), lockedSubmissions: ctx.submissions };
+      return ctx;
+    }
+    it.each(cases)('sends back %s once with the reason and accepts the corrected plan', async (_name, build, reasons) => {
+      const ctx = twoLines();
+      const refused = build(ctx);
+      const corrected = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission'), rolledContract(ctx, 'other', 1, [], 'extra')]);
+      const fetchMock = replying(refused, corrected);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+      expect(second.system).toBe(first.system);
+      expect(second.messages.slice(0, 2)).toEqual([first.messages[0], { role: 'assistant', content: JSON.stringify(refused) }]);
+      expect(second.messages[2].role).toBe('user');
+      for (const reason of reasons) expect(second.messages[2].content).toContain(reason);
+    });
+
+    it('sends back a Do-led check at 4 strain once and accepts the same character leading from a Say line', async () => {
+      const ctx = context();
+      actLine(ctx);
+      ctx.state.characters[0].strain = 4;
+      const refused = singleLinePlan(ctx);
+      const blocked = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', {
+        ruling: 'blocked', outcomes: { clean: rolledOutcome, costly: rolledOutcome, setback: rolledOutcome },
+      })]);
+      const fetchMock = replying(refused, blocked);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(blocked);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+      expect(second.messages[2].content).toContain('at 4 strain');
+      expect(second.messages[2].content).toContain('lead a "check" from a Do line');
+      expect(second.messages[2].content).toContain(ctx.state.characters[0].displayName);
+    });
+
+    it('accepts a check led from a Say line at 4 strain', async () => {
+      const ctx = context();
+      ctx.state.characters[0].strain = 4;
+      const result = singleLinePlan(ctx);
+      const fetchMock = replying(result);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(result);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a Do line at 4 strain help another character\'s check', async () => {
+      const ctx = twoLines();
+      actLine(ctx);
+      ctx.state.characters[0].strain = 4;
+      const result = rolledPlan([{ ...rolledContract(ctx, 'other', 1, [0], 'extra'), submissionIds: ['extra', 'submission'] }]);
+      const fetchMock = replying(result);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(result);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails after a second refusal without a third request and keeps the reason out of the message', async () => {
+      const ctx = context();
+      const fetchMock = replying({ ...singleLinePlan(ctx), classification: 'ordinary' });
+      const error = await ai(fetchMock).plan(ctx).catch((caught) => caught);
+      expect(error).toBeInstanceOf(ProviderError);
+      expect(error).toMatchObject({ code: 'invalid_response' });
+      expect(error.detail).toContain('the classification must be "action"');
+      expect(error.message).not.toContain('ordinary');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('one action per line', () => {
@@ -299,15 +408,16 @@ describe('ClewdR native adapter', () => {
     function contract(ctx: ProviderContext, id: string, actor: number, helpers: number[], submissionId: string) {
       return {
         id, version: 1, actorCharacterId: ctx.state.characters[actor].id, helperCharacterIds: helpers.map((helper) => ctx.state.characters[helper].id),
-        submissionIds: [submissionId], intent: 'Do the thing.', approach: 'Carefully.', ruling: 'no_check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
-        prerequisites: [], fallback: { kind: 'hold' }, outcomes: { clean: outcome, costly: outcome, setback: outcome },
+        submissionIds: [submissionId], intent: 'Do the thing.', approach: 'Carefully.', ruling: 'check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
+        prerequisites: [], fallback: { kind: 'hold' },
+        outcomes: { clean: outcome, costly: outcome, setback: outcome, critical: { publicText: 'It goes as badly as it could.', effects: [] } },
       };
     }
     const plan = (contracts: unknown[]) => ({ classification: 'action', directorSummary: 'Actions.', contracts });
 
     it('puts the one-action-per-line rule in the planner rules and the shown-first line in the system prompt', async () => {
       const ctx = context();
-      const fetchMock = replying({ classification: 'ordinary', contracts: [], directorSummary: 'A question.' });
+      const fetchMock = replying(singleLinePlan(ctx));
       await ai(fetchMock).plan(ctx);
       const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
       const sent = JSON.parse(body.messages[0].content);
@@ -363,7 +473,7 @@ describe('ClewdR native adapter', () => {
   it.each(['plan', 'render'] as const)('accepts final %s text and discards thinking and redacted-thinking metadata', async (task) => {
     const ctx = context();
     const result = task === 'plan'
-      ? { classification: 'ordinary', contracts: [], directorSummary: 'A question needs no check.' }
+      ? singleLinePlan(ctx)
       : draft(ctx);
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
       type: 'message', role: 'assistant', stop_reason: 'end_turn',

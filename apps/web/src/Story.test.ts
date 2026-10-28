@@ -49,6 +49,13 @@ describe('published correction ledger', () => {
     expect(segment.get('p').text()).toBe('I climb the fire escape.');
   });
 
+  it('shows Critical failure for a double 1 roll in the story history', () => {
+    const critical = { ...latest, rolls: [{ id: 'r-crit', contractId: 'k', contractVersion: 1, actorCharacterId: 'dash', faces: [1, 1] as [number, number],
+      trait: 'force' as const, traitModifier: 1, edge: 0 as const, total: 3, band: 'critical' as const }] };
+    const wrapper = mount(Story, { props: { history: [critical], characters: [{ id: 'dash', displayName: 'Dash' } as never] } });
+    expect(wrapper.get('[aria-label="Server dice results"]').text()).toContain('Critical failure');
+  });
+
   it('names a system line The show', () => {
     const system = { ...latest, segments: [{ ...latest.segments[0], kind: 'system' as const, text: 'The show was paused.' }] };
     const wrapper = mount(Story, { props: { history: [system], characters: [] } });

@@ -28,7 +28,11 @@ describe('stage-format', () => {
     expect(bandLabel('clean')).toBe('Clean success');
     expect(bandLabel('costly')).toBe('Success with a cost');
     expect(bandLabel('setback')).toBe('Setback');
-    expect(new Set((['clean', 'costly', 'setback'] as const).map(bandSymbol)).size).toBe(3);
+    expect(bandLabel('critical' as never)).toBe('Critical failure');
+    expect(bandSymbol('critical' as never)).toBe('!');
+    const bands = ['clean', 'costly', 'setback', 'critical'] as never[];
+    expect(new Set(bands.map(bandSymbol)).size).toBe(4);
+    expect(new Set(bands.map(bandLabel)).size).toBe(4);
   });
   it('capitalises traits', () => expect(traitName('finesse')).toBe('Finesse'));
   it('describes rolls', () => {
@@ -67,6 +71,10 @@ describe('stage-format', () => {
     expect(wagerOutcomes({ ruling: 'check', outcomes }).map(line => `${line.label}: ${line.text}`)).toEqual([
       '10+ Clean success: It opens.', '7-9 Success with a cost: It opens, loudly.', '6 or less Setback: It jams.',
     ]);
+    const withCritical = wagerOutcomes({ ruling: 'check', outcomes: { ...outcomes, critical: 'It collapses.' } as never });
+    expect(withCritical).toHaveLength(4);
+    expect(withCritical[3]).toEqual({ label: 'Double 1s Critical failure', text: 'It collapses.' });
+    expect(wagerOutcomes({ ruling: 'check', outcomes: { ...outcomes, critical: '  ' } as never })).toHaveLength(3);
     expect(wagerOutcomes({ ruling: 'no_check', outcomes })).toEqual([{ label: 'No roll needed', text: 'It opens.' }]);
     expect(wagerOutcomes({ ruling: 'blocked', outcomes })).toEqual([{ label: 'Blocked', text: 'It jams.' }]);
   });

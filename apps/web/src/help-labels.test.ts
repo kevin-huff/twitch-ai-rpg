@@ -116,7 +116,7 @@ const labels = [
   'Keep mine',
   'Give the four traits one +2, two +1 and one +0. They are under More about your character.',
   'Answer these lines',
-  'Plan and draft',
+  'Critical failure',
   'Open action round',
   'Open conversation',
   'Approve and roll',

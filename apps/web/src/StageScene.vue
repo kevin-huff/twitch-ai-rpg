@@ -489,7 +489,7 @@ onBeforeUnmount(() => {
   background: var(--night); box-shadow: var(--canvas-frame-window); clip-path: var(--cut-1);
 }
 .wager-list[data-count='1'] .wager-card, .wager-card.spotlight { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 24px; align-items: start; }
-.wager-card.spotlight { height: 320px; }
+.wager-card.spotlight { height: 348px; }
 .wager-card.spotlight { grid-template-rows: minmax(0, 1fr); }
 .wager-card.spotlight > .wager-main, .wager-card.spotlight > .wager-results { min-height: 0; overflow: hidden; align-self: stretch; }
 .wager-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -546,6 +546,10 @@ onBeforeUnmount(() => {
   flex: none; display: inline-block; box-sizing: border-box; width: 40px; height: 40px; margin-right: 12px; text-align: center; line-height: 40px; color: var(--bone);
   background: var(--night-raised); box-shadow: inset 0 0 0 4px var(--band, var(--void));
 }
+.roll[data-band='critical'] { --band: var(--heart); }
+.roll[data-band='critical'] .roll-detail { background: var(--heart); }
+.roll[data-band='critical'] .roll-name, .roll[data-band='critical'] .roll-breakdown, .roll[data-band='critical'] .roll-result { color: var(--void); }
+.roll[data-band='critical'] .roll-symbol { color: var(--void); background: var(--heart); box-shadow: inset 0 0 0 4px var(--void); }
 
 .lines {
   flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; gap: 20px;

@@ -200,7 +200,7 @@ describe('public performance and player authority', () => {
     expect(bar.findAll('a').some(link => link.text() === 'Cast & lobby' && link.attributes('href') === '/sessions/show/lobby')).toBe(true);
     expect(bar.find('.show-step').exists()).toBe(false);
     expect(wrapper.findAll('button').some(button => button.text() === 'Go to beat')).toBe(false);
-    expect(wrapper.get('[data-testid="beat-step-count"]').text()).toBe('Step 1 of 3');
+    expect(wrapper.get('[data-testid="beat-step-count"]').text()).toBe('Step 1 of 5');
     const gold = wrapper.get('[aria-label="Beat actions"]').get('[data-testid="answer-lines"]');
     expect(gold.text()).toBe('Answer these lines');
     expect(gold.attributes('disabled')).toBeDefined();
@@ -821,15 +821,18 @@ describe('public performance and player authority', () => {
 
   it('offers manual stakes after planning failed and records a reason when abandoning the beat', async () => {
     window.history.replaceState({}, '', '/sessions/show/director');
-    transport.snapshot.mockResolvedValue({ ...snapshot('director'), activeBeat: {
+    const input = { id: 'say-1', characterId: 'pc-1', kind: 'say', text: 'Let us into the archive.', intent: '', approach: '', status: 'selected' };
+    transport.snapshot.mockResolvedValue({ ...snapshot('director'), submissions: [input], activeBeat: {
       id: 'beat-2', kind: 'conversation', phase: 'collecting', revision: 2, selectedSubmissionIds: ['say-1'],
       contracts: [], classification: null, stakesApproved: false, draft: null, lastError: 'The planner timed out.',
     } });
     const wrapper = mount(App);
     await flushPromises();
     expect(wrapper.get('[data-testid="stakes-cards"]').text()).toContain('Planning failed.');
-    await wrapper.get('[data-testid="stakes-ordinary-edit"]').trigger('click');
-    expect(wrapper.find('[data-testid="stakes-classification"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="approve-and-roll"]').text()).toBe('Approve and roll');
+    expect(wrapper.find('[data-testid="stakes-ordinary-edit"]').exists()).toBe(false);
+    await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
+    await wrapper.get('[data-testid="stakes-classification"]').setValue('ordinary');
     await wrapper.get('[data-testid="beat-more"] [data-testid="approve-stakes"]').trigger('click');
     await flushPromises();
     expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ type: 'approve_stakes', classification: 'ordinary', contracts: [] }));

@@ -96,7 +96,7 @@ export function tooManyRollsMessage(count: number): string {
   return `A round can show at most six rolls, and this plan needs ${count}. Untick some lines and plan again, then plan the rest in the next round.`;
 }
 
-export interface ContractLine { id: string; characterId: string }
+export interface ContractLine { id: string; characterId: string; kind?: 'say' | 'act' | 'ooc' }
 
 export function validateContracts(contracts: ActionContract[], state: SessionState, lines?: readonly ContractLine[]): void {
   if (contracts.length > MAX_ROLLS_PER_ROUND) throw new Error(tooManyRollsMessage(contracts.length));
@@ -115,7 +115,10 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     const actor = state.characters.find(character => character.id === contract.actorCharacterId);
     if (!actor) throw new Error('Unknown action actor.');
     if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
-    if (actor.strain >= 4 && contract.ruling === 'check') throw new Error('Character needs help at four strain before another risky action.');
+    if (actor.strain >= 4 && contract.ruling === 'check') {
+      const own = lines ? lines.filter(line => contract.submissionIds.includes(line.id) && line.characterId === contract.actorCharacterId) : [];
+      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(contract.actorCharacterId)} is at four strain, so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
+    }
     if (contract.edge && !contract.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
     if (contract.helperCharacterIds.length && contract.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');
     spend(contract.actorCharacterId);
@@ -139,7 +142,7 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     }
     ancestors.set(contract.id, inherited);
     depths.set(contract.id, contract.prerequisites.length ? 1 + Math.max(...contract.prerequisites.map(prerequisite => depths.get(prerequisite.contractId)!)) : 0);
-    for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band].effects) {
+    for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band]!.effects) {
       const key = effect.kind === 'fact_add' ? `fact:${effect.factId}`
         : effect.kind === 'inventory_add' || effect.kind === 'inventory_remove' ? `item:${effect.characterId}:${effect.item}` : null;
       if (!key) continue;
@@ -155,7 +158,7 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
 }
 
 function applicableBands(contract: ActionContract): OutcomeBand[] {
-  return contract.ruling === 'blocked' ? [] : contract.ruling === 'no_check' ? ['clean'] : ['clean', 'costly', 'setback'];
+  return contract.ruling === 'blocked' ? [] : contract.ruling === 'no_check' ? ['clean'] : contract.outcomes.critical ? ['clean', 'costly', 'setback', 'critical'] : ['clean', 'costly', 'setback'];
 }
 
 function validatePossibleEffects(contracts: ActionContract[], depths: Map<string, number>, state: SessionState): void {
@@ -175,8 +178,8 @@ function validatePossibleEffects(contracts: ActionContract[], depths: Map<string
       const depth = depths.get(contract.id)!;
       const previous = groups[depth] ?? [];
       for (const band of applicableBands(contract)) {
-        goals.set(contract.id, band !== 'setback');
-        groups[depth] = [...previous, ...contract.outcomes[band].effects];
+        goals.set(contract.id, band === 'clean' || band === 'costly');
+        groups[depth] = [...previous, ...contract.outcomes[band]!.effects];
         visit(index + 1);
       }
       groups[depth] = previous;
@@ -209,13 +212,13 @@ export function resolveContracts(contracts: ActionContract[], state: SessionStat
       const actor = state.characters.find(character => character.id === contract.actorCharacterId)!;
       const traitModifier = actor.traits[contract.trait];
       const total = faces[0] + faces[1] + traitModifier + contract.edge;
-      band = outcomeForTotal(total);
+      band = faces[0] === 1 && faces[1] === 1 && contract.outcomes.critical ? 'critical' : outcomeForTotal(total);
       result.rolls.push({ ...base, id: `${contract.id}:v${contract.version}`, contractVersion: contract.version, faces, trait: contract.trait, traitModifier, edge: contract.edge, total, band });
     }
-    const branch = contract.outcomes[band];
+    const branch = contract.outcomes[band]!;
     result.effects.push(...structuredClone(branch.effects));
     (result.effectGroups![depth] ??= []).push(...structuredClone(branch.effects));
-    result.outcomes.push({ ...base, status: 'resolved', band, goalAchieved: band !== 'setback', publicText: branch.publicText });
+    result.outcomes.push({ ...base, status: 'resolved', band, goalAchieved: band === 'clean' || band === 'costly', publicText: branch.publicText });
   }
   result.effects = uniqueEffects(result.effects);
   result.effectGroups = result.effectGroups!.filter(Boolean);

@@ -79,6 +79,12 @@ describe('playerStatus', () => {
   it.each(['locked', 'draft_review'] as const)('says the dice are rolled for an action round with a check while %s', phase => {
     expect(status({ beat: beat({ phase, kind: 'action', stakes: [stakeWith('no_check'), stakeWith('check')] }) }).headline).toBe('Dice rolled. The story is being written');
   });
+  it('says the dice are rolled for a conversation round with a check while locked', () => {
+    expect(status({ beat: beat({ phase: 'locked', kind: 'conversation', stakes: [stakeWith('no_check'), stakeWith('check')] }) }).headline).toBe('Dice rolled. The story is being written');
+  });
+  it.each(['no_check', 'blocked'] as const)('says lines are locked in, with no dice, for a conversation round with only %s stakes', ruling => {
+    expect(status({ beat: beat({ phase: 'locked', kind: 'conversation', stakes: [stakeWith(ruling)] }) }).headline).toBe('Lines locked in. The story is being written');
+  });
   it('does not mention dice when no action in the round needs a roll', () => {
     expect(status({ beat: beat({ phase: 'locked', kind: 'action', stakes: [stakeWith('no_check'), stakeWith('blocked')] }) }).headline).toBe('Lines locked in. The story is being written');
   });

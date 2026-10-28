@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { PublishedBeat, PublicCharacter, PublicCorrection, Roll } from '@rpg/contracts';
+import type { PublishedBeat, PublicCharacter, PublicCorrection } from '@rpg/contracts';
+import { bandLabel } from './stage-format';
 withDefaults(defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[]; stage?: boolean; corrections?: PublicCorrection[] }>(), { corrections: () => [] });
-const bandLabel = (band: Roll['band']) => ({ clean: 'Clean success', costly: 'Success with a cost', setback: 'Setback' })[band];
 </script>
 
 <template>

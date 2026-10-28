@@ -236,7 +236,7 @@ suite('adversarial generation and stale input recovery', () => {
     expect(state.activeBeat!.contracts).toHaveLength(1);
   });
 
-  it('converts an ordinary speech-only action beat to conversation without ticking time', async () => {
+  it('keeps an action round approved as ordinary an action round that ticks time', async () => {
     const countdown = state.tracks.find((track) => track.kind === 'countdown')!;
     const pool = createPool(databaseUrl!);
     try {
@@ -248,15 +248,15 @@ suite('adversarial generation and stale input recovery', () => {
     state = (await request(`/api/sessions/${id}`, host)).json();
     await act('plan_beat', { submissionIds: [state.submissions[0]!.id] });
     await act('approve_stakes', { classification: 'ordinary', contracts: [] });
-    expect(state.activeBeat!.kind).toBe('conversation');
-    expect(state.session.mode).toBe('conversation');
+    expect(state.activeBeat!.kind).toBe('action');
+    expect(state.session.mode).toBe('action');
     await act('lock_beat');
-    expect(state.activeBeat!.resolution!.effects).toEqual([]);
+    expect(state.activeBeat!.resolution!.effects).toEqual([{ kind: 'track_delta', trackId: countdown.id, delta: 1 }]);
     await act('edit_script', { segments: [{ kind: 'narration', text: 'Mara pauses to consider the question.', recipientCharacterIds: [], delivery: 'neutral' }] });
     await act('publish_beat', { expectedStateRevision: state.session.stateRevision, draftRevision: state.activeBeat!.draftRevision, textOnly: true });
-    expect(state.history[0]!.kind).toBe('conversation');
-    expect(state.session.actionRoundNumber).toBe(0);
-    expect(state.tracks.find((track) => track.id === countdown.id)!.current).toBe(1);
+    expect(state.history[0]!.kind).toBe('action');
+    expect(state.session.actionRoundNumber).toBe(1);
+    expect(state.tracks.find((track) => track.id === countdown.id)!.current).toBe(2);
     expect(rolls).toBe(0);
   });
 

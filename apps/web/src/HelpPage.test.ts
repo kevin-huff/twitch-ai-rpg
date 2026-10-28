@@ -25,7 +25,7 @@ afterEach(() => {
 describe('help page', () => {
   const anchors = ['getting-started', 'running-a-show', 'scenarios-and-characters', 'producers', 'players', 'stage-and-obs', 'streaming-your-own-obs', 'pictures-and-portraits', 'glossary', 'troubleshooting'];
   const terms = [
-    'beat', 'conversation', 'action round', 'what\'s at risk', 'contract', 'ruling', 'trait', 'risk', 'Edge', 'outcome bands', 'strain', 'track',
+    'beat', 'conversation', 'action round', 'what\'s at risk', 'contract', 'ruling', 'trait', 'risk', 'Edge', 'outcome bands', 'critical failure', 'strain', 'track',
     'facts to remember', 'note for the AI', 'input window', 'presenter', 'Listen', 'text-only beat', 'test seat', 'host', 'director', 'producer', 'boundaries',
     'stage', 'scene layout', 'overlay layout', 'stream link', 'character card', 'character link',
   ];
@@ -116,7 +116,7 @@ describe('help page', () => {
     const wrapper = mount(HelpPage);
     const running = wrapper.get('#running-a-show').text();
     for (const label of [
-      'Answer these lines', 'Plan and draft', 'Open action round', 'Plan', 'What\'s at risk', 'Edit', 'Approve and roll', 'Step 1 of 3', 'Step 1 of 5',
+      'Answer these lines', 'Open action round', 'Plan', 'What\'s at risk', 'Edit', 'Approve and roll', 'Step 1 of 3', 'Step 1 of 5',
       'More', 'Open conversation', 'Approve stakes', 'Roll the dice', 'Plan again', 'Regenerate script', 'Tell the AI what to change', 'Save edits',
       'Abandon this beat', 'Abandon beat', 'Preparing voice…', 'Voice ready', 'Publish without voice', 'Preview narration', 'Stop preview', 'Prepare voice again',
       'No show audio: the main show link isn\'t open in OBS.', 'Facts to remember', 'Don\'t keep these', 'Try again', 'Write it myself', 'Add a line',
@@ -125,12 +125,25 @@ describe('help page', () => {
     ]) expect(running).toContain(label);
     for (const gone of [
       'Plan selected input', 'Lock input', 'Publish text-only beat', 'Publish with narration', 'Pause table', 'Resume table', 'Enter the scene',
-      'Private AI direction', 'Private direction', 'Approve continuity updates', 'Save script edits', 'Prepare draft narration',
+      'Private AI direction', 'Private direction', 'Approve continuity updates', 'Save script edits', 'Prepare draft narration', 'Plan and draft',
     ]) expect(running).not.toContain(gone);
     expect(running).not.toContain('\u2014');
     expect(running).toContain('rolls the dice once');
     const text = wrapper.text();
     for (const gone of ['Pause table', 'Private AI direction', 'Approve continuity updates', 'Publish text-only beat']) expect(text).not.toContain(gone);
+  });
+
+  it('says every line rolls and a double 1 is a critical failure', () => {
+    const wrapper = mount(HelpPage);
+    const running = wrapper.get('#running-a-show').text();
+    for (const phrase of [
+      'Every line rolls, in conversations and in action rounds alike', 'Critical failure', 'Lock and draft appears only when you set a round to Ordinary conversation',
+      'Only action rounds tick countdowns', 'conversation round rolls its dice without ticking them', 'at most six rolls', 'No check', 'Blocked',
+    ]) expect(running).toContain(phrase);
+    const players = wrapper.get('#players').text();
+    expect(players).toContain('Every line you send can be rolled');
+    expect(players).toContain('A double 1 is a critical failure');
+    expect(glossary.map(item => item.term)).toContain('Critical failure');
   });
 
   it('names the glossary entries for the new director labels', () => {

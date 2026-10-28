@@ -34,6 +34,12 @@ describe('SeatStory', () => {
     expect(wrapper.find('[data-testid="whole-story-toggle"]').exists()).toBe(false);
   });
 
+  it('shows Critical failure for a double 1 roll on the seat', () => {
+    const critical = beat(3, [segment('n', 'narration', 'The fire escape gives way.')], [roll('r3', 'c-Dash', 3, 'critical')]);
+    const wrapper = mount(SeatStory, { props: { history: [critical], characters } });
+    expect(wrapper.get('[data-testid="seat-story-roll"]').text()).toBe('Dash rolled 3: Critical failure');
+  });
+
   it('shows only the latest beat while closed', () => {
     const wrapper = mount(SeatStory, { props: { history: [first, second], characters } });
     expect(wrapper.findAll('[data-testid="seat-story-beat"]')).toHaveLength(1);

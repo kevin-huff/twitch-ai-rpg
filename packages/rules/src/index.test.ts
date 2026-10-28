@@ -25,9 +25,9 @@ const contract = (overrides: Partial<ActionContract> = {}): ActionContract => ({
 
 describe('RULE-01 exact 2d6 probabilities', () => {
   it.each([[0, 15, 15, 6], [1, 10, 16, 10], [2, 6, 15, 15], [3, 3, 12, 21]])('modifier %i has exact counts', (modifier, setback, costly, clean) => {
-    const counts = { setback: 0, costly: 0, clean: 0 };
+    const counts: Record<ReturnType<typeof outcomeForTotal>, number> = { setback: 0, costly: 0, clean: 0, critical: 0 };
     for (let a = 1; a <= 6; a++) for (let b = 1; b <= 6; b++) counts[outcomeForTotal(a + b + modifier)]++;
-    expect(counts).toEqual({ setback, costly, clean });
+    expect(counts).toEqual({ setback, costly, clean, critical: 0 });
   });
   it('validates allocation and dice supplied through the test seam', () => {
     expect(validateTraits({ force: 2, finesse: 1, wits: 1, presence: 0 })).toBe(true);
@@ -74,6 +74,114 @@ describe('RULE-02, RULE-03, RULE-04, RULE-07 declared outcomes', () => {
     const roll = vi.fn(() => 6);
     expect(() => resolveContracts([bad], state(), roll)).toThrow(/track/i);
     expect(roll).not.toHaveBeenCalled();
+  });
+});
+
+describe('critical failure on double ones', () => {
+  const withCritical = (overrides: Partial<ActionContract> = {}) => {
+    const value = contract(overrides);
+    value.outcomes.critical = { publicText: 'The lock shatters and the alarm screams.', effects: [{ kind: 'track_delta', trackId: 'alarm', delta: 3 }, { kind: 'strain_delta', characterId: 'lead', delta: 2 }] };
+    return value;
+  };
+  const ones = () => 1;
+
+  it('turns a double 1 into a critical failure whatever the trait and Edge, applying only the critical effects', () => {
+    const edged = withCritical({ edge: 1, edgeReason: 'A lookout', helperCharacterIds: ['helper'] });
+    const result = resolveContracts([edged], state(), ones);
+    expect(result.rolls[0]).toMatchObject({ faces: [1, 1], traitModifier: 2, edge: 1, total: 5, band: 'critical' });
+    expect(result.outcomes[0]).toMatchObject({ status: 'resolved', band: 'critical', goalAchieved: false, publicText: 'The lock shatters and the alarm screams.' });
+    expect(result.effects).toEqual(edged.outcomes.critical!.effects);
+    expect(resolveContracts([withCritical({ trait: 'force' })], state(), ones).outcomes[0].band).toBe('critical');
+  });
+
+  it('gives critical only on two ones', () => {
+    for (const faces of [[1, 2], [2, 1], [1, 6]]) {
+      const queue = [...faces];
+      expect(resolveContracts([withCritical()], state(), () => queue.shift()!).outcomes[0].band).not.toBe('critical');
+    }
+  });
+
+  it('is a plain setback on a double 1 when the contract has no critical branch', () => {
+    const result = resolveContracts([contract()], state(), ones);
+    expect(result.rolls[0]).toMatchObject({ band: 'setback', total: 4 });
+    expect(result.outcomes[0]).toMatchObject({ band: 'setback', goalAchieved: false });
+    expect(result.effects).toEqual(contract().outcomes.setback.effects);
+  });
+
+  it('holds a dependent check after a critical failure', () => {
+    const dependent = contract({ id: 'dependent', actorCharacterId: 'other', prerequisites: [{ contractId: 'lock', requirement: 'goal_achieved' }] });
+    const result = resolveContracts([withCritical(), dependent], state(), ones);
+    expect(result.outcomes.find(outcome => outcome.contractId === 'dependent')).toMatchObject({ status: 'held', goalAchieved: false });
+  });
+
+  it('refuses an impossible critical effect before any dice', () => {
+    const bad = withCritical();
+    bad.outcomes.critical!.effects = [{ kind: 'inventory_remove', characterId: 'other', item: 'brass key' }];
+    const roll = vi.fn(() => 6);
+    expect(() => resolveContracts([bad], state(), roll)).toThrow(/possess|consume|item/i);
+    expect(roll).not.toHaveBeenCalled();
+  });
+
+  it('refuses conflicting item claims that only appear in a critical branch', () => {
+    const left = withCritical();
+    const right = contract({ id: 'right', actorCharacterId: 'other' });
+    left.outcomes.critical!.effects = [{ kind: 'inventory_add', characterId: 'lead', item: 'new key' }];
+    right.outcomes.clean.effects = [{ kind: 'inventory_add', characterId: 'lead', item: 'new key' }];
+    expect(() => validateContracts([left, right], state())).toThrow(/conflict|ruling/i);
+  });
+
+  it('times six checks whose four bands all differ', () => {
+    const heavy = Array.from({ length: 6 }, (_, index) => {
+      const value = withCritical({ id: `c${index}`, actorCharacterId: ['lead', 'helper', 'other'][index % 3] });
+      value.outcomes.clean.effects = [{ kind: 'track_delta', trackId: 'access', delta: 1 }];
+      value.outcomes.costly.effects = [{ kind: 'track_delta', trackId: 'access', delta: 1 }, { kind: 'track_delta', trackId: 'alarm', delta: 1 }];
+      value.outcomes.setback.effects = [{ kind: 'track_delta', trackId: 'alarm', delta: 2 }];
+      value.outcomes.critical!.effects = [{ kind: 'track_delta', trackId: 'alarm', delta: 3 }];
+      return value;
+    });
+    const actors = ['lead', 'helper', 'other', 'lead', 'helper', 'other'];
+    heavy.forEach((value, index) => { value.actorCharacterId = actors[index]; value.submissionIds = [`input-${index}`]; });
+    const lines = heavy.map((value, index) => ({ id: `input-${index}`, characterId: actors[index] }));
+    const started = performance.now();
+    validateContracts(heavy, state(), lines);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+describe('Say-led rolls at four strain', () => {
+  const tired = () => {
+    const current = state();
+    current.characters[0].strain = 4;
+    (current.characters[0] as { displayName?: string }).displayName = 'Dash';
+    return current;
+  };
+  const say = { id: 'input', characterId: 'lead', kind: 'say' as const };
+
+  it('allows a check led by the character\'s own Say line', () => {
+    expect(() => validateContracts([contract()], tired(), [say])).not.toThrow();
+    expect(resolveContracts([contract()], tired(), () => 6, [say]).rolls).toHaveLength(1);
+  });
+
+  it('refuses a check led by a Do line, naming the character', () => {
+    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/Dash is at four strain/);
+    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/four strain/);
+  });
+
+  it('refuses a check when the actor leads with a Say line and a Do line', () => {
+    const both = contract({ submissionIds: ['input', 'second'] });
+    expect(() => validateContracts([both], tired(), [say, { id: 'second', characterId: 'lead', kind: 'act' }])).toThrow(/four strain/);
+  });
+
+  it('refuses a check with no lines, a line of unknown kind, or no own line cited', () => {
+    expect(() => validateContracts([contract()], tired())).toThrow(/Dash is at four strain/);
+    expect(() => validateContracts([contract()], tired(), [{ id: 'input', characterId: 'lead' }])).toThrow(/four strain/);
+    expect(() => validateContracts([contract()], tired(), [{ ...say, characterId: 'other' }])).toThrow(/four strain/);
+  });
+
+  it('still lets No check and Blocked contracts through at four strain', () => {
+    expect(() => validateContracts([contract({ ruling: 'no_check' })], tired())).not.toThrow();
+    expect(() => validateContracts([contract({ ruling: 'blocked' })], tired())).not.toThrow();
   });
 });
 

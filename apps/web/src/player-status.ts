@@ -25,6 +25,6 @@ export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | 
       ? { headline: 'Getting the dice ready', detail: 'The director is deciding what could happen. You can still change your line until it is locked in.', tone: 'wait' }
       : { headline: 'The director is checking the lines', detail: 'You can still change your line until it is locked in.', tone: 'wait' };
   }
-  const rolled = beat.kind === 'action' && beat.stakes.some(stake => stake.ruling === 'check');
+  const rolled = beat.stakes.some(stake => stake.ruling === 'check');
   return { headline: rolled ? 'Dice rolled. The story is being written' : 'Lines locked in. The story is being written', detail: 'Watch the stream. New lines wait for the next turn.', tone: 'wait' };
 }

@@ -148,6 +148,45 @@ describe('StakesCards', () => {
     wrapper.unmount();
   });
 
+  it('shows the critical row only when the branch exists', async () => {
+    const withCritical = contract('c-1');
+    (withCritical.outcomes as Record<string, unknown>).critical = { publicText: 'The lock jams for good.', effects: [{ kind: 'strain_delta', characterId: 'pc-1', delta: 3 }] };
+    const { wrapper } = await mountCards({ contracts: [withCritical, contract('c-2')] });
+    const card = wrapper.get('[data-testid="stakes-card-c-1"]');
+    expect(card.text()).toContain('Double 1s: Critical failure');
+    expect(card.text()).toContain('The lock jams for good.');
+    expect(card.text()).toContain('Skooty strain +3');
+    expect(wrapper.get('[data-testid="stakes-card-c-2"]').text()).not.toContain('Critical failure');
+    wrapper.unmount();
+  });
+
+  it('leaves the contract alone on Edit and creates the critical branch on first input', async () => {
+    const { wrapper, contracts } = await mountCards({ contracts: [contract('c-1')] });
+    await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
+    expect(wrapper.get('[data-testid="outcome-critical"]').element).toHaveProperty('value', '');
+    expect('critical' in contracts[0].outcomes).toBe(false);
+    await wrapper.get('[data-testid="outcome-critical"]').setValue('It all goes wrong.');
+    expect((contracts[0].outcomes as { critical?: unknown }).critical).toEqual({ publicText: 'It all goes wrong.', effects: [] });
+    expect(wrapper.find('[data-testid="stage-length-critical"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="outcome-critical"]').setValue('c'.repeat(110));
+    expect(wrapper.find('[data-testid="stage-length-critical"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="outcome-critical"]').setValue('c'.repeat(111));
+    expect(wrapper.get('[data-testid="stage-length-critical"]').text()).toContain('this has 111');
+    wrapper.unmount();
+  });
+
+  it('loads contract edits that carry a critical branch', async () => {
+    const { wrapper, contracts } = await mountCards({ contracts: [contract('c-1')] });
+    await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
+    const edited = contract('c-1');
+    (edited.outcomes as Record<string, unknown>).critical = { publicText: 'Disaster.', effects: [] };
+    await wrapper.get('[data-testid="contract-data"]').setValue(JSON.stringify([edited]));
+    await wrapper.get('[data-testid="load-contract-edits"]').trigger('click');
+    expect(wrapper.find('[data-testid="contract-json-error"]').exists()).toBe(false);
+    expect((contracts[0].outcomes as { critical?: { publicText: string } }).critical?.publicText).toBe('Disaster.');
+    wrapper.unmount();
+  });
+
   it('loads typed-effects JSON into the same array and shows its own error', async () => {
     const { wrapper, contracts } = await mountCards({ contracts: [contract('c-1')] });
     expect(wrapper.find('[data-testid="contract-data"]').exists()).toBe(false);

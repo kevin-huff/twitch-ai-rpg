@@ -82,7 +82,9 @@ test('authors a versioned show, approves two characters, and publishes their fir
   await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
   await expect(page.locator('.queue-item input[type=checkbox]').first()).toBeChecked();
-  await page.getByTestId('plan-and-draft').click();
+  await page.getByTestId('plan').click();
+  await expect(page.getByTestId('stakes-cards')).toBeVisible();
+  await page.getByTestId('approve-and-roll').click();
   await expect(page.getByTestId('publish-text-only')).toBeEnabled();
   await page.getByTestId('publish-text-only').click();
   await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).history.length).toBe(1);

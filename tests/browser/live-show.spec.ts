@@ -68,7 +68,7 @@ async function openObs(page: Page, browser: Browser, path: string) {
   }
 }
 
-test('Answer these lines, then Publish, starts the narration on the main show link with no Play press', async ({ page, browser }) => {
+test('Answer these lines, Approve and roll, then Publish, starts the narration on the main show link with no Play press', async ({ page, browser }) => {
   const show = await startPracticeShow(page);
   const obsContext = await openObs(page, browser, show.path);
   try {
@@ -87,6 +87,10 @@ test('Answer these lines, then Publish, starts the narration on the main show li
     const answer = page.getByRole('button', { name: 'Answer these lines', exact: true });
     await expect(answer).toBeEnabled();
     await answer.click();
+
+    // The round stops at What's at risk; the director approves the stakes and rolls.
+    await expect(page.getByTestId('stakes-cards')).toBeVisible({ timeout: 30000 });
+    await page.getByTestId('approve-and-roll').click();
 
     // The script is written and waiting for the director's read.
     const publish = page.getByTestId('publish');

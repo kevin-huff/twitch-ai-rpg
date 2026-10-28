@@ -453,9 +453,6 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         }
         beat.contracts = command.contracts; beat.classification = command.classification; beat.stakesApproved = true; beat.phase = 'stakes_review'; beat.lastError = null; beat.generation++;
         await client.query("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND task='plan' AND status='running'", [beat.id]);
-        beat.kind = command.classification === 'action' ? 'action' : 'conversation';
-        state.session.mode = beat.kind;
-        await saveState(client, state);
       } else if (command.type === 'lock_beat') {
         if (beat.phase !== 'stakes_review' || !beat.stakesApproved) conflict('Approve current stakes before locking.');
         const selected = all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id));

@@ -78,8 +78,8 @@ describe('beat panel action bar', () => {
   it.each([
     ['no beat and no ticked lines', snapshot(null), [], 'Answer these lines', 'answer-lines', false],
     ['no beat with ticked lines', snapshot(null), ['say-1'], 'Answer these lines', 'answer-lines', true],
-    ['an open conversation with nothing ticked', snapshot(beat()), [], 'Plan and draft', 'plan-and-draft', false],
-    ['an open conversation with ticked lines', snapshot(beat()), ['say-1'], 'Plan and draft', 'plan-and-draft', true],
+    ['an open conversation with nothing ticked', snapshot(beat({ classification: null })), [], 'Plan', 'plan', false],
+    ['an open conversation with ticked lines', snapshot(beat({ classification: null })), ['say-1'], 'Plan', 'plan', true],
     ['an open action round with ticked lines', snapshot(beat({ kind: 'action' })), ['act-1'], 'Plan', 'plan', true],
     ['ordinary stakes', snapshot(ordinaryStakes), ['say-1'], 'Lock and draft', 'lock-and-draft', true],
     ['approved ordinary stakes', snapshot(beat({ phase: 'stakes_review', selectedSubmissionIds: ['say-1'], stakesApproved: true })), ['say-1'], 'Lock and draft', 'lock-and-draft', true],
@@ -199,10 +199,12 @@ describe('beat panel action bar', () => {
 
   it('counts the steps for a conversation and an action round', async () => {
     const cases: Array<[ReturnType<typeof snapshot>, string[], string]> = [
-      [snapshot(null), [], 'Step 1 of 3'],
+      [snapshot(null), [], 'Step 1 of 5'],
+      [snapshot(beat({ classification: null })), ['say-1'], 'Step 2 of 5'],
+      [snapshot(beat({ phase: 'stakes_review', selectedSubmissionIds: ['say-1'], classification: 'action' })), ['say-1'], 'Step 3 of 5'],
       [snapshot(ordinaryStakes), ['say-1'], 'Step 1 of 3'],
-      [snapshot(locked()), [], 'Step 2 of 3'],
-      [snapshot(review()), [], 'Step 3 of 3'],
+      [snapshot(locked({ classification: 'ordinary' })), [], 'Step 2 of 3'],
+      [snapshot(review({ classification: 'ordinary' })), [], 'Step 3 of 3'],
       [snapshot(beat({ kind: 'action' })), ['act-1'], 'Step 2 of 5'],
       [snapshot(actionStakes), ['act-1'], 'Step 3 of 5'],
       [snapshot(review({ kind: 'action' })), [], 'Step 5 of 5'],
@@ -257,8 +259,8 @@ describe('beat panel action bar', () => {
 });
 
 describe('beat panel chains', () => {
-  const collecting = (overrides: Record<string, unknown> = {}) => beat({ revision: 0, ...overrides });
-  const planned = (overrides: Record<string, unknown> = {}) => beat({ phase: 'stakes_review', revision: 1, selectedSubmissionIds: ['say-1', 'say-2'], classification: 'ordinary', ...overrides });
+  const collecting = (overrides: Record<string, unknown> = {}) => beat({ revision: 0, classification: null, ...overrides });
+  const planned = (overrides: Record<string, unknown> = {}) => beat({ phase: 'stakes_review', revision: 1, selectedSubmissionIds: ['say-1', 'say-2'], classification: 'action', ...overrides });
   const queue = (...states: Array<ReturnType<typeof snapshot>>) => {
     transport.snapshot.mockReset();
     for (const state of states) transport.snapshot.mockResolvedValueOnce(state);
@@ -266,35 +268,28 @@ describe('beat panel chains', () => {
   };
   const lines = { submissions: [line('say-1'), line('say-2'), line('ooc-1', 'ooc')] };
 
-  it('answers the ticked lines: open, plan in snapshot order, then approve, lock and draft with fresh revisions', async () => {
+  it('answers the ticked lines: open, then plan in snapshot order, and stops at what is at risk', async () => {
     const wrapper = await mountPanel(snapshot(null, 'live', lines), ['say-2', 'say-1']);
     queue(
       snapshot(collecting(), 'live', lines),
       snapshot(planned(), 'live', lines),
-      snapshot(planned({ revision: 2, stakesApproved: true }), 'live', lines),
-      snapshot(locked({ revision: 3 }), 'live', lines),
-      snapshot(review({ revision: 4 }), 'live', lines),
     );
     await wrapper.get('[data-testid="answer-lines"]').trigger('click'); await flushPromises();
     const sent = transport.command.mock.calls.map(call => call[1]);
-    expect(sent.map(command => command.type)).toEqual(['open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat']);
+    expect(sent.map(command => command.type)).toEqual(['open_beat', 'plan_beat']);
     expect(sent[0]).toMatchObject({ kind: 'conversation', expectedInputEpoch: 0 });
     expect(sent[1]).toMatchObject({ submissionIds: ['say-1', 'say-2'], expectedBeatRevision: 0 });
-    expect(sent[2]).toMatchObject({ classification: 'ordinary', contracts: [], expectedBeatRevision: 1 });
-    expect(sent.slice(3).map(command => command.expectedBeatRevision)).toEqual([2, 3]);
-    expect(new Set(sent.map(command => command.commandId)).size).toBe(5);
+    expect(new Set(sent.map(command => command.commandId)).size).toBe(2);
+    expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
     expect(table.error.value).toBe('');
     wrapper.unmount();
   });
 
-  it('keeps the starting button label for the whole Answer these lines chain', async () => {
+  it('keeps the starting button label while Answer these lines opens and plans', async () => {
     const wrapper = await mountPanel(snapshot(null, 'live', lines), ['say-1', 'say-2']);
     queue(
       snapshot(collecting(), 'live', lines),
       snapshot(planned(), 'live', lines),
-      snapshot(planned({ revision: 2, stakesApproved: true }), 'live', lines),
-      snapshot(locked({ revision: 3 }), 'live', lines),
-      snapshot(review({ revision: 4 }), 'live', lines),
     );
     const finish: Array<() => void> = [];
     transport.command.mockImplementation(() => new Promise(resolve => { finish.push(() => resolve({})); }));
@@ -307,25 +302,17 @@ describe('beat panel chains', () => {
     expect(sentTypes()).toEqual(['open_beat', 'plan_beat']);
     expect(goldText()).toEqual(['Answer these lines']);
     finish[1](); await flushPromises();
-    expect(sentTypes()).toEqual(['open_beat', 'plan_beat', 'approve_stakes']);
-    expect(goldText()).toEqual(['Answer these lines']);
-    finish[2](); await flushPromises();
-    expect(sentTypes()).toEqual(['open_beat', 'plan_beat', 'approve_stakes', 'lock_beat']);
-    expect(goldText()).toEqual(['Answer these lines']);
-    finish[3](); await flushPromises();
-    expect(sentTypes()).toEqual(['open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat']);
-    expect(goldText()).toEqual(['Answer these lines']);
-    finish[4](); await flushPromises();
-    expect(goldText()).toEqual(['Publish']);
+    expect(sentTypes()).toEqual(['open_beat', 'plan_beat']);
+    expect(goldText()).toEqual(['Approve and roll']);
     wrapper.unmount();
   });
 
   it('plans at most 12 lines, the oldest first, and leaves the rest ticked', async () => {
     const many = { submissions: Array.from({ length: 14 }, (_, index) => line(`say-${index + 1}`)) };
     const ticked = many.submissions.map(item => item.id).reverse();
-    const wrapper = await mountPanel(snapshot(beat(), 'live', many), ticked);
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', many), ticked);
     queue(snapshot(planned({ classification: 'needs_action' }), 'live', many));
-    await wrapper.get('[data-testid="plan-and-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
     expect(sentTypes()).toEqual(['plan_beat']);
     expect(transport.command.mock.calls[0][1].submissionIds).toEqual(many.submissions.slice(0, 12).map(item => item.id));
     wrapper.unmount();
@@ -342,9 +329,9 @@ describe('beat panel chains', () => {
 
   it('stops at the stakes step when a ticked line is an action', async () => {
     const withAct = { submissions: [line('say-1'), line('act-1', 'act')] };
-    const wrapper = await mountPanel(snapshot(beat(), 'live', withAct), ['say-1', 'act-1']);
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', withAct), ['say-1', 'act-1']);
     queue(snapshot(planned({ selectedSubmissionIds: ['say-1', 'act-1'] }), 'live', withAct));
-    await wrapper.get('[data-testid="plan-and-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
     expect(sentTypes()).toEqual(['plan_beat']);
     wrapper.unmount();
   });
@@ -358,12 +345,33 @@ describe('beat panel chains', () => {
     wrapper.unmount();
   });
 
+  it('offers dice after a failed conversation plan with no classification', async () => {
+    const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1', 'say-2'], lastError: 'A round can show at most six rolls, and this plan needs 8. Untick some lines.' });
+    const two = { submissions: [line('say-1'), line('say-2')] };
+    const wrapper = await mountPanel(snapshot(failed, 'live', two), ['say-1', 'say-2']);
+    expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
+    expect(buttonNamed(wrapper, 'Lock and draft')).toBeUndefined();
+    expect(wrapper.get('[data-testid="beat-step-count"]').text()).toBe('Step 3 of 5');
+    expect(wrapper.text()).not.toContain('Ordinary conversation: no dice');
+    await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
+    expect(transport.command).toHaveBeenLastCalledWith('show', expect.objectContaining({ type: 'plan_beat', submissionIds: ['say-1', 'say-2'] }));
+    transport.command.mockClear();
+    await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
+    await wrapper.get('[data-testid="outcome-costly"]').setValue('It works, and it costs you.');
+    await wrapper.get('[data-testid="outcome-setback"]').setValue('It fails.');
+    await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
+    const first = transport.command.mock.calls[0]?.[1];
+    expect(first).toMatchObject({ type: 'approve_stakes', classification: 'action' });
+    expect(first.contracts.length).toBeGreaterThan(0);
+    wrapper.unmount();
+  });
+
   it('stops a chain at a refused step with its error in the bar, not the page notice', async () => {
-    const wrapper = await mountPanel(snapshot(beat(), 'live', lines), ['say-1']);
-    queue(snapshot(planned(), 'live', lines), snapshot(planned({ revision: 2, stakesApproved: true }), 'live', lines));
-    transport.command.mockResolvedValueOnce({}).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('The beat changed.'));
-    await wrapper.get('[data-testid="plan-and-draft"]').trigger('click'); await flushPromises();
-    expect(sentTypes()).toEqual(['plan_beat', 'approve_stakes', 'lock_beat']);
+    const wrapper = await mountPanel(snapshot(planned({ classification: 'ordinary' }), 'live', lines), ['say-1']);
+    queue(snapshot(planned({ revision: 2, stakesApproved: true, classification: 'ordinary' }), 'live', lines));
+    transport.command.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('The beat changed.'));
+    await wrapper.get('[data-testid="lock-and-draft"]').trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['approve_stakes', 'lock_beat']);
     expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('The beat changed.');
     expect(table.error.value).toBe('');
     wrapper.unmount();
@@ -406,7 +414,7 @@ describe('beat panel chains', () => {
     await wrapper.get('[data-testid="outcome-setback"]').setValue('  ');
     await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
     expect(transport.command).not.toHaveBeenCalled();
-    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('Fill in the goal, approach, and all three outcome branches before approving stakes.');
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('Fill in the goal, approach and every outcome before approving stakes.');
     expect(table.error.value).toBe('');
     wrapper.unmount();
   });
@@ -417,6 +425,54 @@ describe('beat panel chains', () => {
     expect(transport.command).toHaveBeenLastCalledWith('show', expect.objectContaining({ type: 'render_beat', beatId: 'beat-2', expectedBeatRevision: 3 }));
     wrapper.unmount();
   });
+
+  describe('the critical failure branch', () => {
+    const queue = (...states: Array<ReturnType<typeof snapshot>>) => {
+      transport.snapshot.mockReset();
+      for (const state of states) transport.snapshot.mockResolvedValueOnce(state);
+      transport.snapshot.mockResolvedValue(states[states.length - 1]);
+    };
+    const criticalStakes = (critical: Record<string, unknown>) => beat({
+      phase: 'stakes_review', kind: 'conversation', classification: 'action', selectedSubmissionIds: ['say-1'], revision: 3,
+      contracts: [actionContract({ submissionIds: ['say-1'], outcomes: { ...actionContract().outcomes, critical } })],
+    });
+
+    it('reads Critical failure on a locked critical roll', async () => {
+      const resolution = { rolls: [{ id: 'r1', actorCharacterId: 'pc-1', faces: [1, 1], traitModifier: 1, edge: false, total: 3, band: 'critical' }], outcomes: [], effects: [] };
+      const wrapper = await mountPanel(snapshot(locked({ classification: 'action', resolution })), []);
+      expect(wrapper.get('.roll small').text()).toBe('Skooty · Critical failure');
+      wrapper.unmount();
+    });
+
+    it('drops a blank critical branch before approving the stakes', async () => {
+      const wrapper = await mountPanel(snapshot(criticalStakes({ publicText: '  ', effects: [] }), 'live', { submissions: [line('say-1')] }), ['say-1']);
+      queue(snapshot({ ...criticalStakes({ publicText: '', effects: [] }), revision: 4, stakesApproved: true }), snapshot(locked({ classification: 'action', revision: 5 })), snapshot(review({ classification: 'action', revision: 6 })));
+      await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
+      const approve = transport.command.mock.calls.map(call => call[1]).find(command => command.type === 'approve_stakes');
+      expect(approve.contracts).toHaveLength(1);
+      expect(approve.contracts[0].outcomes).not.toHaveProperty('critical');
+      wrapper.unmount();
+    });
+
+    it('sends a filled critical branch with the stakes', async () => {
+      const critical = { publicText: 'The lock snaps and the alarm sounds.', effects: [] };
+      const wrapper = await mountPanel(snapshot(criticalStakes(critical), 'live', { submissions: [line('say-1')] }), ['say-1']);
+      queue(snapshot({ ...criticalStakes(critical), revision: 4, stakesApproved: true }), snapshot(locked({ classification: 'action', revision: 5 })), snapshot(review({ classification: 'action', revision: 6 })));
+      await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
+      const approve = transport.command.mock.calls.map(call => call[1]).find(command => command.type === 'approve_stakes');
+      expect(approve.contracts[0].outcomes.critical).toEqual(critical);
+      wrapper.unmount();
+    });
+
+    it('keeps a critical branch that has effects but no text from passing as complete', async () => {
+      const cost = { kind: 'strain_delta', characterId: 'pc-1', delta: 3 };
+      const wrapper = await mountPanel(snapshot(criticalStakes({ publicText: '', effects: [cost] }), 'live', { submissions: [line('say-1')] }), ['say-1']);
+      await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
+      expect(transport.command).not.toHaveBeenCalled();
+      expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('Fill in the goal, approach and every outcome before approving stakes.');
+      wrapper.unmount();
+    });
+  });
 });
 
 describe('beat panel status', () => {
@@ -424,10 +480,10 @@ describe('beat panel status', () => {
 
   it('counts the seconds while planning and clears the count when it finishes', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
-    const wrapper = await mountPanel(snapshot(beat(), 'live', { submissions: [line('say-1')] }), ['say-1']);
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', { submissions: [line('say-1')] }), ['say-1']);
     let finish: (value: unknown) => void = () => {};
     transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    await wrapper.get('[data-testid="plan-and-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
     expect(bar(wrapper).get('[data-testid="beat-status"]').text()).toBe('Planning… 0 s');
     vi.advanceTimersByTime(4000); await flushPromises();
     expect(bar(wrapper).get('[data-testid="beat-status"]').text()).toBe('Planning… 4 s');

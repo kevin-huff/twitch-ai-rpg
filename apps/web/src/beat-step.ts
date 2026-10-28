@@ -39,7 +39,7 @@ function decide(input: BeatStepInput): BeatStepResult {
     }
     return {
       step: 'plan',
-      next: usesActionSteps(beat) ? "Plan the ticked actions to see what's at risk." : 'Plan and draft the ticked lines.',
+      next: beat.kind === 'action' ? "Plan the ticked actions to see what's at risk." : "Plan the ticked lines to see what's at risk.",
       reason: null,
     };
   }
@@ -75,7 +75,8 @@ export function beatStep(input: BeatStepInput): BeatStepResult {
 export type StageId = 'lines' | 'plan' | 'stakes' | 'script' | 'publish';
 
 export function usesActionSteps(beat: Beat | null, reviewClassification?: 'ordinary' | 'action'): boolean {
-  return beat?.kind === 'action' || beat?.classification === 'needs_action' || beat?.classification === 'action' || reviewClassification === 'action';
+  if (beat?.kind === 'action' || beat?.classification === 'needs_action') return true;
+  return (reviewClassification ?? beat?.classification) !== 'ordinary';
 }
 
 export function stepPosition(step: StepId, action: boolean): { stage: StageId; n: number; m: number } {
@@ -89,14 +90,14 @@ export function stepPosition(step: StepId, action: boolean): { stage: StageId; n
   return { stage, n: stages.indexOf(stage) + 1, m: stages.length };
 }
 
-export type GoldAction = 'answer' | 'plan-and-draft' | 'plan' | 'lock-and-draft' | 'approve-and-roll' | 'draft' | 'try-again' | 'publish' | 'resume';
+export type GoldAction = 'answer' | 'plan' | 'lock-and-draft' | 'approve-and-roll' | 'draft' | 'try-again' | 'publish' | 'resume';
 
 export function goldAction(input: { step: StepId; beat: Beat | null; paused: boolean; ordinary: boolean }): GoldAction {
   if (input.paused) return 'resume';
   switch (input.step) {
     case 'open': return 'answer';
     case 'select':
-    case 'plan': return input.beat?.kind === 'action' ? 'plan' : 'plan-and-draft';
+    case 'plan': return 'plan';
     case 'stakes':
     case 'lock': return input.ordinary ? 'lock-and-draft' : 'approve-and-roll';
     case 'draft': return input.beat?.lastError ? 'try-again' : 'draft';
@@ -106,7 +107,6 @@ export function goldAction(input: { step: StepId; beat: Beat | null; paused: boo
 
 export const GOLD_LABELS: Record<GoldAction, string> = {
   answer: 'Answer these lines',
-  'plan-and-draft': 'Plan and draft',
   plan: 'Plan',
   'lock-and-draft': 'Lock and draft',
   'approve-and-roll': 'Approve and roll',
@@ -118,7 +118,6 @@ export const GOLD_LABELS: Record<GoldAction, string> = {
 
 export const GOLD_TEST_IDS: Record<GoldAction, string> = {
   answer: 'answer-lines',
-  'plan-and-draft': 'plan-and-draft',
   plan: 'plan',
   'lock-and-draft': 'lock-and-draft',
   'approve-and-roll': 'approve-and-roll',

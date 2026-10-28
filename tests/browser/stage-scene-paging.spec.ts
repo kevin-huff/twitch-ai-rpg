@@ -157,7 +157,7 @@ test('the full scene pages tall lines so every row shows, with the wager feature
     expect(cut.names, where).toHaveLength(4);
     expect(cut.goals, where).toHaveLength(1);
     expect(cut.spotlightCards, where).toBe(1);
-    expect(cut.outcomes, where).toHaveLength(3);
+    expect(cut.outcomes, where).toHaveLength(4);
     for (const item of [...cut.names, ...cut.goals, ...cut.outcomes]) {
       expect(item.cutHeight, `${item.text} is cut in height: ${where}`).toBe(false);
       expect(item.cutWidth, `${item.text} is cut in width: ${where}`).toBe(false);

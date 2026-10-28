@@ -330,13 +330,14 @@ describe('hiding the picture while a chain runs', () => {
   });
 
   it('keeps Hide picture working during Answer these lines, and the chain still finishes', async () => {
-    const draft = { segments: [{ kind: 'narration', speakerNpcId: null, text: 'The room falls silent.', recipientCharacterIds: [], delivery: 'neutral' }], continuity: [], directorSummary: '' };
+    const branch = (publicText: string) => ({ publicText, effects: [] });
+    const contract = {
+      id: '33333333-3333-4333-8333-333333333333', version: 1, actorCharacterId: 'pc-1', helperCharacterIds: [], submissionIds: ['a'], ruling: 'check', intent: 'Open the door.', approach: 'Shoulder it.', trait: 'might', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
+      outcomes: { clean: branch('It opens.'), costly: branch('It opens, loudly.'), setback: branch('It holds.'), critical: branch('The frame splinters on top of you.') },
+    };
     const states: Record<string, Record<string, unknown>> = {
       open_beat: chainBeat('collecting', 1),
-      plan_beat: chainBeat('stakes_review', 2),
-      approve_stakes: chainBeat('stakes_review', 3, { stakesApproved: true }),
-      lock_beat: chainBeat('locked', 4, { stakesApproved: true, resolution: { rolls: [], outcomes: [], effects: [] } }),
-      render_beat: chainBeat('draft_review', 5, { stakesApproved: true, resolution: { rolls: [], outcomes: [], effects: [] }, draft, draftRevision: 1 }),
+      plan_beat: chainBeat('stakes_review', 2, { classification: 'action', contracts: [contract] }),
     };
     const picture = { state: 'ready', imageId: 'img-1', hidden: false };
     let current = snapshot('live', [submission('a')], { picturesEnabled: true, scenePictureStatus: picture, activeBeat: null });
@@ -367,10 +368,10 @@ describe('hiding the picture while a chain runs', () => {
 
     openGate();
     await flushPromises();
-    expect(transport.command.mock.calls.map(call => call[1].type)).toEqual(['open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat']);
+    expect(transport.command.mock.calls.map(call => call[1].type)).toEqual(['open_beat', 'plan_beat']);
     expect(table.busy.value).toBe(false);
     expect(table.error.value).toBe('');
-    expect(testid(wrapper, 'publish').exists()).toBe(true);
+    expect(testid(wrapper, 'approve-and-roll').exists()).toBe(true);
     wrapper.unmount();
   });
 

@@ -52,7 +52,7 @@ suite('director corrections and private beat steering', () => {
     await ok({ type: 'open_beat', kind, expectedInputEpoch: snapshot.session.inputEpoch });
     await submit(kind === 'action' ? 'act' : 'say');
     await ok(beatCommand('plan_beat', { submissionIds: snapshot.submissions.filter(item => item.status === 'queued').map(item => item.id) }));
-    await ok(beatCommand('approve_stakes', { classification: kind === 'action' ? 'action' : 'ordinary', contracts: snapshot.activeBeat!.contracts }));
+    await ok(beatCommand('approve_stakes', { classification: kind === 'action' ? 'action' : 'ordinary', contracts: kind === 'action' ? snapshot.activeBeat!.contracts : [] }));
   }
   beforeAll(async () => {
     pool = createPool(databaseUrl!);
