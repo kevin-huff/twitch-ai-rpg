@@ -111,12 +111,12 @@ async function revoke(builder: CharacterBuilderSummary) {
 </template>
 
 <style scoped>
-.builder-invites { margin-bottom: 1.5rem; }
-.builder-content { padding-top: 1rem; }
+.builder-invites { margin-bottom: 28px; }
+.builder-content { padding-top: 20px; }
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
-.builder-error { position: static; width: auto; max-height: none; margin-bottom: 1rem; box-shadow: none; }
-.private-link { margin: 1rem 0; }
+.builder-error { position: static; width: auto; max-height: none; margin-bottom: 20px; box-shadow: none; }
+.private-link { margin: 20px 0; }
 .builder-list { list-style: none; padding: 0; }
-.builder-list li { padding: 1rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-.builder-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.builder-list li { padding: 20px 0; border-bottom: 2px solid var(--night-raised); overflow-wrap: anywhere; }
+.builder-actions { display: flex; flex-wrap: wrap; gap: 16px; }
 </style>

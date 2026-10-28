@@ -121,13 +121,14 @@ const bindInput = (id: string) => (element: unknown) => { if (element instanceof
 </template>
 
 <style scoped>
-.lobby-section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
-.links-body { margin-top: 1rem; display: grid; gap: 1rem; }
-.link-row { border: 1px solid var(--line); border-radius: 6px; padding: 1rem; display: grid; gap: .3rem; }
-.link-row label { max-width: 32rem; }
+.lobby-section { border-top: 2px solid var(--night-raised); margin-top: 40px; padding-top: 30px; }
+.links-body { margin-top: 20px; display: grid; gap: 20px; }
+.link-row { position: relative; padding: 20px; display: grid; gap: 8px; }
+.link-row::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.link-row label { max-width: 640px; }
 .link-row input[type="text"], .link-row input:not([type]) { width: 100%; }
-.status-word { color: var(--teal); font-size: .85rem; margin-left: .5rem; }
-.actions, .confirm { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .4rem; }
+.status-word { color: var(--herb); font-family: var(--font-label); font-size: 16px; line-height: 20px; margin-left: 8px; }
+.actions, .confirm { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
 .confirm p { flex-basis: 100%; margin: 0; }
-.copied { color: var(--teal); font-size: .85rem; }
+.copied { color: var(--herb); font-size: 20px; line-height: 24px; }
 </style>

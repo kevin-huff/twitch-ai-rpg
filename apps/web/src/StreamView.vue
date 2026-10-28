@@ -225,5 +225,5 @@ onBeforeUnmount(() => {
 <style scoped>
 .stream-view { position: fixed; inset: 0; overflow: hidden; }
 .offline { width: 100%; height: 100%; }
-.offline.scene { background: radial-gradient(ellipse at 18% 0%, #293329 0%, #121815 58%); }
+.offline.scene { background: var(--void); }
 </style>

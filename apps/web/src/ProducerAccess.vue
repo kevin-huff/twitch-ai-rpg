@@ -121,11 +121,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.producer-access { margin-top: 2rem; display: grid; gap: .5rem; }
+.producer-access { margin-top: 40px; display: grid; gap: 8px; }
 .producer-access h3 { margin: 0; }
-.producer-error { color: var(--gold); margin: 0; }
-.producer-link { display: grid; gap: .4rem; }
-.producer-list { list-style: none; padding: 0; display: grid; gap: .6rem; }
-.producer-list li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
-.producer-confirm { display: inline-flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.producer-error { color: var(--bone); margin: 0; padding: 4px 12px; box-shadow: inset 4px 0 0 0 var(--heart); }
+.producer-link { display: grid; gap: 8px; }
+.producer-list { list-style: none; padding: 0; display: grid; gap: 12px; }
+.producer-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.producer-confirm { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 </style>

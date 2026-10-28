@@ -267,19 +267,20 @@ onBeforeUnmount(() => { disposed = true; reset(); });
 </template>
 
 <style scoped>
-.scenario-generator { margin-bottom: 1rem; }
-.scenario-generator-panel { margin-top: .6rem; padding: 1rem; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 8px; background: var(--panel); max-width: 100%; box-sizing: border-box; }
-.scenario-generator-panel label { display: grid; gap: .45rem; }
-.scenario-generator-panel textarea { min-height: 110px; width: 100%; box-sizing: border-box; }
+.scenario-generator { margin-bottom: 20px; }
+.scenario-generator-panel { position: relative; margin-top: 12px; padding: 24px; max-width: 100%; box-sizing: border-box; }
+.scenario-generator-panel::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.scenario-generator-panel label { display: grid; gap: 8px; }
+.scenario-generator-panel textarea { min-height: 112px; width: 100%; box-sizing: border-box; }
 .scenario-generator-panel select { width: 100%; box-sizing: border-box; }
-.scenario-generator-status { color: var(--teal); font-size: .9rem; margin: .6rem 0; }
-.scenario-generator-preview { margin-top: .8rem; padding: .8rem; border: 1px solid var(--line); border-radius: 5px; font-size: .88rem; overflow-wrap: anywhere; }
-.scenario-generator-title { color: var(--gold); }
-.scenario-generator-preview h4 { margin: .8rem 0 .2rem; font-size: .8rem; color: var(--teal); }
-.scenario-generator-preview p { margin: 0 0 .3rem; }
-.scenario-generator-preview ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .25rem; }
-.scenario-generator-premise { color: var(--muted); }
-.scenario-generator-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .8rem; }
-.scenario-generator-options summary { cursor: pointer; color: var(--muted); font-size: .85rem; margin: .6rem 0 .3rem; }
-.scenario-generator-footer { color: var(--muted); font-size: .75rem; margin: .8rem 0 0; }
+.scenario-generator-status { color: var(--herb); font-size: 20px; line-height: 24px; margin: 12px 0; }
+.scenario-generator-preview { margin-top: 16px; padding: 16px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
+.scenario-generator-title { color: var(--candle); }
+.scenario-generator-preview h4 { margin: 16px 0 4px; font-family: var(--font-label); font-size: 16px; line-height: 20px; color: var(--herb); }
+.scenario-generator-preview p { margin: 0 0 4px; }
+.scenario-generator-preview ul { margin: 0; padding-left: 24px; display: grid; gap: 4px; }
+.scenario-generator-premise { color: var(--dust); }
+.scenario-generator-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.scenario-generator-options summary { cursor: pointer; color: var(--dust); font-size: 20px; margin: 12px 0 4px; }
+.scenario-generator-footer { color: var(--dust); font-size: 20px; line-height: 24px; margin: 16px 0 0; }
 </style>

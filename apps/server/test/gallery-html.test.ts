@@ -44,6 +44,8 @@ describe('galleryPage head', () => {
     expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
     expect(html).toContain('<meta name="robots" content="noindex">');
     expect(html).toContain('<link rel="stylesheet" href="/gallery/gallery.css">');
+    expect(html).toContain('<link rel="stylesheet" href="/fonts/fonts.css">');
+    expect(html.indexOf('/fonts/fonts.css')).toBeLessThan(html.indexOf('/gallery/gallery.css'));
     expect(html).toContain('<script src="/gallery/viewer.js" defer></script>');
   });
 
@@ -166,6 +168,8 @@ describe('galleryListPage', () => {
     expect(html).toContain('<meta name="robots" content="noindex">');
     expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
     expect(html).toContain('<link rel="stylesheet" href="/gallery/gallery.css">');
+    expect(html).toContain('<link rel="stylesheet" href="/fonts/fonts.css">');
+    expect(html.indexOf('/fonts/fonts.css')).toBeLessThan(html.indexOf('/gallery/gallery.css'));
     expect(html).not.toContain('<script');
     expect(html).not.toMatch(/\sstyle=/i);
   });

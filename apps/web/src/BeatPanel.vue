@@ -376,18 +376,22 @@ function runGold() {
 </template>
 
 <style scoped>
-.beat-actions { position: sticky; bottom: 0; z-index: 10; display: grid; gap: .6rem; margin: 1.2rem -1.5rem -1.5rem; padding: .9rem 1.5rem; background: var(--panel); border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
-.beat-actions .actions { gap: .6rem; }
+.beat-actions { position: sticky; bottom: 0; z-index: 10; display: grid; gap: 12px; margin: 20px -18px -18px; padding: 16px 24px; background: var(--night); box-shadow: inset 0 2px 0 0 var(--night-raised); }
+.beat-actions .actions { gap: 12px; }
 .beat-next { margin: 0; }
-.beat-status { margin: 0; color: var(--muted); font-size: .9rem; }
+.beat-status { margin: 0; color: var(--dust); font-size: 20px; line-height: 24px; }
 .beat-error { margin: 0; }
-.beat-more > summary, .beat-abandon > summary { cursor: pointer; color: var(--muted); }
-.beat-more .actions { margin-top: .6rem; }
-.beat-abandon { margin-top: .6rem; }
-.beat-reason { color: var(--muted); }
-.beat-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .6rem .8rem; border: 1px solid var(--gold); border-radius: 6px; }
-.beat-confirm p { flex: 1 1 18rem; margin: 0; }
-.steer-note { flex: 1 1 16rem; }
-.beat-facts { margin: 1rem 0; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 6px; }
-.beat-facts ul { margin: .4rem 0 .6rem; padding-left: 1.2rem; }
+.beat-more > summary, .beat-abandon > summary { color: var(--dust); }
+.beat-more > summary:hover, .beat-abandon > summary:hover { color: var(--candle); }
+.beat-more .actions { margin-top: 12px; }
+.beat-abandon { margin-top: 12px; }
+.beat-reason { color: var(--dust); }
+.beat-confirm { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 20px; }
+.beat-confirm::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--candle), inset 0 0 0 6px var(--void); clip-path: var(--cut-1); }
+.beat-confirm p { flex: 1 1 288px; margin: 0; }
+.steer-note { flex: 1 1 256px; }
+.beat-facts { position: relative; margin: 16px 0; padding: 16px 20px; }
+.beat-facts::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); }
+.beat-facts strong { display: block; font-family: var(--font-label); font-size: 16px; line-height: 20px; color: var(--candle); }
+.beat-facts ul { margin: 8px 0 12px; padding-left: 24px; }
 </style>

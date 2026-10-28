@@ -81,9 +81,8 @@ function save(clear = false) {
 </template>
 
 <style scoped>
-.beat-steering { margin-block: 1rem; }
-summary { font-weight: 600; }
-label { margin-top: 1rem; }
-.actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.beat-steering { margin-block: 16px; }
+label { margin-top: 16px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .error { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

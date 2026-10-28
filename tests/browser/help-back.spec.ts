@@ -16,7 +16,7 @@ test('Help Back returns a Test as player to the seat address, identity included,
   await practiceShow(page);
   await page.getByRole('link', { name: 'Cast & lobby' }).click();
   const popup = context.waitForEvent('page');
-  await page.getByRole('link', { name: 'Test as Rook ↗', exact: true }).click();
+  await page.getByRole('link', { name: 'Test as Rook', exact: true }).click();
   const player = await popup;
   await expect(player.getByRole('heading', { name: 'Rook', exact: true })).toBeVisible();
   const seatUrl = new URL(player.url());

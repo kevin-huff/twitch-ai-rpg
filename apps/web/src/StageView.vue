@@ -58,9 +58,14 @@ onMounted(async () => {
 .frame-slot { position: relative; flex: 1; min-height: 0; }
 .frame-fill { position: absolute; inset: 0; }
 .offline { width: 100%; height: 100%; }
-.offline.scene { background: radial-gradient(ellipse at 18% 0%, #293329 0%, #121815 58%); }
-.operator-bar { flex: none; max-height: 40vh; overflow: auto; display: grid; gap: 8px; padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--line); }
-.operator-bar p { margin: 0; }
-.preview-strip { color: var(--muted); }
-.operator-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+.offline.scene { background: var(--void); }
+.operator-bar {
+  position: relative; z-index: 0;
+  flex: none; max-height: 40vh; overflow: auto; display: grid; gap: 8px; padding: 12px 16px; background: var(--night);
+  box-shadow: inset 0 2px 0 0 var(--void), inset 0 4px 0 0 var(--bone);
+  font-family: var(--font-body); font-size: 20px; line-height: 24px; color: var(--bone);
+}
+.operator-bar p { margin: 0; font-size: 20px; line-height: 24px; }
+.preview-strip { color: var(--dust); }
+.operator-error { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--bone); padding-left: 12px; box-shadow: inset 4px 0 0 0 var(--heart); }
 </style>

@@ -148,18 +148,19 @@ onBeforeUnmount(() => { disposed = true; close(); });
 
 <style scoped>
 .field-generator { position: relative; }
-.generate-open { min-height: 28px; padding: .2rem .55rem; font-size: .72rem; white-space: nowrap; }
-.generator-panel { position: absolute; top: calc(100% + .4rem); right: 0; z-index: 20; width: min(26rem, calc(100vw - 3rem)); max-height: 70vh; overflow-y: auto; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 28px #0008; }
-.generator-panel.source-panel { position: fixed; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); max-height: calc(100dvh - 2rem); }
-.generator-panel label { display: grid; gap: .45rem; margin-bottom: .6rem; }
-.generator-panel textarea { min-height: 90px; }
-.generator-help { font-size: .75rem; color: var(--muted); margin: .6rem 0; }
-.generator-result { margin: .8rem 0; }
-.generator-result strong { font-size: .8rem; }
-.generator-preview { white-space: pre-wrap; overflow-wrap: anywhere; padding: .7rem; margin-top: .4rem; border: 1px solid var(--line); border-radius: 5px; font-size: .88rem; }
-.generator-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .8rem; }
-.generator-actions button { padding: .5rem .75rem; }
+.generate-open { min-height: 32px; padding: 8px 12px; font-family: var(--font-label); font-size: 16px; line-height: 16px; white-space: nowrap; }
+.generator-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: min(480px, calc(100vw - 48px)); max-height: 70vh; overflow-y: auto; padding: 24px; box-shadow: var(--frame-window);
+  background: linear-gradient(var(--void), var(--void)) left top / 4px 4px no-repeat, linear-gradient(var(--void), var(--void)) right top / 4px 4px no-repeat, linear-gradient(var(--void), var(--void)) left bottom / 4px 4px no-repeat, linear-gradient(var(--void), var(--void)) right bottom / 4px 4px no-repeat, var(--night); }
+.generator-panel.source-panel { position: fixed; inset: 16px; margin: auto; width: min(480px, calc(100vw - 48px)); height: fit-content; max-height: calc(100dvh - 32px); }
+.generator-panel label { display: grid; gap: 8px; margin-bottom: 12px; }
+.generator-panel textarea { min-height: 96px; }
+.generator-help { font-size: 20px; line-height: 24px; color: var(--dust); margin: 12px 0; }
+.generator-result { margin: 16px 0; }
+.generator-result strong { font-family: var(--font-label); font-size: 16px; line-height: 20px; color: var(--candle); }
+.generator-preview { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; margin-top: 8px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); font-size: 20px; line-height: 24px; }
+.generator-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.generator-actions button { padding: 8px 12px; }
 @media (max-width: 800px) {
-  .generator-panel { position: fixed; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: min(26rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); }
+  .generator-panel, .generator-panel.source-panel { position: fixed; inset: 16px; margin: auto; width: min(480px, calc(100vw - 32px)); height: fit-content; max-height: calc(100dvh - 32px); }
 }
 </style>

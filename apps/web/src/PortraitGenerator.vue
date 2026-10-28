@@ -103,11 +103,12 @@ onBeforeUnmount(() => { disposed = true; invalidate(); });
 </template>
 
 <style scoped>
-.portrait-generator { margin-bottom: 1rem; }
-.portrait-generator-current, .portrait-generator-result { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; }
-.portrait-generator-result { margin-top: .6rem; padding: 1rem; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 8px; background: var(--panel); max-width: 100%; box-sizing: border-box; }
-.portrait-generator-image { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: 0 0 auto; }
-.portrait-generator-preview { width: 160px; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: 0 0 auto; }
-.portrait-generator-placeholder { display: grid; place-items: center; box-sizing: border-box; background: #343c31; color: #e3c58e; font-family: Georgia, serif; font-size: 1.6rem; }
-.portrait-generator-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.portrait-generator { margin-bottom: 20px; }
+.portrait-generator-current, .portrait-generator-result { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.portrait-generator-result { position: relative; margin-top: 12px; padding: 24px; max-width: 100%; box-sizing: border-box; }
+.portrait-generator-result::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.portrait-generator-image { width: 96px; height: 96px; object-fit: cover; box-sizing: border-box; padding: 2px; background: var(--void); flex: 0 0 auto; }
+.portrait-generator-preview { width: 160px; height: 160px; object-fit: cover; box-sizing: border-box; padding: 2px; background: var(--void); flex: 0 0 auto; }
+.portrait-generator-placeholder { display: grid; place-items: center; box-sizing: border-box; padding: 0; background: var(--night-raised); box-shadow: var(--frame-slot); color: var(--bone); font-family: var(--font-label); font-size: 24px; line-height: 32px; }
+.portrait-generator-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 </style>

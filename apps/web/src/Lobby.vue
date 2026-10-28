@@ -74,10 +74,10 @@ function start() {
 </template>
 
 <style scoped>
-.lobby-section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
-.session-brief { margin: 1.5rem 0; }
-.cast-list { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .35rem; }
+.lobby-section { border-top: 2px solid var(--night-raised); margin-top: 40px; padding-top: 28px; }
+.session-brief { margin: 28px 0; }
+.cast-list { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 8px; }
 .boundaries-section > summary { cursor: pointer; }
-.boundaries-section[open] > summary { margin-bottom: 1rem; }
-.lobby > .muted { margin-top: 1.5rem; }
+.boundaries-section[open] > summary { margin-bottom: 20px; }
+.lobby > .muted { margin-top: 28px; }
 </style>

@@ -19,6 +19,6 @@ const emit = defineEmits<{ command: [command: Command] }>();
 </template>
 
 <style scoped>
-.cast-list { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .35rem; }
+.cast-list { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 8px; }
 .premise { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

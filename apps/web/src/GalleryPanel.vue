@@ -92,9 +92,9 @@ function confirmYes() {
 </template>
 
 <style scoped>
-.gallery-link-row { display: grid; gap: .25rem; margin-block: .5rem; }
-.gallery-failure { display: grid; gap: .5rem; margin-block: .5rem; }
-.gallery-more { margin-block: .5rem; }
+.gallery-link-row { display: grid; gap: 4px; margin-block: 8px; }
+.gallery-failure { display: grid; gap: 8px; margin-block: 8px; }
+.gallery-more { margin-block: 8px; }
 .gallery-more > summary { cursor: pointer; }
-.gallery-danger { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .5rem; }
+.gallery-danger { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
 </style>

@@ -52,7 +52,7 @@ test('players write their own short cards on the pre-show page, they apply at on
 
   // Step 2: seat 1 opens the pre-show page, which shows the short card: a name, a description, and the rest folded away.
   const popup1 = context.waitForEvent('page');
-  await page.getByRole('link', { name: 'Test as Seat 1 ↗', exact: true }).click();
+  await page.getByRole('link', { name: 'Test as Seat 1', exact: true }).click();
   const seat1 = await popup1;
   await expect(seat1.getByTestId('pre-show')).toBeVisible();
   await expect(seat1.getByRole('heading', { name: 'Your character', exact: true })).toBeVisible();

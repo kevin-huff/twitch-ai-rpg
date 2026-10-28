@@ -244,11 +244,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.lobby-section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
-.links-body { margin-top: 1rem; display: grid; gap: 1.25rem; }
-.group { display: grid; gap: .75rem; justify-items: start; }
+.lobby-section { border-top: 2px solid var(--night-raised); margin-top: 40px; padding-top: 30px; }
+.links-body { margin-top: 20px; display: grid; gap: 24px; }
+.group { display: grid; gap: 16px; justify-items: start; }
 .group h4 { margin: 0; }
 .group > :deep(.stream-card), .off-row { width: 100%; }
-.off-row { border: 1px solid var(--line); border-radius: 6px; padding: 1rem; display: grid; gap: .4rem; justify-items: start; }
+.off-row { position: relative; padding: 20px; display: grid; gap: 8px; justify-items: start; }
+.off-row::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
 .off-row p { margin: 0; }
 </style>

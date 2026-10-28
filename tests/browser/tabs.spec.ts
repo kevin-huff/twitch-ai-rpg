@@ -65,12 +65,12 @@ test('director opens each test character in a new tab without using player invit
   const { invitations } = await createTable(page);
   const directorUrl = page.url();
   await page.getByRole('link', { name: 'Cast & lobby' }).click();
-  await expect(page.getByRole('link', { name: 'Test as Rook ↗', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Test as Rook', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/multi-tab-lobby.png', fullPage: true });
   const playerTabs: Page[] = [];
   for (const name of names) {
     const popup = context.waitForEvent('page');
-    await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
+    await page.getByRole('link', { name: `Test as ${name}`, exact: true }).click();
     const player = await popup;
     playerTabs.push(player);
     await expect(player.getByRole('heading', { name, exact: true })).toBeVisible();

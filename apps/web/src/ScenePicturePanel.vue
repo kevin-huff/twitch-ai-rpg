@@ -96,12 +96,12 @@ const settingsDisabled = computed(() => props.busy || props.snapshot.session.sta
 </template>
 
 <style scoped>
-.scene-picture-preview { display: block; width: 100%; aspect-ratio: 1344 / 768; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); margin-bottom: .75rem; }
-.scene-picture-status { margin: 0 0 .75rem; font-size: .9rem; overflow-wrap: anywhere; }
-.action-picture { margin: 0 0 .75rem; }
-.action-picture-preview { display: block; max-width: 12rem; width: 100%; aspect-ratio: 1344 / 768; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); margin-bottom: .5rem; }
-.action-picture-status { margin: 0; font-size: .9rem; overflow-wrap: anywhere; }
-.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-.scene-picture-reason { font-size: .8rem; margin: .5rem 0 0; }
-.scene-picture-help { font-size: .8rem; margin: .75rem 0 0; }
+.scene-picture-preview { display: block; box-sizing: border-box; width: 100%; padding: 2px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); aspect-ratio: 1344 / 768; object-fit: cover; margin-bottom: 16px; }
+.scene-picture-status { margin: 0 0 16px; font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
+.action-picture { margin: 0 0 16px; }
+.action-picture-preview { display: block; box-sizing: border-box; max-width: 240px; width: 100%; padding: 2px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); aspect-ratio: 1344 / 768; object-fit: cover; margin-bottom: 8px; }
+.action-picture-status { margin: 0; font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.scene-picture-reason { font-size: 20px; line-height: 24px; margin: 8px 0 0; }
+.scene-picture-help { font-size: 20px; line-height: 24px; margin: 16px 0 0; }
 </style>

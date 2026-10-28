@@ -122,12 +122,14 @@ function loadJson() {
 </template>
 
 <style scoped>
-.stakes-ordinary { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.stakes-ordinary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .stakes-ordinary p { margin: 0; }
-.stakes-card-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+.stakes-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .stakes-card-head h4 { margin: 0; }
-.outcomes { list-style: none; padding: 0; margin: .4rem 0; display: grid; gap: .4rem; }
-.roll-words { margin: .3rem 0; font-weight: 600; }
-.stage-length { margin: .2rem 0 .6rem; color: var(--muted); font-size: .8rem; }
-.stage-length.over { color: var(--gold); }
+.outcomes { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 8px; }
+/* Jersey 20 has one weight, so a label stands apart from its text by colour instead of bold. */
+p > strong, .outcomes strong { color: var(--candle); }
+.roll-words { margin: 8px 0; font-weight: 400; }
+.stage-length { margin: 4px 0 12px; color: var(--dust); font-size: 20px; line-height: 24px; }
+.stage-length.over { color: var(--candle); }
 </style>

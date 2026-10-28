@@ -65,7 +65,8 @@ const extraApproach = (item: Submission) => {
 </template>
 
 <style scoped>
-.sub-item { border-top: 1px solid var(--line); padding: .7rem 0; display: grid; gap: .3rem; }
+.sub-item { box-shadow: inset 0 2px 0 0 var(--night-raised); padding: 14px 0 12px; display: grid; gap: 4px; }
 .sub-item p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
-.sentence { color: var(--muted); font-size: .9rem; }
+.sub-label { color: var(--candle); }
+.sentence { color: var(--dust); font-size: 20px; line-height: 24px; }
 </style>

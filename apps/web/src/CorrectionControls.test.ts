@@ -43,7 +43,7 @@ describe('director corrections', () => {
     expect(knowledge).toHaveLength(2);
     await knowledge[1]!.setValue('retain_belief');
     expect(wrapper.text()).not.toContain('Private unrelated memory');
-    expect(wrapper.get(field('correction-change-preview-0')).text()).toContain('The bridge is closed. → The bridge is open.');
+    expect(wrapper.get(field('correction-change-preview-0')).text()).toContain('The bridge is closed. becomes The bridge is open.');
     expect(wrapper.get(field('correction-memory-preview-0')).text()).toContain('Mara');
     expect(wrapper.get(field('correction-memory-preview-0')).text()).toContain('Dax');
     expect(wrapper.get(field('correction-memory-preview-0')).text()).toContain('belief');
@@ -62,8 +62,8 @@ describe('director corrections', () => {
     await wrapper.get(field('save-correction')).trigger('click');
     expect(wrapper.emitted('command')).toBeUndefined(); expect(wrapper.get('[role="alert"]').text()).toContain('Alarm');
     await wrapper.get(field('correction-value-1')).setValue('4');
-    expect(wrapper.get(field('correction-change-preview-0')).text()).toContain('2 → 1');
-    expect(wrapper.get(field('correction-change-preview-1')).text()).toContain('2 → 4');
+    expect(wrapper.get(field('correction-change-preview-0')).text()).toContain('2 becomes 1');
+    expect(wrapper.get(field('correction-change-preview-1')).text()).toContain('2 becomes 4');
     expect(wrapper.text()).toMatch(/does not.*completion effects/i);
     await wrapper.get(field('save-correction')).trigger('click');
     expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'strain_set', characterId: 'aster', value: 1 }, { kind: 'track_set', trackId: 'danger', value: 4 }] }); wrapper.unmount();

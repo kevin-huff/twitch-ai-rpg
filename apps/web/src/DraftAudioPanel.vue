@@ -247,8 +247,10 @@ onUnmounted(() => { disposed = true; clearInterval(interval); window.removeEvent
 </template>
 
 <style scoped>
-.draft-audio-panel { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: .6rem; }
-.draft-audio-detail { margin: .6rem 0; color: var(--muted); font-size: .85rem; }
+.draft-audio-panel { position: relative; margin: 20px 0; padding: 20px; }
+.draft-audio-panel::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.draft-audio-detail { margin: 12px 0; color: var(--dust); font-size: 20px; line-height: 24px; }
+.draft-audio-panel button { scroll-margin: 240px 0 480px; }
 .draft-audio-caption { white-space: pre-wrap; overflow-wrap: anywhere; }
-.draft-audio-panel > small { display: block; margin-top: .75rem; font-size: .75rem; }
+.draft-audio-panel > small { display: block; margin-top: 16px; font-size: 20px; line-height: 24px; }
 </style>

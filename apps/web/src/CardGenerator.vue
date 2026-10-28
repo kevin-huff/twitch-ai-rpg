@@ -107,8 +107,10 @@ onBeforeUnmount(() => { disposed = true; generation++; });
 </template>
 
 <style scoped>
-.card-generator { margin-bottom: 1rem; }
-.card-generator-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
-.card-generator-result { margin-top: .6rem; padding: .7rem 1rem; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 8px; background: var(--panel); max-width: 100%; box-sizing: border-box; display: grid; gap: .3rem; justify-items: start; }
-.card-generator-line { margin: 0; font-size: .88rem; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.card-generator { margin-bottom: 16px; }
+.card-generator-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.card-generator-result { position: relative; margin-top: 12px; padding: 12px 16px; max-width: 100%; box-sizing: border-box; display: grid; gap: 4px; justify-items: start; }
+.card-generator-result::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-good); clip-path: var(--cut-1); }
+.card-generator-line { margin: 0; font-size: 20px; line-height: 24px; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.card-generator-line strong { color: var(--candle); }
 </style>

@@ -32,8 +32,8 @@ const bandLabel = (band: Roll['band']) => ({ clean: 'Clean success', costly: 'Su
 </template>
 
 <style scoped>
-.correction-log { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line, #49464d); }
-.correction-note { font-size: .85rem; opacity: .75; }
+.correction-log { margin-top: 32px; padding-top: 20px; box-shadow: inset 0 2px 0 0 var(--night-raised); }
+.correction-note { font-size: 20px; color: var(--dust); }
 .correction-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-time { display: block; font-size: .75rem; }
+time { display: block; font-family: var(--font-label); font-size: 16px; line-height: 24px; color: var(--dust); }
 </style>

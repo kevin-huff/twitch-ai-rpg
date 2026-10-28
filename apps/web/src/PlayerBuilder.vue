@@ -156,7 +156,7 @@ async function close() {
 </template>
 
 <style scoped>
-.player-builder { max-width: 54rem; margin: 2rem auto; }
+.player-builder { max-width: 1080px; margin: 40px auto; }
 .builder-instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
-.builder-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.builder-actions { display: flex; flex-wrap: wrap; gap: 16px; }
 </style>

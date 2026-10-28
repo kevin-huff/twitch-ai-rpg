@@ -34,5 +34,5 @@ const note = computed(() => {
 </template>
 
 <style scoped>
-.npc-portrait { display: flex; align-items: flex-start; gap: .75rem; margin-top: .5rem; }
+.npc-portrait { display: flex; align-items: flex-start; gap: 16px; margin-top: 8px; }
 </style>

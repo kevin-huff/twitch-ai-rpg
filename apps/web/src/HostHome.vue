@@ -94,6 +94,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.gallery-tag { display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 0.5rem; font-size: 0.85em; opacity: 0.85; }
-.gallery-url { margin-left: 0.5rem; min-width: 18rem; }
+.gallery-tag { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; padding: 4px 8px; font-family: var(--font-label); font-size: 16px; line-height: 24px; color: var(--bone); background: var(--night-raised); box-shadow: var(--frame-slot); }
+.gallery-url { margin-left: 8px; min-width: 360px; max-width: 100%; }
 </style>

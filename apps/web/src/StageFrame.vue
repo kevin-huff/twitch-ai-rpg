@@ -67,6 +67,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .stage-frame { position: relative; width: 100%; height: 100%; padding: 0; min-height: 0; overflow: hidden; }
 .stage-frame[data-layout='overlay'] { background: transparent; }
+.stage-frame[data-layout='scene'] { background: var(--void); }
 .stage-checker {
   position: absolute; inset: 0;
   background-color: #2b2b2b;

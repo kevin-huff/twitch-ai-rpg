@@ -72,9 +72,9 @@ const toggle = (id: string, checked: boolean) => {
 </template>
 
 <style scoped>
-.queue-hint { margin: 0 0 .4rem; }
-.queue-tools { display: flex; gap: .4rem; margin-bottom: .5rem; }
-.queue-group { margin: .9rem 0 .4rem; font-size: .95rem; color: var(--muted); }
-.queue-tag { display: inline-block; font-size: .75rem; color: var(--teal); border: 1px solid var(--line); border-radius: 999px; padding: .05rem .5rem; }
-.stage-direction { color: var(--muted); font-style: italic; margin: .2rem 0 0; }
+.queue-hint { margin: 0 0 8px; }
+.queue-tools { display: flex; gap: 8px; margin-bottom: 12px; }
+.queue-group { margin: 20px 0 8px; font-family: var(--font-label); font-size: 16px; line-height: 24px; font-weight: 400; color: var(--dust); }
+.queue-tag { display: inline-block; font-family: var(--font-label); font-size: 16px; line-height: 24px; color: var(--bone); background: var(--night-raised); box-shadow: inset 0 0 0 2px var(--herb); clip-path: var(--cut-1); padding: 4px 12px; }
+.stage-direction { color: var(--dust); font-style: normal; margin: 4px 0 0; }
 </style>

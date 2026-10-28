@@ -273,27 +273,27 @@ onMounted(() => { void work(load); });
 </template>
 
 <style scoped>
-.library-layout { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(0, 3fr); gap: 1.5rem; align-items: start; }
-.library-item { display: block; width: 100%; text-align: left; margin: .65rem 0; white-space: normal; }
+.library-layout { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(0, 3fr); gap: 28px; align-items: start; }
+.library-item { display: block; width: 100%; text-align: left; margin: 12px 0; white-space: normal; }
 .library-item small { display: block; }
-.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
-.editor > label, .editor-row > label, .create-show > label, details > label { margin-bottom: 1rem; }
-.seat-row { margin-bottom: 1rem; }
-.generated-field { position: relative; min-width: 0; margin-bottom: 1rem; }
-.field-label { min-height: 2.75rem; padding-right: 8rem; display: flex; align-items: center; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 20px; }
+.editor > label, .editor-row > label, .create-show > label, details > label { margin-bottom: 20px; }
+.seat-row { margin-bottom: 20px; }
+.generated-field { position: relative; min-width: 0; margin-bottom: 20px; }
+.field-label { min-height: 56px; padding-right: 160px; display: flex; align-items: center; }
 .field-ai { position: absolute; top: 0; right: 0; }
 .editor-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
-.editor-row { margin: 1rem 0; padding: 1rem 0; border-bottom: 1px solid var(--line); }
-.editor details { margin: 1.5rem 0; }
-.editor details[open] > summary { margin-bottom: 1rem; }
-.editor details.row-fold { margin: .5rem 0; padding: .25rem 0; border-bottom: 1px solid var(--line); }
-.editor details.row-fold details.row-fold { border-bottom: 0; margin: 1rem 0; }
-.scene-block { margin: 1.5rem 0; }
-.create-show { margin-top: 2rem; }
-.advanced-tools { margin-top: 2rem; }
-.seat-row { display: flex; align-items: center; gap: 1rem; }
+.editor-row { margin: 20px 0; padding: 20px 0; border-bottom: 2px solid var(--night-raised); }
+.editor details { margin: 28px 0; }
+.editor details[open] > summary { margin-bottom: 20px; }
+.editor details.row-fold { margin: 8px 0; padding: 4px 0; border-bottom: 2px solid var(--night-raised); }
+.editor details.row-fold details.row-fold { border-bottom: 0; margin: 20px 0; }
+.scene-block { margin: 28px 0; }
+.create-show { margin-top: 40px; }
+.advanced-tools { margin-top: 40px; }
+.seat-row { display: flex; align-items: center; gap: 20px; }
 .seat-row .help-field { flex: 1; min-width: 0; }
-@media (max-width: 560px) { .seat-row { flex-direction: column; align-items: stretch; gap: .5rem; } .seat-row .help-field { width: 100%; } .seat-row .help-field select { width: 100%; } .seat-row > button { align-self: flex-start; } }
-.help-field { min-width: 0; margin-bottom: 1rem; }
+@media (max-width: 560px) { .seat-row { flex-direction: column; align-items: stretch; gap: 8px; } .seat-row .help-field { width: 100%; } .seat-row .help-field select { width: 100%; } .seat-row > button { align-self: flex-start; } }
+.help-field { min-width: 0; margin-bottom: 20px; }
 @media (max-width: 800px) { .library-layout { grid-template-columns: 1fr; } .field-grid { grid-template-columns: 1fr; } }
 </style>

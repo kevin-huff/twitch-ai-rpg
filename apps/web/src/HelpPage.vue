@@ -172,19 +172,19 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', followHash));
 </template>
 
 <style scoped>
-.help-page { max-width: 52rem; margin: 0 auto; }
-.home-link { margin: 0 0 1rem; }
-.roles { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.help-page { max-width: 1040px; margin: 0 auto; padding: 0 20px; box-sizing: border-box; }
+.home-link { margin: 0 0 20px; }
+.roles { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
 .topic-summary { cursor: pointer; }
 .topic-summary h2 { display: inline; }
-details > .topic-summary + section { margin-top: 1rem; }
-.panel { margin-bottom: 1.2rem; }
-.contents { margin: 0; padding-left: 1.2rem; display: grid; gap: .35rem; }
-.topic { scroll-margin-top: 1rem; }
-.topic section + section { margin-top: 1.4rem; }
-.topic h3 { margin-bottom: .5rem; }
-.topic ol { padding-left: 1.4rem; display: grid; gap: .45rem; margin: .6rem 0 0; }
-.glossary { margin: 0; display: grid; gap: .9rem; }
-.glossary dt { font-weight: 600; color: var(--gold); }
-.glossary dd { margin: .15rem 0 0; color: var(--muted); }
+details > .topic-summary + section { margin-top: 20px; }
+.panel { margin-bottom: 24px; }
+.contents { margin: 0; padding-left: 24px; display: grid; gap: 8px; }
+.topic { scroll-margin-top: 20px; }
+.topic section + section { margin-top: 28px; }
+.topic h3 { margin-bottom: 8px; }
+.topic ol { padding-left: 28px; display: grid; gap: 8px; margin: 12px 0 0; }
+.glossary { margin: 0; display: grid; gap: 20px; }
+.glossary dt { color: var(--candle); }
+.glossary dd { margin: 4px 0 0; color: var(--dust); }
 </style>

@@ -33,17 +33,20 @@ const showsScene = computed(() => props.kind === 'paused' && !!props.sceneTitle)
 </template>
 
 <style scoped>
-.stage-slate { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; text-align: center; color: #f4efe2; }
-.slate-panel { display: grid; gap: 24px; max-width: 1500px; padding: 24px; }
-.slate-panel p { margin: 0; }
-.slate-show { font-size: 44px; color: var(--muted, #b9b4a4); }
-.slate-title { font-family: Georgia, 'Times New Roman', serif; font-size: 96px; line-height: 1.1; color: var(--gold, #ddba76); }
-.slate-message { font-size: 44px; line-height: 1.3; }
-.slate-description {
+.stage-slate { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; text-align: center; font-family: var(--font-body); font-size: 40px; line-height: 48px; color: var(--bone); text-transform: none; }
+.slate-panel {
+  display: grid; gap: 8px; width: 100%; padding: 32px 48px; background: var(--night);
+  box-shadow: inset 0 4px 0 0 var(--void), inset 0 8px 0 0 var(--bone), inset 0 12px 0 0 var(--void),
+    inset 0 -4px 0 0 var(--void), inset 0 -8px 0 0 var(--bone), inset 0 -12px 0 0 var(--void);
+}
+.stage-slate .slate-panel p { margin: 0; font-weight: 400; letter-spacing: 0; }
+.stage-slate .slate-show { font-family: var(--font-label); font-size: 24px; line-height: 32px; text-transform: uppercase; color: var(--candle); }
+.stage-slate .slate-title { font-family: var(--font-display); font-size: 96px; line-height: 104px; color: var(--bone); text-shadow: 4px 4px 0 var(--void); }
+.stage-slate .slate-message { font-family: var(--font-body); font-size: 40px; line-height: 48px; color: var(--bone); }
+.stage-slate .slate-description {
   display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
-.compact .slate-panel { background: rgba(14, 18, 16, 0.82); border-radius: 16px; padding: 32px 48px; gap: 16px; }
-.compact .slate-show { font-size: 32px; }
-.compact .slate-title { font-size: 56px; }
-.compact .slate-message { font-size: 32px; }
+.stage-slate.compact .slate-panel { padding: 16px 48px; gap: 4px; }
+.stage-slate.compact .slate-title { font-size: 48px; line-height: 56px; }
+.stage-slate.compact .slate-description { line-height: 40px; }
 </style>

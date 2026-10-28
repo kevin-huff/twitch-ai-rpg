@@ -79,9 +79,9 @@ function save() {
 </template>
 
 <style scoped>
-.picture-settings { margin: 0 0 .75rem; }
-.picture-settings summary { cursor: pointer; font-size: .9rem; }
-.picture-style-picks { margin: .5rem 0; }
-.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-.picture-settings-flux { font-size: .8rem; margin: .5rem 0; }
+.picture-settings { margin: 0 0 16px; }
+.picture-settings summary { cursor: pointer; font-size: 20px; }
+.picture-style-picks { margin: 8px 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.picture-settings-flux { font-size: 20px; line-height: 24px; margin: 8px 0; }
 </style>

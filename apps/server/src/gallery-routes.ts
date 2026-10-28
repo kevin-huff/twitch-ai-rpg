@@ -9,7 +9,7 @@ import { AppError, authorize, type Actor } from './repository';
 import type { GalleryWork } from './gallery-model';
 import { galleryMissingPage } from './gallery-html';
 
-export const GALLERY_CSP = "default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+export const GALLERY_CSP = "default-src 'none'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const PICTURE_PATH = /^\/gallery\/[A-Za-z0-9_-]{43}\/p\/[^/]+$/;
 

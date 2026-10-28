@@ -107,14 +107,15 @@ function turnOff() { emit('turn-off'); confirming.value = false; }
 </template>
 
 <style scoped>
-.stream-card { border: 1px solid var(--line); border-radius: 6px; padding: 1rem; display: grid; gap: .5rem; }
-.copy-row { display: grid; gap: .2rem; justify-items: start; }
+.stream-card { position: relative; padding: 20px; display: grid; gap: 12px; }
+.stream-card::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.copy-row { display: grid; gap: 4px; justify-items: start; }
 .copy-row p, .field-help { margin: 0; }
-.preview-row, .confirm { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.preview-row, .confirm { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .confirm p { flex-basis: 100%; margin: 0; }
-.copy-note { margin: 0; color: var(--teal); font-size: .85rem; min-height: 0; }
+.copy-note { margin: 0; color: var(--herb); font-size: 20px; line-height: 24px; min-height: 0; }
 .copy-note:empty { display: none; }
-.copy-fallback { width: 100%; max-width: 32rem; }
-details label { display: grid; gap: .25rem; max-width: 20rem; margin-top: .5rem; }
-ol { margin: .5rem 0 0; padding-left: 1.25rem; }
+.copy-fallback { width: 100%; max-width: 640px; }
+details label { display: grid; gap: 4px; max-width: 400px; margin-top: 8px; }
+ol { margin: 8px 0 0; padding-left: 24px; }
 </style>

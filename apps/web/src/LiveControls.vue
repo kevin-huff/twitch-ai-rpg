@@ -161,13 +161,13 @@ function save() {
 </template>
 
 <style scoped>
-.live-controls > summary { font-weight: 600; }
-.live-controls > p, form { margin-top: 1rem; }
+.live-controls > summary { font-weight: 400; }
+.live-controls > p, form { margin-top: 20px; }
 fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-fieldset > label, details > label { margin-block: 1rem; }
-.list-field { margin: 1rem 0; }
+fieldset > label, details > label { margin-block: 20px; }
+.list-field { margin: 20px 0; }
 .private-note { white-space: pre-wrap; overflow-wrap: anywhere; }
-.generated-field { position: relative; min-width: 0; margin-block: 1rem; }
-.field-label { padding-right: 8rem; min-height: 28px; }
+.generated-field { position: relative; min-width: 0; margin-block: 20px; }
+.field-label { padding-right: 160px; min-height: 28px; }
 .field-ai { position: absolute; top: 0; right: 0; }
 </style>

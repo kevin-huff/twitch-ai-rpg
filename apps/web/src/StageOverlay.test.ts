@@ -274,13 +274,13 @@ describe('StageOverlay', () => {
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-      heights = { g1: 50, g2: 50, g3: 100, g4: 50, g5: 50 };
+      heights = { g1: 48, g2: 48, g3: 96, g4: 48, g5: 48 };
       spies = [
         vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
           return heights[this.dataset.segmentId ?? ''] ?? 0;
         }),
         vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (this: Element) {
-          return this.classList.contains('caption-window') ? 150 : 0;
+          return this.classList.contains('caption-window') ? 144 : 0;
         })
       ];
     });
@@ -434,7 +434,7 @@ describe('StageOverlay', () => {
     });
 
     it('brings back player lines that shared a chunk with a briefly narrated line, for their full reading time', async () => {
-      heights = { p1: 50, p2: 50, n1: 50, n2: 100, n3: 50 };
+      heights = { p1: 48, p2: 48, n1: 48, n2: 96, n3: 48 };
       const mixed = beat('b1', [
         segment('p1', 'Mara, where did the old owner go?', 'Tom Reed'),
         segment('p2', 'And what about the ledger he kept?', 'Mara Vale'),
@@ -499,7 +499,7 @@ describe('StageOverlay', () => {
       vi.advanceTimersByTime(4000);
       await flush();
       expect(shown(wrapper)).toEqual(['g3', 'g4']);
-      Object.assign(heights, { h1: 100, h2: 100 });
+      Object.assign(heights, { h1: 96, h2: 96 });
       const next = beat('b9', [segment('h1', 'A bell rings.', 'Mara Vale'), segment('h2', 'Silence.')]);
       await wrapper.setProps({ snapshot: snapshot({ history: [fiveLines, next] }) });
       await flush();
@@ -519,7 +519,7 @@ describe('StageOverlay', () => {
     });
 
     it('gives a segment taller than the caption its own chunk and steps it by whole lines', async () => {
-      heights = { g1: 50, gt: 400, g3: 50 };
+      heights = { g1: 48, gt: 384, g3: 48 };
       const tall = beat('b1', [segment('g1', 'Rain taps the glass.'), segment('gt', words(40), 'Mara Vale'), segment('g3', 'The lamp goes out.')]);
       const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history: [tall] }), connected: true } });
       await flush();
@@ -531,11 +531,11 @@ describe('StageOverlay', () => {
       expect(windowEl.scrollTop).toBe(0);
       vi.advanceTimersByTime(6000);
       await flush();
-      expect(windowEl.scrollTop).toBe(150);
+      expect(windowEl.scrollTop).toBe(144);
       vi.advanceTimersByTime(6000);
       await flush();
-      expect(windowEl.scrollTop).toBe(250);
-      expect(windowEl.scrollTop % 50).toBe(0);
+      expect(windowEl.scrollTop).toBe(240);
+      expect(windowEl.scrollTop % 48).toBe(0);
       vi.advanceTimersByTime(4000);
       await flush();
       expect(shown(wrapper)).toEqual(['g3']);
@@ -543,7 +543,7 @@ describe('StageOverlay', () => {
     });
 
     it('counts a chunk whose every segment was voiced as seen, even when it was on screen for far less than its reading time', async () => {
-      heights = { a1: 100, a2: 100 };
+      heights = { a1: 96, a2: 96 };
       const pair = beat('b1', [segment('a1', 'The tide pulls at the pilings.'), segment('a2', 'A bell rings across the water.')]);
       const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history: [pair] }), connected: true } });
       await flush();

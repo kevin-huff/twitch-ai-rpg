@@ -108,11 +108,12 @@ watch(() => props.linksKey, loadShowLink);
 </template>
 
 <style scoped>
-.ready-strip { border: 1px solid var(--line); border-radius: 6px; padding: 1rem; display: grid; gap: .6rem; margin-bottom: 1.5rem; }
+.ready-strip { position: relative; padding: 24px; display: grid; gap: 12px; margin-bottom: 28px; }
+.ready-strip::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
 .ready-strip h3, .ready-strip p { margin: 0; }
-.strip-row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
-.strip-row input { flex: 1 1 16rem; min-width: 0; }
-.fallback { display: grid; gap: .3rem; }
+.strip-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.strip-row input { flex: 1 1 320px; min-width: 0; }
+.fallback { display: grid; gap: 8px; }
 .fallback textarea { width: 100%; }
-.copied { color: var(--teal); font-size: .85rem; }
+.copied { color: var(--herb); font-size: 20px; line-height: 24px; }
 </style>

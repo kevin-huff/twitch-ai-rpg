@@ -32,13 +32,13 @@ describe('CastSeats', () => {
     expect(details.get('summary').text()).toBe('Read card');
     for (const text of ['she/her', 'A green coat.', 'Sharp.', 'A courier.', 'Locks', 'Proud', 'Owes Rook', 'Stole the key.', 'finesse +2', 'Pick']) expect(details.text()).toContain(text);
     const link = line.get('a');
-    expect(link.text()).toBe('Test as Rook ↗');
+    expect(link.text()).toBe('Test as Rook');
     expect(link.attributes('href')).toBe(`/sessions/show%201/play?testCharacterId=pc-1&identity=${'a'.repeat(32)}`);
     expect(link.attributes('target')).toBe('_blank');
     const waitingLine = wrapper.get('[data-testid="seat-line-pc-2"]');
     expect(waitingLine.find('details').exists()).toBe(false);
     expect(waitingLine.get('[data-testid="waiting-for-card-pc-2"]').text()).toBe("Waiting for this player's card");
-    expect(waitingLine.get('a').text()).toBe('Test as Wren ↗');
+    expect(waitingLine.get('a').text()).toBe('Test as Wren');
   });
 
   it('treats a seat with a draft as waiting and shows the portrait only when pictures are on', () => {

@@ -61,7 +61,7 @@ test('authors a versioned show, approves two characters, and publishes their fir
   const playerTabs: Page[] = [];
   for (const name of ['Nia Vale', 'Oren']) {
     const popup = context.waitForEvent('page');
-    await page.getByRole('link', { name: `Test as ${name} ↗`, exact: true }).click();
+    await page.getByRole('link', { name: `Test as ${name}`, exact: true }).click();
     const player = await popup;
     playerTabs.push(player);
     await expect(player.getByTestId('pre-show')).toBeVisible();

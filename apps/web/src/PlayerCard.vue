@@ -131,13 +131,15 @@ function keepMine() { if (own.value) saveCard(own.value.cardRevision); }
 </template>
 
 <style scoped>
-.player-card { margin: 1.5rem 0; }
-.card-summary { display: flex; gap: 1rem; align-items: flex-start; }
-.card-summary h3 { margin: 0 0 .4rem; }
-.card-summary dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem 1rem; margin: 0; }
-.card-summary dt { color: var(--muted); }
+.player-card { margin: 24px 0; }
+.card-summary { display: flex; gap: 16px; align-items: flex-start; }
+.card-summary h3 { margin: 0 0 8px; }
+.card-summary dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.card-summary dt { color: var(--dust); }
 .card-summary dd { margin: 0; overflow-wrap: anywhere; }
-.change-card { margin-top: 1rem; }
-.change-card > summary { cursor: pointer; }
-.change-card[open] > summary { margin-bottom: 1rem; }
+.change-card { margin-top: 16px; }
+.change-card > summary { cursor: pointer; min-height: 44px; padding-block: 10px; box-sizing: border-box; }
+.change-card > summary::before { top: 16px; }
+.change-card[open] > summary::before { top: 18px; }
+.change-card[open] > summary { margin-bottom: 16px; }
 </style>

@@ -127,13 +127,13 @@ function save() {
               <label>{{ npcName(knowledge.npcId) }} · existing fact memory<select v-model="knowledge.mode" :data-testid="`correction-knowledge-${index}-${memoryIndex}`" :aria-describedby="helpId('knowledge', change.key, memoryIndex)"><option value="correct">Update known fact</option><option value="retain_belief">Keep old as belief</option></select></label>
               <p :id="helpId('knowledge', change.key, memoryIndex)" class="field-help">This existing factual memory exactly matches the old fact. Update it or preserve the old words as a belief; no new knowledge is added.</p>
             </div>
-            <div :data-testid="`correction-memory-preview-${index}`" class="private-preview"><strong>Private memory review</strong><p v-for="knowledge in change.knowledgeUpdates" :key="`${knowledge.npcId}:${knowledge.knowledgeId}`">{{ npcName(knowledge.npcId) }}: {{ before(change) }} (fact) → {{ knowledge.mode === 'correct' ? `${change.text.trim()} (fact)` : `${before(change)} (belief)` }}</p><p v-if="!change.knowledgeUpdates.length">No existing factual memories exactly match this fact. No character knowledge will be added.</p></div>
+            <div :data-testid="`correction-memory-preview-${index}`" class="private-preview"><strong>Private memory review</strong><p v-for="knowledge in change.knowledgeUpdates" :key="`${knowledge.npcId}:${knowledge.knowledgeId}`">{{ npcName(knowledge.npcId) }}: {{ before(change) }} (fact) becomes {{ knowledge.mode === 'correct' ? `${change.text.trim()} (fact)` : `${before(change)} (belief)` }}</p><p v-if="!change.knowledgeUpdates.length">No existing factual memories exactly match this fact. No character knowledge will be added.</p></div>
           </template>
           <template v-else>
             <label>Corrected value<input v-model.number="change.value" type="number" min="0" :max="original(change)?.max" step="1" :data-testid="`correction-value-${index}`" :aria-describedby="helpId('value', change.key)"></label>
             <p :id="helpId('value', change.key)" class="field-help">Set the current value from 0 to {{ original(change)?.max }}. This does not change any earlier roll or outcome.</p>
           </template>
-          <p :data-testid="`correction-change-preview-${index}`" class="change-preview">{{ before(change) }} → {{ change.kind === 'fact_replace' ? change.text.trim() : change.value }}</p>
+          <p :data-testid="`correction-change-preview-${index}`" class="change-preview">{{ before(change) }} becomes {{ change.kind === 'fact_replace' ? change.text.trim() : change.value }}</p>
           <button type="button" class="quiet" :data-testid="`remove-correction-${index}`" @click="remove(index)">Remove change {{ index + 1 }}</button>
         </section>
         <div class="actions"><button type="button" class="secondary" data-testid="add-correction-fact" :disabled="changes.length >= 10 || !available('fact_replace')" @click="add('fact_replace')">Correct a fact</button><button type="button" class="secondary" data-testid="add-correction-strain" :disabled="changes.length >= 10 || !available('strain_set')" @click="add('strain_set')">Correct strain</button><button type="button" class="secondary" data-testid="add-correction-track" :disabled="changes.length >= 10 || !available('track_set')" @click="add('track_set')">Correct a track</button></div>
@@ -149,11 +149,13 @@ function save() {
 </template>
 
 <style scoped>
-.correction-controls { margin-block: 1rem; }
-summary { font-weight: 600; }
+.correction-controls { margin-block: 20px; }
+summary { font-weight: 400; }
 fieldset { min-width: 0; border: 0; margin: 0; padding: 0; }
-fieldset > label, .correction-change > label { margin-top: 1rem; }
-.actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }
-.public-preview, .private-preview, .correction-change { border: 1px solid var(--line); padding: 1rem; margin-block: 1rem; border-radius: 8px; }
+fieldset > label, .correction-change > label { margin-top: 20px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 20px; }
+.correction-change { position: relative; padding: 20px; margin-block: 20px; }
+.correction-change::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: var(--frame-window); clip-path: var(--cut-1); }
+.public-preview, .private-preview { background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); padding: 16px; margin-block: 20px; }
 .public-preview p, .private-preview p, .change-preview, .error { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

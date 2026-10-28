@@ -484,7 +484,7 @@ describe('public performance and player authority', () => {
     const wrapper = mount(App);
     await flushPromises();
     expect(wrapper.get('[data-testid="library-link"]').attributes('href')).toBe(`/library?identity=${'a'.repeat(32)}`);
-    expect(wrapper.get('.brand').text()).toContain('THE STORY TABLE');
+    expect(wrapper.get('.brand').text()).toContain('The Story Table');
     wrapper.unmount();
   });
 
@@ -585,7 +585,7 @@ describe('public performance and player authority', () => {
     const wrapper = mount(App);
     await flushPromises();
     const testLinks = wrapper.findAll('a').filter(link => link.text().startsWith('Test as '));
-    expect(testLinks.map(link => link.text())).toEqual(['Test as Rook ↗', 'Test as Lark ↗']);
+    expect(testLinks.map(link => link.text())).toEqual(['Test as Rook', 'Test as Lark']);
     for (const [index, link] of testLinks.entries()) {
       expect(link.attributes('href')).toBe(`/sessions/show/play?testCharacterId=pc-${index + 1}&identity=${identity}`);
       expect(link.attributes('target')).toBe('_blank');
@@ -1047,7 +1047,7 @@ describe('routes and header', () => {
     window.history.replaceState({}, '', '/sessions/show/lobby');
     transport.snapshot.mockResolvedValue(snapshot('director'));
     const wrapper = mount(App); await flushPromises();
-    expect(wrapper.get('[data-testid="stage-preview-link"]').text()).toBe('Preview (not for OBS) ↗');
+    expect(wrapper.get('[data-testid="stage-preview-link"]').text()).toBe('Preview (not for OBS)');
     expect(wrapper.text()).not.toContain('Open stage');
     const pause = wrapper.findAll('button').find(button => button.text() === 'Pause show')!;
     expect(pause).toBeDefined();

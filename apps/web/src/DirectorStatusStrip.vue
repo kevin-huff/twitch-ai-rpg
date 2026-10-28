@@ -84,7 +84,7 @@ const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unk
 </template>
 
 <style scoped>
-.status-strip { display: flex; flex-wrap: wrap; gap: .4rem; list-style: none; margin: 0; padding: 0; }
-.chip { border: 1px solid var(--line); border-radius: 999px; padding: .2rem .65rem; font-size: .78rem; color: var(--muted); line-height: 1.4; }
-.chip { border-color: #b9923a; color: #e3bd62; }
+.status-strip { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.chip { position: relative; min-width: 0; padding: 6px 12px; font-family: var(--font-label); font-size: 16px; line-height: 20px; font-weight: 400; color: var(--bone); overflow-wrap: anywhere; }
+.chip::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night-raised); box-shadow: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--candle), inset 0 0 0 6px var(--void); clip-path: var(--cut-1); }
 </style>

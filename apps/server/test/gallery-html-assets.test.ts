@@ -34,6 +34,8 @@ describe('galleryMissingPage', () => {
     expect(page).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
     expect(page).toContain('<meta name="robots" content="noindex">');
     expect(page).toContain('<link rel="stylesheet" href="/gallery/gallery.css">');
+    expect(page).toContain('<link rel="stylesheet" href="/fonts/fonts.css">');
+    expect(page.indexOf('/fonts/fonts.css')).toBeLessThan(page.indexOf('/gallery/gallery.css'));
     expect(page).toContain('<title>Gallery not available</title>');
   });
 
@@ -165,7 +167,16 @@ describe('GALLERY_CSS', () => {
     }
   });
 
-  it('uses system fonts and loads nothing from outside', () => {
+  it('loads nothing from outside and declares no font faces of its own', () => {
     expect(GALLERY_CSS).not.toMatch(/@import|@font-face|url\(/);
+  });
+
+  it('keeps the design language: no rounding, translucency, blur or filters, and a stepped-only motion', () => {
+    expect(GALLERY_CSS).not.toMatch(/border-radius/);
+    expect(GALLERY_CSS).not.toMatch(/rgba?\(|hsla?\(|color-mix/);
+    expect(GALLERY_CSS).not.toMatch(/filter:|transition|opacity/);
+    for (const shadow of GALLERY_CSS.match(/box-shadow:[^;]+;|text-shadow:[^;]+;/g) ?? []) {
+      expect(shadow).not.toMatch(/[:,]\s*(?:inset\s+)?(?:-?\d+(?:px)?\s+){2}[1-9]\d*px/);
+    }
   });
 });

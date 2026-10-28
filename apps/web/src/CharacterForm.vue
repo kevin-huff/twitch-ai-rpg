@@ -69,13 +69,13 @@ const details = [
 
 <style scoped>
 .character-form { border: 0; padding: 0; margin: 0; min-width: 0; }
-.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
 .generated-field { position: relative; min-width: 0; }
-.character-form > .generated-field, .describe-field { margin-bottom: 1rem; }
-.card-more { margin-top: 1rem; }
-.card-more > summary { cursor: pointer; font-weight: 600; margin-bottom: 1rem; }
-.card-more > .generated-field { margin-bottom: 1rem; }
-.field-label { min-height: 2.75rem; padding-right: 8rem; display: flex; align-items: center; }
+.character-form > .generated-field, .describe-field { margin-bottom: 16px; }
+.card-more { margin-top: 16px; }
+.card-more > summary { margin-bottom: 16px; }
+.card-more > .generated-field { margin-bottom: 16px; }
+.field-label { min-height: 44px; padding-right: 148px; display: flex; align-items: center; }
 .field-ai { position: absolute; top: 0; right: 0; }
 @media (max-width: 600px) { .field-grid { grid-template-columns: 1fr; } }
 </style>

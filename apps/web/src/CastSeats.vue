@@ -132,7 +132,7 @@ function removeSeat(character: Character) {
       <div class="seat-head">
         <PictureAvatar :name="character.displayName" :src="portrait(character)" />
         <strong>{{ character.displayName }}</strong>
-        <a class="seat-test" :href="testSeatUrl(character)" target="_blank" rel="noopener">Test as {{ character.displayName }} ↗</a>
+        <a class="seat-test" :href="testSeatUrl(character)" target="_blank" rel="noopener">Test as {{ character.displayName }} <span class="glyph-new-tab" aria-hidden="true"></span></a>
       </div>
       <details v-if="shownCard(character)" class="seat-card">
         <summary>Read card</summary>
@@ -185,15 +185,16 @@ function removeSeat(character: Character) {
 
 <style scoped>
 .cast-seats { display: grid; }
-.seat-line { padding: .8rem 0; border-bottom: 1px solid var(--line); display: grid; gap: .5rem; }
-.seat-head { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
-.seat-test { margin-left: auto; font-size: .85rem; }
+.seat-line { padding: 16px 0; border-bottom: 2px solid var(--night-raised); display: grid; gap: 8px; }
+.seat-line:last-child { border-bottom: 0; }
+.seat-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seat-test { margin-left: auto; font-size: 20px; line-height: 24px; color: var(--candle); }
 .seat-line p { margin: 0; }
-.seat-card dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 4fr); gap: .4rem 1rem; }
-.seat-card dt { color: var(--muted); text-transform: capitalize; }
+.seat-card dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 4fr); gap: 8px 20px; }
+.seat-card dt { color: var(--dust); text-transform: capitalize; }
 .seat-card dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.seat-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
-.seat-change { display: grid; gap: .6rem; margin-top: .6rem; }
-.seat-writer { display: grid; gap: .4rem; }
+.seat-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.seat-change { display: grid; gap: 12px; margin-top: 12px; }
+.seat-writer { display: grid; gap: 8px; }
 .seat-writer textarea { width: 100%; }
 </style>

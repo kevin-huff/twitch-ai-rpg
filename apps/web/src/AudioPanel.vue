@@ -144,20 +144,21 @@ onUnmounted(() => controller.dispose());
 </template>
 
 <style scoped>
-.audio-panel { margin-top: 1.2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
-.audio-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-bottom: .8rem; }
-.audio-heading strong { font-size: .85rem; font-weight: 600; }
-.audio-heading small, .audio-panel > small, .audio-detail, .audio-volume { font-size: .75rem; }
-.audio-confirm { margin-top: .7rem; padding: .7rem .8rem; border: 1px solid var(--gold); border-radius: 6px; }
-.audio-confirm p { margin: 0 0 .6rem; font-size: .85rem; }
-.audio-detail { margin: .65rem 0; color: var(--muted); }
-.audio-transport, .audio-listening { margin-top: .65rem; }
-.audio-presenter { margin-top: .9rem; }
-.audio-presenter summary { cursor: pointer; font-size: .85rem; }
-.audio-volume { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-top: .9rem; }
-.audio-volume input { width: 8rem; max-width: 100%; padding: 0; accent-color: var(--gold); }
-.audio-volume-value { min-width: 2.5rem; font-variant-numeric: tabular-nums; }
-.audio-panel > small { display: block; margin-top: .7rem; }
+.audio-panel { margin-top: 24px; border-top: 2px solid var(--night-raised); padding-top: 20px; }
+.audio-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.audio-heading strong { font-family: var(--font-label); font-size: 16px; line-height: 20px; font-weight: 400; }
+.audio-heading small, .audio-panel > small, .audio-detail, .audio-volume { font-size: 20px; line-height: 24px; }
+.audio-confirm { position: relative; margin-top: 12px; padding: 16px 20px; }
+.audio-confirm::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--candle), inset 0 0 0 6px var(--void); clip-path: var(--cut-1); }
+.audio-confirm p { margin: 0 0 12px; font-size: 20px; line-height: 24px; }
+.audio-detail { margin: 12px 0; color: var(--dust); }
+.audio-transport, .audio-listening { margin-top: 12px; }
+.audio-presenter { margin-top: 16px; }
+.audio-presenter summary { cursor: pointer; font-size: 20px; line-height: 24px; }
+.audio-volume { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.audio-volume input { width: 160px; max-width: 100%; padding: 0; accent-color: var(--candle); }
+.audio-volume-value { min-width: 48px; }
+.audio-panel > small { display: block; margin-top: 12px; }
 .audio-panel.compact { margin-top: 0; }
-.audio-caption { font-size: 1rem; margin-top: .8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audio-caption { font-size: 20px; line-height: 24px; margin-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

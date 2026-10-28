@@ -16,5 +16,5 @@ const boxStyle = computed(() => (props.size ? { width: `${props.size}px`, height
 
 <style scoped>
 .picture-avatar { overflow: hidden; }
-.picture-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.picture-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
 </style>

@@ -80,15 +80,15 @@ defineExpose({ addNarration });
   font-weight: 400;
   color: inherit;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: .35rem .5rem;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 12px;
   white-space: normal;
   overflow-wrap: anywhere;
-  line-height: 1.5;
+  line-height: 28px;
   cursor: pointer;
 }
-.script-line:hover { border-color: var(--line); }
-.script-line:focus-visible { outline: 2px solid var(--gold); }
-.script-speaker { font-weight: 700; }
+.script-line::before { content: none; }
+.script-line:hover { background: var(--night-raised); }
+.script-speaker { font-weight: 400; color: var(--candle); }
 </style>
