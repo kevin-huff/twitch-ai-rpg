@@ -62,6 +62,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="voice-picker" data-testid="voice-picker">
     <p v-if="reason" class="muted voice-reason" data-testid="voice-reason">{{ reason }}</p>
+    <div class="voice-scroll" role="group" aria-label="Voices" tabindex="0" data-testid="voice-list">
     <ul class="voice-list">
       <li class="voice-row" data-testid="voice-narrator">
         <button type="button" class="secondary voice-choose" :aria-pressed="narratorChosen ? 'true' : 'false'" :disabled="disabled" @click="emit('update:modelValue', null)">
@@ -81,12 +82,14 @@ onBeforeUnmount(() => {
         <button v-if="voice.previewUrl" type="button" class="quiet voice-sample" :aria-label="`${playingId === voice.id ? 'Stop sample' : 'Play sample'}: ${voice.name}`" @click="toggleSample(voice)">{{ playingId === voice.id ? 'Stop sample' : 'Play sample' }}</button>
       </li>
     </ul>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .voice-picker { display: grid; gap: 12px; min-width: 0; }
 .voice-reason { margin: 0; overflow-wrap: anywhere; }
+.voice-scroll { max-height: 480px; overflow-y: auto; overscroll-behavior: contain; padding: 8px; background: var(--night); box-shadow: var(--frame-slot); min-width: 0; }
 .voice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .voice-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .voice-choose { flex: 1 1 200px; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: flex-start; text-align: left; gap: 4px; }

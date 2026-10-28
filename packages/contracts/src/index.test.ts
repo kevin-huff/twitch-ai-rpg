@@ -17,6 +17,7 @@ import {
   OutcomeBandSchema,
   ActionContractSchema,
   PublicActionContractSchema,
+  PublicBeatSchema,
   RollSchema,
   TraitsSchema,
 } from './index.js';
@@ -209,5 +210,14 @@ describe('critical band and tag-free speech', () => {
   });
   it('speaks a tag-only line as the name', () => {
     expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: '<grin>' })).toBe('Dash');
+  });
+});
+
+describe('public beat stakes approval flag', () => {
+  const beat = { id: 'b1', kind: 'action', phase: 'locked', revision: 1, stakes: [], locked: true };
+  it('accepts stakesApproved true, accepts a beat without it, and rejects a non-boolean', () => {
+    expect(PublicBeatSchema.safeParse({ ...beat, stakesApproved: true }).success).toBe(true);
+    expect(PublicBeatSchema.safeParse(beat).success).toBe(true);
+    expect(PublicBeatSchema.safeParse({ ...beat, stakesApproved: 'yes' }).success).toBe(false);
   });
 });

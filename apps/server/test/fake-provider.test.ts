@@ -74,6 +74,16 @@ describe('fake narrator speaker identity', () => {
     expect(result.contracts[0]!.intent).toBe('Fine.');
     expect(JSON.stringify(result)).not.toContain('[sighs]');
   });
+  it('keeps square-bracket tags out of a Do line intent and approach', async () => {
+    const input = context();
+    input.submissions[0]!.kind = 'act';
+    input.submissions[0]!.intent = '[sighs] I climb the fire escape.';
+    input.submissions[0]!.approach = '[sighs] I climb the fire escape.';
+    const result = await provider.plan(input);
+    expect(result.contracts[0]!.intent).toBe('I climb the fire escape.');
+    expect(result.contracts[0]!.approach).toBe('I climb the fire escape.');
+    expect(JSON.stringify(result)).not.toContain('[sighs]');
+  });
   it('does not import the Ledger story into an authored NPC’s sale memory', async () => {
     const input = context();
     const npc = input.state.npcs[1]!;

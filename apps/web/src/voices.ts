@@ -13,7 +13,7 @@ export function loadVoices(): Promise<VoiceList> {
   const attempt = (async (): Promise<VoiceList> => {
     try {
       const list = await api.voices();
-      kept = list;
+      if (!list.reason) kept = list;
       return list;
     } catch {
       return { voices: [], reason: FAILED_REASON };

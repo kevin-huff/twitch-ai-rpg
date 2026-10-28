@@ -44,7 +44,7 @@ test('a player picks a voice, asks Help me say it, uses the suggestion and sends
   await ada.locator('.voice-choose').click();
   await expect.poll(async () => (await api(seat, path, undefined, identity)).body.ownCharacter?.voiceProfileId).toBe(ADA);
   await expect(voice.getByTestId('seat-voice-name')).toContainText('Ada');
-  await expect(ada.locator('.voice-choose')).toHaveAttribute('aria-pressed', 'true');
+  await expect(voice.getByTestId('voice-list')).toHaveCount(0);
   await expect.poll(() => seat.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await seat.screenshot({ path: 'test-results/voices-seat-voice.png' });
 
@@ -116,5 +116,62 @@ test('a player picks a voice, asks Help me say it, uses the suggestion and sends
   } finally {
     await streamContext.close();
   }
+  await seat.close();
+});
+
+test('on a phone with many voices the list scrolls inside its own box and choosing a voice closes Your voice', async ({ page, context }) => {
+  await page.goto('/');
+  await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
+  await page.getByRole('button', { name: 'Sign in as host' }).click();
+  await page.getByRole('button', { name: 'Try it now' }).click();
+  await expect(page.getByTestId('director-controls')).toBeVisible();
+  const sessionId = new URL(page.url()).pathname.split('/')[2]!;
+  const path = `/sessions/${sessionId}`;
+  await page.getByTestId('open-action').click();
+  await expect.poll(async () => (await api(page, path)).body.activeBeat?.kind).toBe('action');
+  const state = (await api(page, path)).body;
+  const grant = await api(page, `${path}/test-seat`, { characterId: state.characters[0].id });
+  expect(grant.status).toBe(200);
+  const identity: string = grant.body.identityId;
+
+  const seat = await context.newPage();
+  // The server only accepts voices on its own list, so the first fake voice reuses the test list's id for Ada.
+  const fakeVoices = Array.from({ length: 61 }, (_, i) => ({
+    id: i === 0 ? ADA : `eleven:phone-${i}`,
+    name: i === 0 ? 'Ada' : `Phone voice ${i + 1}`,
+    group: 'standard',
+    summary: 'female · young · american · bright and clear for a long line of story',
+    previewUrl: null,
+    tuned: i % 2 === 0,
+  }));
+  await seat.route('**/api/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voices: fakeVoices }) }));
+  await seat.setViewportSize({ width: 390, height: 844 });
+  await seat.goto(`${path}/play?identity=${identity}`);
+
+  const voice = seat.getByTestId('seat-voice');
+  await expect(voice).toBeVisible();
+  await voice.getByText('Your voice', { exact: false }).first().click();
+  const list = voice.getByTestId('voice-list');
+  await expect(list).toBeVisible();
+  await expect(voice.getByTestId('voice-option')).toHaveCount(61);
+  await expect(voice.getByTestId('voice-narrator')).toBeVisible();
+  await seat.screenshot({ path: process.env.F12_SHOTS ? `${process.env.F12_SHOTS}/open.png` : 'test-results/voices-phone-open.png' });
+
+  const sizes = await list.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight, height: el.getBoundingClientRect().height }));
+  expect(sizes.scroll).toBeGreaterThan(sizes.client);
+  expect(sizes.height).toBeLessThanOrEqual(600);
+  expect(sizes.height).toBeGreaterThan(300);
+
+  // The Say form sits near the top of the page instead of thousands of pixels down.
+  await seat.getByRole('button', { name: 'Say something', exact: true }).click();
+  const top = await seat.getByTestId('speech-input').evaluate(el => el.getBoundingClientRect().top + window.scrollY);
+  expect(top).toBeLessThan(1500);
+  await expect.poll(() => seat.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  await voice.getByTestId('voice-option').filter({ hasText: 'Ada' }).locator('.voice-choose').click();
+  await expect.poll(async () => (await api(seat, path, undefined, identity)).body.ownCharacter?.voiceProfileId).toBe(ADA);
+  await expect(voice.getByTestId('voice-list')).toHaveCount(0);
+  await expect(voice.locator('summary')).toBeVisible();
+  await seat.screenshot({ path: process.env.F12_SHOTS ? `${process.env.F12_SHOTS}/closed.png` : 'test-results/voices-phone-closed.png' });
   await seat.close();
 });

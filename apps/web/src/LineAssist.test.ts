@@ -75,6 +75,29 @@ describe('LineAssist', () => {
     expect(w.find('[data-testid="line-assist-suggestion"]').exists()).toBe(false);
   });
 
+  it('clears the suggestion when the words box is emptied', async () => {
+    lineAssist.mockResolvedValue({ text: 'No.' });
+    const w = mount(LineAssist, { props });
+    await ask(w).trigger('click');
+    await flushPromises();
+    expect(w.find('[data-testid="line-assist-use"]').exists()).toBe(true);
+    await w.setProps({ idea: '' });
+    expect(w.find('[data-testid="line-assist-suggestion"]').exists()).toBe(false);
+    expect(w.find('[data-testid="line-assist-use"]').exists()).toBe(false);
+  });
+
+  it('discards a reply that lands after the words box was emptied', async () => {
+    let finish: (value: { text: string }) => void = () => undefined;
+    lineAssist.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const w = mount(LineAssist, { props });
+    await ask(w).trigger('click');
+    await w.setProps({ idea: '' });
+    finish({ text: 'Late.' });
+    await flushPromises();
+    expect(w.find('[data-testid="line-assist-suggestion"]').exists()).toBe(false);
+    expect(ask(w).text()).toBe('Help me say it');
+  });
+
   it('never submits a surrounding form', async () => {
     lineAssist.mockResolvedValue({ text: 'Hello' });
     const onSubmit = vi.fn((event: Event) => event.preventDefault());

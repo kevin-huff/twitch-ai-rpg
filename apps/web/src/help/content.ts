@@ -520,7 +520,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Open Your voice on your seat to pick a voice for your character. Press Play sample to hear a voice before you choose it. Voices marked Tuned for v4 suit the voice model best. Once you pick one, your Say lines play in it. The narrator keeps reading what you do. Choose The narrator reads my lines to go back.',
           'A line can carry a few audio tags in square brackets, such as [whispers], [laughs] or [sighs], to set how it is read. They only change the voice. Viewers never see them, and a line needs real words as well as tags.',
-          'Help me say it turns a rough idea into a fuller line in your character\'s voice. Type the idea in the line box, press Help me say it, and read the suggestion. Choose Use this to put it in the box, Try again for another, or Keep mine to leave your words alone. Nothing is sent until you press Send. It only knows what your own seat shows.',
+          'Help me say it turns a rough idea into a fuller line in your character\'s voice. Type the idea in the line box, press Help me say it, and read the suggestion. Choose Use this to put it in the box, Try again for another, or Keep mine to leave your words alone. Nothing is sent until you press Send. It knows what your own seat shows, plus the personality and mood of the character you are talking to and the show\'s content boundaries.',
         ],
       },
       {

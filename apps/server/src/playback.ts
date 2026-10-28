@@ -99,7 +99,7 @@ async function preparedManifest(client: PoolClient, sessionId: string, beatId: s
   const prefix = `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/`;
   for (const [index, segment] of manifest.segments.entries()) {
     const source = canonical[index]!;
-    if (segment.id !== source.id || segment.text !== source.text || segment.speaker !== (source.speaker?.displayName ?? 'Narrator') || segment.voiceProfileId !== (source.voiceProfileId ?? 'voice_narrator') || !segment.url.startsWith(prefix)) conflict('The prepared narration does not match the published script.');
+    if (segment.id !== source.id || segment.text !== source.text || segment.speaker !== (source.speaker?.displayName ?? 'Narrator') || (segment.voiceProfileId !== (source.voiceProfileId ?? 'voice_narrator') && segment.voiceProfileId !== 'voice_narrator') ||!segment.url.startsWith(prefix)) conflict('The prepared narration does not match the published script.');
     const assetId = segment.url.slice(prefix.length);
     if (!/^[a-f0-9]{64}$/.test(assetId) || !(await client.query('SELECT 1 FROM audio_assets WHERE session_id=$1 AND id=$2', [sessionId, assetId])).rowCount) conflict('The prepared audio is unavailable. Prepare narration again.');
   }

@@ -91,7 +91,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   const beat = await currentBeat(client, sessionId);
   const eventSeq = Number((await client.query('SELECT COALESCE(MAX(sequence),0) AS seq FROM audit_events WHERE session_id=$1', [sessionId])).rows[0].seq);
   const publicBeat: PublicBeat | null = beat ? {
-    id: beat.id, kind: beat.kind, phase: beat.phase, revision: beat.revision, locked: ['locked', 'draft_review'].includes(beat.phase),
+    id: beat.id, kind: beat.kind, phase: beat.phase, revision: beat.revision, locked: ['locked', 'draft_review'].includes(beat.phase), stakesApproved: beat.stakesApproved,
     stakes: beat.stakesApproved ? beat.contracts.map((contract) => ({
       id: contract.id, version: contract.version, actorCharacterId: contract.actorCharacterId, helperCharacterIds: contract.helperCharacterIds,
       intent: contract.intent, approach: contract.approach, ruling: contract.ruling, trait: contract.trait,

@@ -410,7 +410,7 @@ export const BeatSchema = z.strictObject({
 export type Beat = z.infer<typeof BeatSchema>;
 export const PublicBeatSchema = z.strictObject({
   id: IdSchema, kind: z.enum(['conversation', 'action']), phase: BeatPhaseSchema, revision: RevisionSchema,
-  stakes: z.array(PublicActionContractSchema), locked: z.boolean(),
+  stakes: z.array(PublicActionContractSchema), locked: z.boolean(), stakesApproved: z.boolean().optional(),
 });
 export type PublicBeat = z.infer<typeof PublicBeatSchema>;
 export const PublishedBeatSchema = z.strictObject({

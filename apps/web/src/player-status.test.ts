@@ -78,6 +78,18 @@ describe('playerStatus', () => {
   it.each(['no_check', 'blocked'] as const)('says the director is checking the lines when approved stakes of a conversation round are only %s', ruling => {
     expect(status({ beat: beat({ phase: 'stakes_review', kind: 'conversation', stakes: [stakeWith(ruling)] }) })).toMatchObject({ headline: 'The director is checking the lines', detail: 'You can still change your line until it is locked in.', tone: 'wait' });
   });
+  it('says the director is checking the lines for an approved conversation with no stakes', () => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'conversation', stakes: [], stakesApproved: true } as never) }).headline).toBe('The director is checking the lines');
+  });
+  it('says the director is checking the lines when an action round has only blocked stakes', () => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'action', stakes: [stakeWith('blocked')] }) }).headline).toBe('The director is checking the lines');
+  });
+  it('says the dice are being readied for an unapproved action round with no stakes', () => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'action', stakes: [], stakesApproved: false } as never) }).headline).toBe('Getting the dice ready');
+  });
+  it('says the dice are being readied for an action round with a check stake', () => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'action', stakes: [stakeWith('check')] }) }).headline).toBe('Getting the dice ready');
+  });
   it.each(['locked', 'draft_review'] as const)('says a conversation is locked, without dice, while %s', phase => {
     expect(status({ beat: beat({ phase }), own: [line({ status: 'locked' })] })).toMatchObject({ headline: 'Lines locked in. The story is being written', detail: 'Watch the stream. New lines wait for the next turn.', tone: 'wait' });
   });

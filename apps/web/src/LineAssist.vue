@@ -9,26 +9,32 @@ const emit = defineEmits<{ use: [text: string] }>();
 const pending = ref(false);
 const suggestion = ref<string | null>(null);
 const failure = ref<string | null>(null);
+let requestId = 0;
 
 const canAsk = computed(() => props.idea.trim().length > 0 && props.canSend && !pending.value);
 
 const ask = async () => {
   if (!canAsk.value) return;
+  const mine = ++requestId;
   pending.value = true;
   failure.value = null;
   try {
     const reply = await api.lineAssist(props.sessionId, { idea: props.idea, recipientNpcIds: props.recipientNpcIds });
+    if (mine !== requestId) return;
     suggestion.value = reply.text;
   } catch (error) {
+    if (mine !== requestId) return;
     suggestion.value = null;
     const message = error instanceof Error ? error.message.trim() : '';
     failure.value = message || FALLBACK;
   } finally {
-    pending.value = false;
+    if (mine === requestId) pending.value = false;
   }
 };
 
 const close = () => {
+  requestId += 1;
+  pending.value = false;
   suggestion.value = null;
   failure.value = null;
 };
@@ -41,6 +47,7 @@ const use = () => {
 };
 
 watch(() => props.sessionId, close);
+watch(() => props.idea, idea => { if (idea.trim() === '') close(); });
 </script>
 
 <template>

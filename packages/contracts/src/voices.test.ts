@@ -34,6 +34,15 @@ describe('audio tags', () => {
     expect(stripAudioTags('[sighs] First line.\n[whispers] Second line.')).toBe('First line.\nSecond line.');
   });
 
+  it('leaves no stray space where a tag was removed', () => {
+    expect(stripAudioTags('Fine[laughs].')).toBe('Fine.');
+    expect(stripAudioTags('Fine [laughs].')).toBe('Fine.');
+    expect(stripAudioTags('Wait\u2014[gasps]you')).toBe('Wait\u2014you');
+    expect(stripAudioTags('Wait\u2014[gasps] you')).toBe('Wait\u2014you');
+    expect(stripAudioTags('[sighs] Hello, [pause] friend!')).toBe('Hello, friend!');
+    expect(stripAudioTags('Yes [laughs], fine')).toBe('Yes, fine');
+  });
+
   it('checks that a voice copy only adds tags', () => {
     expect(voiceTextMatches('Fine, I will do it.', '[laughs] Fine, I will [pause] do it.')).toBe(true);
     expect(voiceTextMatches('Fine, I will do it.', 'Fine,   I will\ndo it.')).toBe(true);

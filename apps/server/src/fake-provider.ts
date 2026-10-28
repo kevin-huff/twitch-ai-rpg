@@ -144,10 +144,12 @@ export class FakeAiProvider implements AiProvider {
     const cost = (characterId: string, delta: number): Effect => danger ? { kind: 'track_delta', trackId: danger.id, delta } : { kind: 'strain_delta', characterId, delta };
     const contracts: ActionContract[] = submissions.filter((submission) => submission.kind !== 'ooc').map((submission) => {
       const words = hasAudioTags(submission.text) ? stripAudioTags(submission.text) : submission.text;
+      const intent = submission.intent ? (hasAudioTags(submission.intent) ? stripAudioTags(submission.intent) : submission.intent) : '';
+      const approach = submission.approach ? (hasAudioTags(submission.approach) ? stripAudioTags(submission.approach) : submission.approach) : '';
       const ruling = submission.kind === 'act' && (state.characters.find((character) => character.id === submission.characterId)?.strain ?? 0) >= 4 ? 'blocked' as const : 'check' as const;
       return {
       id: randomUUID(), version: 1, actorCharacterId: submission.characterId, helperCharacterIds: [], submissionIds: [submission.id],
-      intent: submission.intent || words, approach: submission.approach || 'Ask the addressed NPC for a consequential concession',
+      intent: intent || words, approach: approach || 'Ask the addressed NPC for a consequential concession',
       ruling, trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
       outcomes: {
         clean: { publicText: 'The agreed objective succeeds quietly.', effects: [...progressEffects] },

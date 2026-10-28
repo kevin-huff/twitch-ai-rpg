@@ -33,6 +33,8 @@ export function hasAudioTags(text: string): boolean {
 }
 export function stripAudioTags(text: string): string {
   return text
+    .replace(/([\u2014\u2013-])\[[^\[\]]*\][ \t]*/g, '$1')
+    .replace(/[ \t]*\[[^\[\]]*\](?=[ \t]*[.,!?;:\u2026)\u201d\u2019"'])/g, '')
     .replace(/\[[^\[\]]*\]/g, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')

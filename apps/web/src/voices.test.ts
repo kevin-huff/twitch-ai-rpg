@@ -32,6 +32,16 @@ describe('loadVoices', () => {
     expect(voicesMock.fn).toHaveBeenCalledTimes(2);
   });
 
+  it('never keeps a list that came with a reason and asks again', async () => {
+    const refused = { voices: [], reason: 'ElevenLabs refused the voice list (HTTP 503). Everyone keeps the narrator.' };
+    voicesMock.fn!.mockResolvedValueOnce(refused).mockResolvedValueOnce({ voices: FAKE_VOICES });
+    const { loadVoices } = await fresh();
+    expect(await loadVoices()).toEqual(refused);
+    expect(await loadVoices()).toEqual({ voices: FAKE_VOICES });
+    expect(await loadVoices()).toEqual({ voices: FAKE_VOICES });
+    expect(voicesMock.fn).toHaveBeenCalledTimes(2);
+  });
+
   it('returns the reason when api.voices is missing or throws synchronously', async () => {
     voicesMock.fn = undefined;
     const { loadVoices } = await fresh();

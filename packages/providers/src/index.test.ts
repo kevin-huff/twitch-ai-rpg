@@ -518,12 +518,43 @@ describe('ClewdR native adapter', () => {
     expect(second.messages[2].content).toContain('use "claim" or "belief"');
   });
 
+  it('sends a plan with a tag in an intent back once and accepts the corrected plan', async () => {
+    const ctx = context();
+    const good = singleLinePlan(ctx);
+    const refused = rolledPlan([rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id, { intent: '[sighs] I climb the fire escape.' })]);
+    const fetchMock = replying(refused, good);
+    expect(await ai(fetchMock).plan(ctx)).toEqual(good);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content).toContain('square-bracket tag in its intent');
+  });
+
+  it('sends a plan with a tag in an outcome publicText back once and accepts the corrected plan', async () => {
+    const ctx = context();
+    const good = singleLinePlan(ctx);
+    const outcomes = { ...rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id).outcomes, costly: { publicText: '[laughs] It costs you.', effects: [] } };
+    const refused = rolledPlan([rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id, { outcomes })]);
+    const fetchMock = replying(refused, good);
+    expect(await ai(fetchMock).plan(ctx)).toEqual(good);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content).toContain('square-bracket tag in its outcomes.costly.publicText');
+  });
+
+  it('sends a draft with a tag in segment text back once and accepts the corrected draft', async () => {
+    const ctx = context();
+    const good = draft(ctx);
+    const refused = { ...good, segments: [{ ...good.segments[0], text: '[laughs] ' + good.segments[0].text }, ...good.segments.slice(1)] };
+    const fetchMock = replying(refused, good);
+    expect(await ai(fetchMock).render(ctx)).toEqual(good);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content).toContain('square-bracket tag in its text');
+  });
+
   it('states the audio tag rules in the render prompt and the no-copy rule in the plan prompt', async () => {
     const ctx = context();
     const renderFetch = replying(draft(ctx));
     await ai(renderFetch).render(ctx);
     const render = JSON.parse(String(renderFetch.mock.calls[0][1]?.body)).system as string;
-    expect(render).toContain('optional "voiceText"');
+    expect(render).toContain('for every narration');
     expect(render).toContain('exactly the words of "text"');
     expect(render).toContain('Never put square brackets in "text"');
     expect(render).toContain('usually one to three tags a line, one per clause');
@@ -577,6 +608,26 @@ describe('ClewdR native adapter', () => {
     const content = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content;
     expect(content).toContain('Segment 1');
     expect(content).toContain(reason);
+  });
+
+  it('drops a voiceText that still slips on the second reply and keeps the line', async () => {
+    const ctx = context();
+    const slipped = draft(ctx);
+    slipped.segments[0] = { ...slipped.segments[0], voiceText: '[quietly] Mara drops the glass.' };
+    const fetchMock = replying(slipped, slipped);
+    const result = await ai(fetchMock).render(ctx);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.segments[0].text).toBe(slipped.segments[0].text);
+    expect(result.segments[0]).not.toHaveProperty('voiceText');
+  });
+
+  it('still fails after two replies when shown text carries a tag', async () => {
+    const ctx = context();
+    const good = draft(ctx);
+    const refused = { ...good, segments: [{ ...good.segments[0], text: '[laughs] ' + good.segments[0].text }, ...good.segments.slice(1)] };
+    const fetchMock = replying(refused, refused);
+    await expect(ai(fetchMock).render(ctx)).rejects.toBeInstanceOf(ProviderError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it.each(['plan', 'render'] as const)('accepts final %s text and discards thinking and redacted-thinking metadata', async (task) => {

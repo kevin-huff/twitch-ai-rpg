@@ -95,3 +95,23 @@ describe('ElevenLabs eleven: references', () => {
     expect(speechCacheKey({ ...key, voiceId: 'abd' })).not.toBe(speechCacheKey(key));
   });
 });
+
+describe('ElevenLabs missing voice', () => {
+  const speak = (response: Response) => new ElevenLabsSpeechProvider({ ...options, fetch: vi.fn<typeof fetch>().mockResolvedValue(response) }).synthesize({ text: 'Hello.', voiceProfileId: 'eleven:gone' });
+  it('reports voice_missing for a 404', async () => {
+    const error = await speak(new Response('nope', { status: 404 })).catch((e: unknown) => e);
+    expect(error).toMatchObject({ name: 'ProviderError', code: 'http_error', reason: 'voice_missing' });
+    expect((error as Error).message).not.toContain('nope');
+  });
+  it('reports voice_missing for a voice_not_found detail', async () => {
+    const error = await speak(Response.json({ detail: { status: 'voice_not_found', message: 'x' } }, { status: 400 })).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'http_error', reason: 'voice_missing' });
+  });
+  it('keeps the plain error for other failures', async () => {
+    for (const response of [new Response('boom', { status: 500 }), Response.json({ detail: { status: 'other', message: 'x' } }, { status: 400 }), new Response('not json', { status: 400 })]) {
+      const error = await speak(response).catch((e: unknown) => e);
+      expect(error).toMatchObject({ code: 'http_error' });
+      expect((error as { reason?: string }).reason).toBeUndefined();
+    }
+  });
+});

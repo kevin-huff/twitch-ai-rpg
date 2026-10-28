@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { fitToJsonSchema } from './fit-json-schema.js';
 import {
   ActionContractSchema, AiDraftSchema, CardDraftSchema, CardGenerationInputSchema, FieldGenerationRequestSchema, FieldGenerationResponseSchema,
-  elevenVoiceId, FIELD_GENERATION_FIELDS, LineAssistInputSchema, LineAssistResponseSchema, imageTypeOf, PictureDescriptionRequestSchema, MAX_IMAGE_BYTES, MOMENT_PORTRAIT_MAX, MOMENT_PROMPT_MAX, PICTURE_PROMPT_MAX, ScenarioDraftNpcSchema, ScenarioDraftSchema, ScenarioGenerationRequestSchema,
+  elevenVoiceId, FIELD_GENERATION_FIELDS, hasAudioTags, LineAssistInputSchema, LineAssistResponseSchema, imageTypeOf, PictureDescriptionRequestSchema, MAX_IMAGE_BYTES, MOMENT_PORTRAIT_MAX, MOMENT_PROMPT_MAX, PICTURE_PROMPT_MAX, ScenarioDraftNpcSchema, ScenarioDraftSchema, ScenarioGenerationRequestSchema,
   validateFieldGenerationText, voiceTextMatches,
   type AiDraft, type AiProvider, type CardDraft, type CardGenerationInput, type ImageContentType, type ImageProvider, type ImageReference, type ImageRequest,
   type ImageResult, type LineAssistInput, type LineAssistResponse, type Npc, type PlanResult, type ProviderContext, type VoiceChoice, type VoiceList, type VoiceOption, type VoiceSource,
@@ -18,7 +18,7 @@ type Service = 'ClewdR' | 'ElevenLabs' | 'Sogni';
 type NativeMessage = { role: 'user' | 'assistant'; content: string };
 export type ProviderErrorCode = 'configuration' | 'invalid_input' | 'invalid_context' | 'invalid_response' | 'http_error' | 'network_error' | 'timeout';
 
-export type ProviderErrorReason = 'safety' | 'credit';
+export type ProviderErrorReason = 'safety' | 'credit' | 'voice_missing';
 
 export class ProviderError extends Error {
   constructor(readonly code: ProviderErrorCode, service: Service, readonly status?: number, readonly reason?: ProviderErrorReason, readonly detail?: string) {
@@ -252,6 +252,13 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
   const helped = new Map<string, number>();
   for (const contract of result.contracts) {
     const name = `Contract ${contract.id}`;
+    const shown: Array<[string, string | undefined]> = [
+      ['intent', contract.intent], ['approach', contract.approach],
+      ...(['clean', 'costly', 'setback', 'critical'] as const).map((band): [string, string | undefined] => [`outcomes.${band}.publicText`, (contract.outcomes as Record<string, { publicText: string } | undefined>)[band]?.publicText]),
+    ];
+    for (const [field, text] of shown) {
+      if (text !== undefined && hasAudioTags(text)) return `${name} has a square-bracket tag in its ${field}. Viewers read the ${field === 'intent' || field === 'approach' ? field : 'outcome text'} on stream: write plain words with no [tags].`;
+    }
     if (contract.helperCharacterIds.includes(contract.actorCharacterId)) return `${name} lists its own actor as a helper. A character cannot help a contract they lead.`;
     for (const id of [contract.actorCharacterId, ...contract.helperCharacterIds]) actions.set(id, (actions.get(id) ?? 0) + 1);
     for (const id of contract.helperCharacterIds) {
@@ -302,7 +309,7 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
   return null;
 }
 
-function validateDraft(result: AiDraft, context: ProviderContext): string | null {
+function validateDraft(result: AiDraft, context: ProviderContext, final = false): string | null {
   const { submissions, npcs } = selectedContext(context, 'render');
   const npcIds = new Set(npcs.map((npc) => npc.id));
   const characterIds = new Set(context.state.characters.map((character) => character.id));
@@ -312,9 +319,15 @@ function validateDraft(result: AiDraft, context: ProviderContext): string | null
   for (const [index, segment] of result.segments.entries()) {
     if (segment.kind === 'npc_dialogue' && !npcIds.has(segment.speakerNpcId)) return `Segment ${index + 1} gives a line to an NPC who is not a supplied participating NPC.`;
     if (segment.recipientCharacterIds.some((id) => !characterIds.has(id))) return `Segment ${index + 1} lists a recipient who is not a supplied player character.`;
+    if (hasAudioTags(segment.text)) return `Segment ${index + 1} has a square-bracket tag in its text. Viewers read text on stream: put tags only in voiceText.`;
     if (segment.voiceText !== undefined) {
-      if (/<\/?[a-z][^>]*>/i.test(segment.voiceText)) return `Segment ${index + 1} has a voiceText with an angle-bracket tag. Use only square-bracket audio tags; never SSML such as <break>.`;
+      // On the last attempt a voice copy slip is dropped, so the line is read with its delivery tag instead of failing the round.
+      if (/<\/?[a-z][^>]*>/i.test(segment.voiceText)) {
+        if (final) { delete segment.voiceText; continue; }
+        return `Segment ${index + 1} has a voiceText with an angle-bracket tag. Use only square-bracket audio tags; never SSML such as <break>.`;
+      }
       if (!voiceTextMatches(segment.text, segment.voiceText)) {
+        if (final) { delete segment.voiceText; continue; }
         return `Segment ${index + 1} has a voiceText whose words differ from its text. The voiceText must be exactly the words of text with square-bracket tags added, and nothing else changed.`;
       }
     }
@@ -336,14 +349,14 @@ function validateDraft(result: AiDraft, context: ProviderContext): string | null
   return null;
 }
 
-function checkReply<T>(text: string, schema: z.ZodType<T>, refusal: (result: T) => string | null): { value: T } | string {
+function checkReply<T>(text: string, schema: z.ZodType<T>, final: boolean, refusal: (result: T, final: boolean) => string | null): { value: T } | string {
   let reply: unknown;
   try { reply = JSON.parse(text); } catch { return 'The reply was not one bare JSON object.'; }
   const parsed = schema.safeParse(reply);
   if (!parsed.success) {
     return `The reply did not match the required schema: ${parsed.error.issues.slice(0, 3).map((issue) => `${issue.path.join('.') || 'top level'}: ${issue.message}`).join('; ')}.`;
   }
-  return refusal(parsed.data) ?? { value: parsed.data };
+  return refusal(parsed.data, final) ?? { value: parsed.data };
 }
 
 export interface ClewdrOptions {
@@ -544,7 +557,7 @@ export class ClewdrAiProvider implements AiProvider {
     return ScenarioDraftSchema.parse({ ...rest, npcs });
   }
 
-  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>, refusal: (result: T, context: ProviderContext) => string | null): Promise<T> {
+  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>, refusal: (result: T, context: ProviderContext, final: boolean) => string | null): Promise<T> {
     const selected = promptContext(context, task);
     const schemaJson = z.toJSONSchema(schema);
     const system = [
@@ -561,7 +574,7 @@ export class ClewdrAiProvider implements AiProvider {
       task === 'plan' ? 'Set the stakes of each roll from the action itself and the moment, and keep them local to that action instead of moving the plot. Small talk or a trivial action gets light, often funny stakes (a pratfall, an awkward silence, a joke that lands wrong) and risk "low". A tense moment gets humiliating or costly stakes (the insult lands, the NPC turns cold, something is dropped or broken) and risk "normal". Danger only when the scene is dangerous (the NPC wants to fight, a fall that hurts, the alarm goes off) and risk "high". For a Say line, clean means it lands as meant, costly means it lands with a price, setback means it comes across wrong, and critical means it comes across as badly as it possibly could. Never write or rewrite a player\'s words.' : '',
       task === 'plan' ? 'Every "check" contract carries a fourth outcome, "critical", used when both dice show 1: the worst plausible turn of that same action, a clear step beyond its setback, scaled to the moment, as one short sentence of at most 110 characters, with its own effects.' : '',
       task === 'plan' ? 'Never copy square-bracket tags from player lines into contract intents or outcomes.' : '',
-      task === 'render' ? 'For each narration and character line you may also write an optional "voiceText": exactly the words of "text" with Eleven v4 audio tags, in square brackets, placed right before the words they colour. The voiceText is only spoken, never shown, so its words must match text exactly: add tags and change nothing else. Never put square brackets in "text", and never tag, quote or rewrite player lines.' : '',
+      task === 'render' ? 'Write a "voiceText" for every narration and npc_dialogue line: exactly the words of "text" with Eleven v4 audio tags, in square brackets, placed right before the words they colour. The voiceText is only spoken, never shown, so its words must match text exactly: add tags and change nothing else. Never put square brackets in "text", and never tag, quote or rewrite player lines.' : '',
       task === 'render' ? 'Audio tag rules: a tag carries through the rest of the line until another tag changes it, so use usually one to three tags a line, one per clause. Tags can be emotions ([excited], [scared], [mad], [curious]), delivery and volume ([whispers], [shouts], [hushed], [booming]), pacing ([slowly], [rushed]), pauses ([pause], [long pause]), reactions ([laughs], [sighs], [gasps], [clears throat]) or short descriptive phrases ([out of breath, panicked]). Sound effects ([door creaking], [thunder rumbling]) belong only in narration, and sparingly. Never use accent tags: each character\'s voice carries its accent. Never use parentheses, braces or SSML such as <break>; a tag in parentheses or braces is read aloud. Match the moment and the dice: a critical failure should sound like one, and a confession can be [hushed].' : '',
       task === 'render' ? 'A "critical" band is narrated as the worst turn its outcome describes, in the tone its stakes set.' : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
@@ -574,7 +587,7 @@ export class ClewdrAiProvider implements AiProvider {
     // A reply the application has to refuse goes back once with the reason, so one slip does not fail the director's beat.
     for (let attempt = 1; ; attempt++) {
       const text = await this.complete(system, messages);
-      const checked = checkReply(text, schema, (result) => refusal(result, context));
+      const checked = checkReply(text, schema, attempt === 2, (result, final) => refusal(result, context, final));
       if (typeof checked !== 'string') return checked.value;
       if (attempt === 2) throw new ProviderError('invalid_response', 'ClewdR', undefined, undefined, checked);
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: `The application refused that reply. ${checked} Reply again with only the corrected JSON object.` });
@@ -769,7 +782,16 @@ export class ElevenLabsSpeechProvider implements VoiceSource {
         headers: { 'content-type': 'application/json', 'xi-api-key': this.apiKey, accept: 'audio/mpeg' },
         body: JSON.stringify({ text: input.text, model_id: this.model }),
       });
-      if (!response.ok) throw new ProviderError('http_error', 'ElevenLabs', response.status);
+      if (!response.ok) {
+        let missing = response.status === 404;
+        if (!missing) {
+          try {
+            const detail = (JSON.parse(new TextDecoder().decode(await responseBytes(response, 16_000, 'ElevenLabs'))) as { detail?: { status?: unknown } } | null)?.detail;
+            missing = detail?.status === 'voice_not_found';
+          } catch { /* unreadable body: keep the plain error */ }
+        }
+        throw new ProviderError('http_error', 'ElevenLabs', response.status, missing ? 'voice_missing' : undefined);
+      }
       const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
       if (contentType !== 'audio/mpeg' && contentType !== 'audio/mp3') throw new ProviderError('invalid_response', 'ElevenLabs');
       return { bytes: await responseBytes(response, 20_000_000, 'ElevenLabs'), contentType };

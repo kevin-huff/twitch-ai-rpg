@@ -8,7 +8,7 @@ import {
   type AudioManifest, type Beat, type DraftAudioManifest, type DraftAudioResponse, type PrepareDraftAudio,
   type ScriptSegment, type SessionState,
 } from '@rpg/contracts';
-import { speechCacheKey } from '@rpg/providers';
+import { ProviderError, speechCacheKey } from '@rpg/providers';
 import type { SpeechEngine } from './audio';
 import { transaction } from './database';
 import { AppError, authorize, currentBeat, readState, type Actor } from './repository';
@@ -84,6 +84,15 @@ export async function cachedSpeech(options: SpeechCacheOptions, input: { session
   pendingAssets.set(flightKey, pending);
   try { return await pending; }
   finally { if (pendingAssets.get(flightKey) === pending) pendingAssets.delete(flightKey); }
+}
+
+export async function speakLine(options: SpeechCacheOptions, base: { sessionId: string; beatId: string; operationId: string }, line: { kind: string; speaker: string; text: string; voiceText?: string; delivery: Delivery; voiceProfileId: string }): Promise<{ asset: Asset; voiceProfileId: string }> {
+  const speak = (voiceProfileId: string) => cachedSpeech(options, { ...base, text: spokenText({ ...line, voiceProfileId }), voiceProfileId, delivery: line.delivery });
+  try { return { asset: await speak(line.voiceProfileId), voiceProfileId: line.voiceProfileId }; }
+  catch (error) {
+    if (!(error instanceof ProviderError && error.reason === 'voice_missing') || line.voiceProfileId === 'voice_narrator') throw error;
+    return { asset: await speak('voice_narrator'), voiceProfileId: 'voice_narrator' };
+  }
 }
 
 export async function saveSpeechProgress(client: PoolClient, sessionId: string, input: { kind: 'draft'; id: string; completed: number; total: number; finished?: boolean } | { kind: 'published'; beatId: string; configHash: string; leaseId: string; completed: number; total: number; finished?: boolean }) {
@@ -211,8 +220,8 @@ export function registerDraftAudio(app: FastifyInstance, options: DraftAudioOpti
     try {
       for (const line of preparation.segments) {
         await checkCurrent();
-        const asset = await cachedSpeech(options, { sessionId: request.params.sessionId, beatId: preparation.beat_id, operationId: preparation.id, ...line, text: spokenText(line) });
-        lines.push({ ...line, assetId: asset.assetId });
+        const { asset, voiceProfileId } = await speakLine(options, { sessionId: request.params.sessionId, beatId: preparation.beat_id, operationId: preparation.id }, line);
+        lines.push({ ...line, voiceProfileId, assetId: asset.assetId });
         await checkCurrent(lines.length);
       }
       return await locked(request, async (client, current) => {

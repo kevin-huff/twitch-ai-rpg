@@ -19,10 +19,14 @@ const snapshot = (own: Record<string, unknown> | null = { voiceProfileId: null }
   characters: [], ownCharacter: own ? { id: 'pc-1', ...own } : null,
 }) as unknown as PlayerSnapshot;
 const mountVoice = (current: PlayerSnapshot, busy = false) => mount(SeatVoice, { props: { snapshot: current, busy } });
+const setOpen = async (w: ReturnType<typeof mountVoice>, value: boolean) => {
+  const details = w.get('[data-testid="seat-voice"]');
+  (details.element as HTMLDetailsElement).open = value;
+  await flushPromises();
+};
 const open = async (w: ReturnType<typeof mountVoice>) => {
   const details = w.get('[data-testid="seat-voice"]');
   (details.element as HTMLDetailsElement).open = true;
-  await details.trigger('toggle');
   await flushPromises();
 };
 
@@ -51,11 +55,58 @@ describe('SeatVoice', () => {
     const w = mountVoice(snapshot({ voiceProfileId: 'eleven:fake-bram' }));
     await open(w);
     await w.findAll('[data-testid="voice-option"] .voice-choose')[0].trigger('click');
+    await open(w);
     await w.get('[data-testid="voice-narrator"] button').trigger('click');
     const sent = w.emitted('command')!.map(([c]) => c as Record<string, unknown>);
     expect(sent[0]).toMatchObject({ type: 'set_voice', voiceProfileId: 'eleven:fake-ada' });
     expect(typeof sent[0].commandId).toBe('string');
     expect(sent[1]).toMatchObject({ type: 'set_voice', voiceProfileId: null });
+  });
+
+  it('loads again on every open, so a failed list recovers', async () => {
+    loadVoices.mockReset();
+    loadVoices
+      .mockResolvedValueOnce({ voices: [], reason: 'ElevenLabs is unavailable' })
+      .mockResolvedValueOnce({ voices });
+    const w = mountVoice(snapshot());
+    await setOpen(w, true);
+    expect(w.findAll('[data-testid="voice-option"]')).toHaveLength(0);
+    await setOpen(w, false);
+    await setOpen(w, true);
+    expect(loadVoices).toHaveBeenCalledTimes(2);
+    expect(w.findAll('[data-testid="voice-option"]')).toHaveLength(2);
+  });
+
+  it('closes the section after a choice and unmounts the picker', async () => {
+    const w = mountVoice(snapshot());
+    await open(w);
+    await w.findAll('[data-testid="voice-option"] .voice-choose')[0].trigger('click');
+    await flushPromises();
+    expect(w.emitted('command')![0][0]).toMatchObject({ type: 'set_voice', voiceProfileId: 'eleven:fake-ada' });
+    expect((w.get('[data-testid="seat-voice"]').element as HTMLDetailsElement).open).toBe(false);
+    expect(w.find('[data-testid="voice-picker"]').exists()).toBe(false);
+  });
+
+  it('stops a playing sample when the section closes', async () => {
+    const pause = vi.fn();
+    class FakeAudio {
+      src = '';
+      preload = '';
+      addEventListener = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      pause = pause;
+    }
+    vi.stubGlobal('Audio', FakeAudio);
+    loadVoices.mockResolvedValue({ voices: [{ ...voices[0], previewUrl: 'https://example.test/ada.mp3' }, voices[1]] });
+    const w = mountVoice(snapshot());
+    await open(w);
+    await w.get('[data-testid="voice-option"] .voice-sample').trigger('click');
+    await flushPromises();
+    expect(w.text()).toContain('Stop sample');
+    await setOpen(w, false);
+    expect(pause).toHaveBeenCalled();
+    expect(w.text()).not.toContain('Stop sample');
+    vi.unstubAllGlobals();
   });
 
   it('is hidden when the show has ended or there is no own character', () => {

@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { isSpokenSegmentKind, PublishedBeatSchema, spokenText } from '@rpg/contracts';
-import { cachedSpeech, saveSpeechProgress } from './draft-audio';
+import { saveSpeechProgress, speakLine } from './draft-audio';
 import { transaction } from './database';
 import { AppError, authorize, type Actor } from './repository';
 import { digest } from './commands';
@@ -85,8 +85,8 @@ export function registerAudio(app: FastifyInstance, options: AudioOptions) {
         await current(async () => {});
         const voiceProfileId = segment.voiceProfileId ?? 'voice_narrator';
         const speaker = segment.speaker?.displayName ?? 'Narrator';
-        const { assetId } = await cachedSpeech(options, { sessionId, beatId, operationId: lease, text: spokenText({ kind: segment.kind, speaker, text: segment.text, voiceText: segment.voiceText, delivery: segment.delivery, voiceProfileId }), voiceProfileId, delivery: segment.delivery });
-        manifest.segments.push({ id: segment.id, text: segment.text, speaker, voiceProfileId, url: `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${assetId}` });
+        const spoken = await speakLine(options, { sessionId, beatId, operationId: lease }, { kind: segment.kind, speaker, text: segment.text, voiceText: segment.voiceText, delivery: segment.delivery, voiceProfileId });
+        manifest.segments.push({ id: segment.id, text: segment.text, speaker, voiceProfileId: spoken.voiceProfileId, url: `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${spoken.asset.assetId}` });
         await current(client => saveSpeechProgress(client, sessionId, { kind: 'published', beatId, configHash, leaseId: lease, completed: manifest.segments.length, total: segments.length }));
       }
       await current(async client => {

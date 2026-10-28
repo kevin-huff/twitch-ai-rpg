@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DELIVERY_TAGS, isSpokenSegmentKind } from '@rpg/contracts';
 import { buildApp } from '../src/app';
+import { ProviderError } from '@rpg/providers';
 import { createPool } from '../src/database';
 
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -16,7 +17,8 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
   let beatId: string;
   let draftId: string;
   const origin = 'http://localhost:3000';
-  const synthesize = vi.fn(async (_input: { text: string; voiceProfileId: string }) => ({ bytes: new Uint8Array([73, 68, 51, 0]), contentType: 'audio/mpeg' }));
+  const fakeAudio = async (_input: { text: string; voiceProfileId: string }) => ({ bytes: new Uint8Array([73, 68, 51, 0]), contentType: 'audio/mpeg' });
+  const synthesize = vi.fn(fakeAudio);
   const cookie = (response: { headers: Record<string, unknown> }) => String(response.headers['set-cookie']).split(';')[0];
   const request = (url: string, credential = host, payload?: unknown) => app.inject({ method: payload ? 'POST' : 'GET', url, headers: { cookie: credential, origin }, ...(payload ? { payload } : {}) });
   let snapshot: any;
@@ -173,6 +175,50 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
     const manifest = (await request(`/api/sessions/${table.id}/audio/${beat}`)).json();
     expect(manifest.status).toBe('ready');
     matchesPlayback(manifest.manifest, data);
+  });
+
+  it('reads a line in the narrator\'s voice, with the name in front, when its chosen voice no longer exists', async () => {
+    const table = await voicedTable();
+    const published = table.current.activeBeat.id;
+    await table.step('publish_beat', { expectedStateRevision: table.current.session.stateRevision, draftRevision: table.current.activeBeat.draftRevision, textOnly: true });
+    const data = await publishedBeat(table.id, published);
+    const say = data.segments.find((s: any) => s.kind === 'player_dialogue');
+    synthesize.mockClear();
+    synthesize.mockImplementation(async input => {
+      if (input.voiceProfileId.startsWith('eleven:')) throw new ProviderError('http_error', 'ElevenLabs', 404, 'voice_missing');
+      return fakeAudio(input);
+    });
+    try {
+      const prepared = await request(`/api/sessions/${table.id}/audio/${published}`, host, { commandId: crypto.randomUUID() });
+      expect(prepared.statusCode, prepared.body).toBe(200);
+      expect(prepared.json().status).toBe('ready');
+      expect(prepared.json().manifest.segments.find((s: any) => s.id === say.id)).toMatchObject({ text: 'I chose this voice myself.', voiceProfileId: 'voice_narrator' });
+      expect(synthesize.mock.calls.map(call => call[0])).toContainEqual({ text: `${table.character.displayName}: [softly] I chose this voice myself.`, voiceProfileId: 'voice_narrator' });
+    } finally { synthesize.mockImplementation(fakeAudio); }
+  });
+
+  it('uses the narrator for a missing voice in the draft preview, and still fails on any other speech error', async () => {
+    const table = await voicedTable();
+    const path = `/api/sessions/${table.id}/beats/${table.current.activeBeat.id}/draft-audio`;
+    const body = () => ({ commandId: crypto.randomUUID(), expectedBeatRevision: table.current.activeBeat.revision, draftRevision: table.current.activeBeat.draftRevision, generation: table.current.activeBeat.generation });
+    synthesize.mockClear();
+    synthesize.mockImplementation(async input => {
+      if (input.voiceProfileId.startsWith('eleven:')) throw new Error('ElevenLabs is down');
+      return fakeAudio(input);
+    });
+    try {
+      const failed = await request(path, host, body());
+      expect(failed.statusCode, failed.body).toBe(200);
+      expect(failed.json().status).toBe('failed');
+      synthesize.mockImplementation(async input => {
+        if (input.voiceProfileId.startsWith('eleven:')) throw new ProviderError('http_error', 'ElevenLabs', 404, 'voice_missing');
+        return fakeAudio(input);
+      });
+      const preview = await request(path, host, body());
+      expect(preview.statusCode, preview.body).toBe(200);
+      expect(preview.json().status).toBe('ready');
+      expect(preview.json().manifest.segments.find((s: any) => s.text === 'I chose this voice myself.').voiceProfileId).toBe('voice_narrator');
+    } finally { synthesize.mockImplementation(fakeAudio); }
   });
 
   it('returns the reviewed recording when newer audio configurations exist', async () => {

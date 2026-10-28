@@ -25,6 +25,7 @@ const playerReady = computed(() => !player.value?.setup || Boolean(player.value.
 
 const kind = ref<LineKind>('say');
 const sayText = ref('');
+const assistKey = ref(0);
 const actionText = ref('');
 const noteText = ref('');
 const recipient = ref('');
@@ -174,6 +175,7 @@ function finishLine(lineKind: LineKind) {
   setAside.value = null;
   setText(lineKind, kept?.text ?? '');
   if (lineKind === 'say') {
+    assistKey.value += 1;
     stageDirection.value = kept?.stageDirection ?? '';
     if (kept) {
       recipient.value = kept.recipient; recipientTouched.value = kept.recipientTouched;
@@ -262,7 +264,7 @@ async function askPrivately() {
             <button type="button" class="secondary" :aria-pressed="kind === 'act'" :disabled="Boolean(editing)" @click="kind = 'act'">Do something</button>
           </div>
           <template v-if="kind === 'say'">
-            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
+            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist :key="assistKey" :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
             <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
             <div v-else-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
           </template>

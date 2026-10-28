@@ -44,6 +44,16 @@ describe('VoicePicker', () => {
     expect(rows(w)[2].find('.voice-summary').text()).toBe('male · old · irish · raspy');
   });
 
+  it('puts the list in a named box that keyboard users can reach and that keeps the narrator first', () => {
+    const w = mountPicker();
+    const box = w.get('[data-testid="voice-list"]');
+    expect(box.attributes('tabindex')).toBe('0');
+    expect(box.attributes('aria-label')).toBe('Voices');
+    expect(box.attributes('role')).toBe('group');
+    expect(box.findAll('li')[0].attributes('data-testid')).toBe('voice-narrator');
+    expect(box.findAll('li')).toHaveLength(4);
+  });
+
   it('uses the narrator label it is given', () => {
     const w = mountPicker({ narratorLabel: 'Narrator' });
     expect(rows(w)[0].find('.voice-name').text()).toBe('Narrator');

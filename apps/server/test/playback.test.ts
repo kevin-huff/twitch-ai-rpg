@@ -99,6 +99,18 @@ suite('durable coordinated public playback', () => {
     expect((await request('/commands', command('start', { beatId: missing.id }))).statusCode).toBe(409);
   });
 
+  it('accepts a narrator recording of an eleven-voiced line and refuses a different eleven voice', async () => {
+    const voiced = await seedPublication(2, true);
+    await pool.query('UPDATE published_beats SET data=jsonb_set(data,\'{segments,0,voiceProfileId}\',\'"eleven:ada"\') WHERE session_id=$1 AND id=$2', [sessionId, voiced.id]);
+    await claim();
+    const recorded = (voice: string) => pool.query('UPDATE audio_manifests SET manifest=$3 WHERE session_id=$1 AND beat_id=$2', [sessionId, voiced.id, { ...voiced.manifest, segments: voiced.manifest.segments.map((segment, index) => index === 0 ? { ...segment, voiceProfileId: voice } : segment) }]);
+    await recorded('eleven:other');
+    expect((await request('/commands', command('start', { beatId: voiced.id }))).statusCode).toBe(409);
+    await recorded('voice_narrator');
+    await ok('/commands', command('start', { beatId: voiced.id }));
+    expect(snapshot.manifest?.segments[0]?.voiceProfileId).toBe('voice_narrator');
+  });
+
   it('stores segment index 41 and refuses 42', async () => {
     await claim();
     await ok('/commands', command('start'));
