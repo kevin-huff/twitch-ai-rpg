@@ -1,5 +1,5 @@
 import {
-  type Beat, ImageIdSchema, MOMENT_PORTRAIT_MAX, type PictureLine, type PictureMoment, type PicturePerson, type PictureSettings, type PublishedBeat, type SessionState,
+  type Beat, ImageIdSchema, isPlayerSegmentKind, MOMENT_PORTRAIT_MAX, type PictureLine, type PictureMoment, type PicturePerson, type PictureSettings, type PublishedBeat, type SessionState,
 } from '@rpg/contracts';
 import { namesInState, sceneLocationTitle } from './picture-prompts';
 
@@ -12,7 +12,7 @@ export type BeatPictureSource = {
 const spokenBy = (source: BeatPictureSource): string[] => {
   if (source.published) {
     return source.published.segments.flatMap((segment) => (
-      (segment.kind === 'player_dialogue' || segment.kind === 'npc_dialogue') && segment.speaker ? [segment.speaker.entityId] : []
+      (isPlayerSegmentKind(segment.kind) || segment.kind === 'npc_dialogue') && segment.speaker ? [segment.speaker.entityId] : []
     ));
   }
   return [

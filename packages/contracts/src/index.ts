@@ -338,12 +338,30 @@ export const AiSegmentSchema = z.discriminatedUnion('kind', [
 ]);
 export type AiSegment = z.infer<typeof AiSegmentSchema>;
 export const ScriptSegmentSchema = z.strictObject({
-  id: IdSchema, kind: z.enum(['narration', 'npc_dialogue', 'player_dialogue', 'system']), text: TextSchema,
+  id: IdSchema, kind: z.enum(['narration', 'npc_dialogue', 'player_dialogue', 'player_action', 'system']), text: TextSchema,
   speaker: z.strictObject({ entityId: IdSchema, displayName: z.string().min(1).max(80) }).nullable(),
   recipientCharacterIds: z.array(IdSchema), delivery: DeliverySchema, sourceSubmissionIds: z.array(IdSchema),
   voiceProfileId: IdSchema.nullable(), ttsEnabled: z.boolean(),
 });
 export type ScriptSegment = z.infer<typeof ScriptSegmentSchema>;
+export type PlayerSegmentKind = 'player_dialogue' | 'player_action';
+export type SpokenSegmentKind = Exclude<ScriptSegment['kind'], 'system'>;
+export function isPlayerSegmentKind(kind: string): kind is PlayerSegmentKind {
+  return kind === 'player_dialogue' || kind === 'player_action';
+}
+export function isSpokenSegmentKind(kind: string): kind is SpokenSegmentKind {
+  return kind === 'narration' || kind === 'npc_dialogue' || kind === 'player_dialogue' || kind === 'player_action';
+}
+export function playerWords(line: Pick<Submission, 'kind' | 'text' | 'intent' | 'approach'>): string {
+  if (line.kind === 'say') return line.text;
+  if (line.kind !== 'act') return '';
+  const parts = [line.intent, line.approach].filter((part) => part.trim());
+  if (parts.length === 2 && parts[0]!.trim() === parts[1]!.trim()) return parts[0]!;
+  return parts.join('\n');
+}
+export function spokenText(line: { kind: string; speaker: string; text: string }): string {
+  return isPlayerSegmentKind(line.kind) ? `${line.speaker}: ${line.text}` : line.text;
+}
 export const ContinuityUpdateSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('npc_knowledge'), npcId: IdSchema, statement: TextSchema,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
 import type { ActionContract, AiSegment, Beat } from '@rpg/contracts';
-import { ActionContractSchema } from '@rpg/contracts';
+import { ActionContractSchema, playerWords } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
 import StakesCards from './StakesCards.vue';
@@ -64,6 +64,7 @@ const working = computed(() => running.value ?? (activeJob.value ? { task: activ
 const voice = ref<VoiceState>({ status: 'checking' });
 const skipFacts = ref(false);
 const waiting = ref<{ beatId: string; draftRevision: number } | null>(null);
+const playerLines = computed(() => (beat.value?.lockedSubmissions ?? []).filter(line => line.kind !== 'ooc' && playerWords(line).trim()).map(line => ({ id: line.id, characterId: line.characterId, action: line.kind === 'act', words: playerWords(line) })));
 const hasDraft = computed(() => Boolean(!idle.value && showScript.value && beat.value?.draft));
 const voicePending = computed(() => voice.value.status === 'checking' || voice.value.status === 'preparing');
 const statusText = computed(() => {
@@ -335,8 +336,9 @@ function runGold() {
       <template v-else>
         <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="busy" v-model:classification="reviewClassification" />
         <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ roll.band === 'costly' ? 'Success with a cost' : roll.band }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
+          <section v-if="playerLines.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in playerLines" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
           <ScriptEditor ref="scriptEditor" :segments="script" :npcs="snapshot.npcs" :busy="busy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
-          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player quotes are inserted verbatim from locked submissions. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
+          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
       </template>
       <div ref="actionsBar" class="beat-actions" role="region" tabindex="-1" aria-label="Beat actions">
@@ -394,4 +396,11 @@ function runGold() {
 .beat-facts::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); }
 .beat-facts strong { display: block; font-family: var(--font-label); font-size: 16px; line-height: 20px; color: var(--candle); }
 .beat-facts ul { margin: 8px 0 12px; padding-left: 24px; }
+.player-lines { position: relative; margin: 16px 0; padding: 16px 20px; }
+.player-lines::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); }
+.player-lines h4 { margin: 0 0 8px; font-family: var(--font-label); font-size: 16px; line-height: 20px; font-weight: normal; text-transform: uppercase; color: var(--dust); }
+.player-lines p { margin: 0 0 8px; }
+.player-lines strong { color: var(--candle); font-weight: normal; }
+.player-line-tag { font-family: var(--font-label); font-size: 16px; line-height: 20px; text-transform: uppercase; color: var(--dust); }
+.player-line-words { color: var(--bone); white-space: pre-wrap; }
 </style>

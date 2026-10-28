@@ -22,6 +22,7 @@ describe('stage-format', () => {
     expect(speakerRole({ kind: 'system' })).toBe('Narrator');
     expect(speakerRole({ kind: 'npc_dialogue' })).toBe('Character');
     expect(speakerRole({ kind: 'player_dialogue' })).toBe('Player');
+    expect(speakerRole({ kind: 'player_action' })).toBe('Action');
   });
   it('labels and symbols bands distinctly', () => {
     expect(bandLabel('clean')).toBe('Clean success');

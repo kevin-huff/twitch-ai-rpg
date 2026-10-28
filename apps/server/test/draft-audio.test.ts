@@ -90,7 +90,10 @@ suite('private saved draft speech and publication attachment', () => {
   });
   afterEach(async () => { await app?.close(); await pool?.end(); await rm(directory, { recursive: true, force: true }); });
 
-  it('privately prepares only saved narrator/NPC speech and denies every non-owning role and public cache hash', async () => {
+  const playerName = () => snapshot.characters.find((character: any) => character.id === snapshot.activeBeat.lockedSubmissions[0].characterId).displayName as string;
+  const spoken = 'The private player quote must never reach speech.';
+
+  it('privately prepares the player line, narrator and NPC speech and denies every non-owning role and public cache hash', async () => {
     const path = draftPath();
     expect((await request(path)).json()).toEqual({ status: 'missing' });
     for (const credential of [stage, player, '']) {
@@ -98,10 +101,12 @@ suite('private saved draft speech and publication attachment', () => {
       expect((await request(path, prepareBody(), credential)).statusCode).toBe(credential ? 403 : 401);
     }
     const manifest = await prepare();
-    expect(synthesize).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(synthesize.mock.calls)).not.toMatch(/private player quote|archive safe|brass key/);
+    expect(synthesize).toHaveBeenCalledTimes(3);
+    expect(synthesize.mock.calls[0]![0]).toEqual({ text: `${playerName()}: ${spoken}`, voiceProfileId: 'voice_narrator' });
+    expect(JSON.stringify(synthesize.mock.calls)).not.toMatch(/archive safe|brass key/);
     expect(JSON.stringify(manifest)).not.toMatch(/[a-f0-9]{64}/);
-    expect(manifest.segments.map(segment => segment.index)).toEqual([0, 1]);
+    expect(manifest.segments.map(segment => segment.index)).toEqual([0, 1, 2]);
+    expect(manifest.segments[0]).toMatchObject({ text: spoken, speaker: playerName(), voiceProfileId: 'voice_narrator' });
     for (const segment of manifest.segments) {
       const media = await request(segment.url);
       expect(media.statusCode).toBe(200);
@@ -123,7 +128,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect((await request(path, body)).json()).toEqual(first.json());
     expect((await request(path)).json()).toEqual(first.json());
     expect((await request(path, prepareBody())).json()).toEqual(first.json());
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
 
   it('never reexposes an edited recording through an old receipt or indexed URL', async () => {
@@ -135,7 +140,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect((await request(ready.manifest.segments[0].url)).statusCode).toBe(409);
     const replacement = await prepare();
     expect(replacement.preparationId).not.toBe(ready.manifest.preparationId);
-    expect(replacement.segments[0].text).toBe('A new saved line.');
+    expect(replacement.segments.map(segment => segment.text)).toEqual([spoken, 'A new saved line.']);
   });
 
   it('discards a late provider completion after saved script changes without holding a session lock during speech', async () => {
@@ -168,7 +173,7 @@ suite('private saved draft speech and publication attachment', () => {
     const calls = synthesize.mock.calls.length;
     expect((await request(path, failureBody)).json()).toEqual(failed.json());
     expect(synthesize).toHaveBeenCalledTimes(calls);
-    expect((await prepare()).segments[0].text).toBe('A fresh line that fails.');
+    expect((await prepare()).segments[1]!.text).toBe('A fresh line that fails.');
   });
 
   it('fences an expired worker after a lock wait before any next paid segment and allows an explicit replacement', async () => {
@@ -190,7 +195,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect((await request(path, body)).json()).toEqual({ status: 'failed', preparationId: preparing.preparationId });
     const fresh = await prepare();
     expect(fresh.preparationId).not.toBe(preparing.preparationId);
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
 
   it('allows a replacement after expiry while the old worker is still pending without letting it overwrite readiness', async () => {
@@ -208,7 +213,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect(ready.statusCode, ready.body).toBe(200); expect(ready.json().status).toBe('ready');
     expect(ready.json().manifest.preparationId).not.toBe(old.preparationId);
     expect((await request(path)).json()).toEqual(ready.json());
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
 
   it.each(['steering', 'abort', 'text-only publication'])('discards a late preparation after %s', async change => {
@@ -251,6 +256,7 @@ suite('private saved draft speech and publication attachment', () => {
     await beat('lock_beat'); await beat('render_beat');
     const preview = await prepare(); const path = draftPath(); const prior = structuredClone(snapshot.activeBeat.resolution);
     expect(prior.rolls).toHaveLength(1);
+    expect(preview.segments).toHaveLength(3);
     const fields = { ...beatFields(), commandId: randomUUID(), type: 'publish_beat', expectedStateRevision: snapshot.session.stateRevision, draftRevision: snapshot.activeBeat.draftRevision, textOnly: false, audioPreparationId: preview.preparationId };
     const first = await request(`/api/sessions/${sessionId}/commands`, fields);
     expect(first.statusCode, first.body).toBe(200);
@@ -263,12 +269,13 @@ suite('private saved draft speech and publication attachment', () => {
     expect(first.json().snapshot.session.actionRoundNumber).toBe(1);
     const publicAudio = (await request(`/api/sessions/${sessionId}/audio/${publication.id}`, undefined, stage)).json();
     expect(publicAudio.status).toBe('ready');
-    expect(publicAudio.manifest.segments.map((segment: any) => segment.id)).toEqual(publication.segments.filter((segment: any) => segment.kind === 'narration' || segment.kind === 'npc_dialogue').map((segment: any) => segment.id));
+    expect(publicAudio.manifest.segments.map((segment: any) => segment.id)).toEqual(publication.segments.filter((segment: any) => segment.kind !== 'system').map((segment: any) => segment.id));
+    expect(publication.segments.filter((segment: any) => segment.kind !== 'system').map((segment: any) => segment.kind)).toEqual(['player_action', 'narration', 'npc_dialogue']);
     expect(publicAudio.manifest.segments.map((segment: any) => segment.text)).toEqual(preview.segments.map(segment => segment.text));
     for (const segment of publicAudio.manifest.segments) expect((await request(segment.url, undefined, stage)).statusCode).toBe(200);
     expect((await request(preview.segments[0].url)).statusCode).toBe(409);
     expect((await request(path)).statusCode).toBe(409);
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
 
   it('rolls publication back if a selected recording asset is missing', async () => {
@@ -290,7 +297,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect((await request(`/api/sessions/${sessionId}/audio/${id}`)).json()).toEqual(original);
     const posted = await request(`/api/sessions/${sessionId}/audio/${id}`, { commandId: randomUUID() });
     expect(posted.statusCode, posted.body).toBe(200); expect(posted.json()).toEqual(original);
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
 
   it('rejects malformed indexed private-media selectors without leaking database errors', async () => {
@@ -333,7 +340,7 @@ suite('private saved draft speech and publication attachment', () => {
     await pool.query("INSERT INTO generation_jobs(id,session_id,beat_id,snapshot_hash,generation,status,input,task) VALUES($1,$2,$3,'test',$4,'running','{}','render')", [randomUUID(), sessionId, current.id, current.generation]);
     expect((await request(draftPath(), prepareBody())).statusCode).toBe(409);
     await beat('edit_script', { segments: [{ kind: 'narration', text: 'Manual saved override.', delivery: 'neutral', recipientCharacterIds: [] }] });
-    expect((await prepare()).segments[0].text).toBe('Manual saved override.');
+    expect((await prepare()).segments[1]!.text).toBe('Manual saved override.');
   });
 
   it('checks credential revocation after a preparation completion waits for the session lock', async () => {
@@ -370,9 +377,10 @@ suite('private saved draft speech and publication attachment', () => {
     const savedSpeech = snapshot.activeBeat.draft.segments[0];
     const key = speechCacheKey({ sessionId, text: savedSpeech.text, provider: 'elevenlabs', model, voiceId, delivery: savedSpeech.delivery });
     await publish();
-    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockImplementationOnce(() => gate.promise);
+    const gate = deferred<ReturnType<typeof audio>>();
+    synthesize.mockImplementation(async input => input.text === savedSpeech.text ? gate.promise : audio());
     const pending = request(`/api/sessions/${sessionId}/audio/${snapshot.history.at(-1).id}`, { commandId: randomUUID() }).then(value => value);
-    await waitFor(async () => synthesize.mock.calls.length === 1);
+    await waitFor(async () => synthesize.mock.calls.some(call => call[0].text === savedSpeech.text));
     const winner = new Uint8Array([73, 68, 51, 5, 6, 7, 8]);
     await writeFile(join(directory, `${key}.mp3`), winner, { flag: 'wx' });
     await pool.query("INSERT INTO audio_assets(id,session_id,content_type,byte_length) VALUES($1,$2,'audio/mpeg',$3)", [key, sessionId, winner.byteLength]);
@@ -385,44 +393,45 @@ suite('private saved draft speech and publication attachment', () => {
   it('reports actual first-clip progress and speech attempts before the second private clip completes', async () => {
     const texts = ['One 😀 saved line.', 'The second saved line.'];
     await beat('edit_script', { segments: texts.map(text => ({ kind: 'narration', text, delivery: 'neutral', recipientCharacterIds: [] })) });
-    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockResolvedValueOnce(audio()).mockImplementationOnce(() => gate.promise);
+    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockResolvedValueOnce(audio()).mockResolvedValueOnce(audio()).mockImplementationOnce(() => gate.promise);
     const path = draftPath(), body = prepareBody();
     const pending = request(path, body).then(value => value);
-    await waitFor(async () => synthesize.mock.calls.length === 2);
+    await waitFor(async () => synthesize.mock.calls.length === 3);
     const running = (await request(`/api/sessions/${sessionId}/operations`)).json();
-    expect(running.speech.draft).toMatchObject({ status: 'preparing', completedSegments: 1, totalSegments: 2 });
-    expect(running.progress).toContainEqual(expect.objectContaining({ kind: 'draft_audio', status: 'running', completedSegments: 1, totalSegments: 2, finishedAt: null }));
-    expect(running.usage.speech).toMatchObject({ attempts: 2, succeeded: 1, pending: 1, characters: texts.reduce((count, text) => count + [...text].length, 0), cacheHits: 0, sharedHits: 0 });
+    expect(running.speech.draft).toMatchObject({ status: 'preparing', completedSegments: 2, totalSegments: 3 });
+    expect(running.progress).toContainEqual(expect.objectContaining({ kind: 'draft_audio', status: 'running', completedSegments: 2, totalSegments: 3, finishedAt: null }));
+    const spokenTexts = [`${playerName()}: ${spoken}`, ...texts];
+    expect(running.usage.speech).toMatchObject({ attempts: 3, succeeded: 2, pending: 1, characters: spokenTexts.reduce((count, text) => count + [...text].length, 0), cacheHits: 0, sharedHits: 0 });
     expect((await request(path, body)).json().status).toBe('preparing');
     expect((await request(`/api/sessions/${sessionId}/operations`)).json().usage).toEqual(running.usage);
     gate.resolve(audio());
     const ready = await pending; expect(ready.statusCode, ready.body).toBe(200);
     const finished = (await request(`/api/sessions/${sessionId}/operations`)).json();
-    expect(finished.speech.draft).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
-    expect(finished.usage.speech).toMatchObject({ attempts: 2, succeeded: 2, pending: 0, cacheHits: 0, sharedHits: 0 });
+    expect(finished.speech.draft).toMatchObject({ status: 'ready', completedSegments: 3, totalSegments: 3 });
+    expect(finished.usage.speech).toMatchObject({ attempts: 3, succeeded: 3, pending: 0, cacheHits: 0, sharedHits: 0 });
     await request(path, body); await request(ready.json().manifest.segments[0].url);
     expect((await request(`/api/sessions/${sessionId}/operations`)).json().usage).toEqual(finished.usage);
     await publish(ready.json().manifest.preparationId);
     const published = (await request(`/api/sessions/${sessionId}/operations`)).json();
-    expect(published.speech.published).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
+    expect(published.speech.published).toMatchObject({ status: 'ready', completedSegments: 3, totalSegments: 3 });
     expect(published.usage.speech).toEqual(finished.usage.speech);
   });
 
   it('reports public first-clip progress and leaves cached ready-manifest requests out of usage', async () => {
     await publish();
     const path = `/api/sessions/${sessionId}/audio/${snapshot.history.at(-1).id}`;
-    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockResolvedValueOnce(audio()).mockImplementationOnce(() => gate.promise);
+    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockResolvedValueOnce(audio()).mockResolvedValueOnce(audio()).mockImplementationOnce(() => gate.promise);
     const pending = request(path, { commandId: randomUUID() }).then(value => value);
-    await waitFor(async () => synthesize.mock.calls.length === 2);
+    await waitFor(async () => synthesize.mock.calls.length === 3);
     const running = (await request(`/api/sessions/${sessionId}/operations`)).json();
-    expect(running.speech.published).toMatchObject({ status: 'preparing', completedSegments: 1, totalSegments: 2 });
-    expect(running.progress).toContainEqual(expect.objectContaining({ kind: 'published_audio', status: 'running', completedSegments: 1, totalSegments: 2, finishedAt: null }));
+    expect(running.speech.published).toMatchObject({ status: 'preparing', completedSegments: 2, totalSegments: 3 });
+    expect(running.progress).toContainEqual(expect.objectContaining({ kind: 'published_audio', status: 'running', completedSegments: 2, totalSegments: 3, finishedAt: null }));
     gate.resolve(audio()); expect((await pending).statusCode).toBe(200);
     const finished = (await request(`/api/sessions/${sessionId}/operations`)).json();
-    expect(finished.speech.published).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
+    expect(finished.speech.published).toMatchObject({ status: 'ready', completedSegments: 3, totalSegments: 3 });
     await request(path, { commandId: randomUUID() }); await request(path);
     expect((await request(`/api/sessions/${sessionId}/operations`)).json().usage).toEqual(finished.usage);
-    expect(finished.usage.speech).toMatchObject({ attempts: 2, succeeded: 2, pending: 0, cacheHits: 0, sharedHits: 0 });
+    expect(finished.usage.speech).toMatchObject({ attempts: 3, succeeded: 3, pending: 0, cacheHits: 0, sharedHits: 0 });
   });
 
   it('counts one adapter attempt and successful shared/cache fulfillment using Unicode code points', async () => {
@@ -461,17 +470,75 @@ suite('private saved draft speech and publication attachment', () => {
     try {
       await pool.query(`CREATE TRIGGER ${name} BEFORE UPDATE OF completed_segments ON draft_audio_preparations FOR EACH ROW EXECUTE FUNCTION ${name}()`);
       const ready = await prepare();
-      expect(ready.segments).toHaveLength(2);
+      expect(ready.segments).toHaveLength(3);
       const operations = (await request(`/api/sessions/${sessionId}/operations`)).json();
-      expect(operations.speech.draft).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
-      expect(operations.usage).toMatchObject({ partial: true, speech: { attempts: 2, succeeded: 2, pending: 0 } });
-      expect(synthesize).toHaveBeenCalledTimes(2);
+      expect(operations.speech.draft).toMatchObject({ status: 'ready', completedSegments: 3, totalSegments: 3 });
+      expect(operations.usage).toMatchObject({ partial: true, speech: { attempts: 3, succeeded: 3, pending: 0 } });
+      expect(synthesize).toHaveBeenCalledTimes(3);
       await publish(ready.preparationId);
       expect(snapshot.history.at(-1).textOnly).toBe(false);
-      expect(synthesize).toHaveBeenCalledTimes(2);
+      expect(synthesize).toHaveBeenCalledTimes(3);
     } finally {
       await pool.query(`DROP TRIGGER IF EXISTS ${name} ON draft_audio_preparations`);
       await pool.query(`DROP FUNCTION ${name}()`);
     }
+  });
+
+  it('speaks a say line and an action as the player, then the script, and keeps private text out of speech', async () => {
+    await beat('abort_beat', { reason: 'Rehearse a say and an action together.' });
+    await command('open_beat', { kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
+    const sent = await request(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), type: 'save_submission', expectedSubmissionRevision: 0, contextBeatId: snapshot.activeBeat.id, expectedInputEpoch: snapshot.session.inputEpoch, kind: 'say', text: 'Hold the door for me.', recipientNpcIds: [] }, player);
+    expect(sent.statusCode, sent.body).toBe(200);
+    const acted = await request(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), type: 'save_submission', expectedSubmissionRevision: 0, contextBeatId: snapshot.activeBeat.id, expectedInputEpoch: snapshot.session.inputEpoch, kind: 'act', text: '', intent: 'Climb the fire escape', approach: 'Quick and quiet' }, player);
+    expect(acted.statusCode, acted.body).toBe(200);
+    const queued = acted.json().snapshot.submissions.filter((submission: any) => submission.status === 'queued');
+    expect(queued.length).toBeGreaterThanOrEqual(2);
+    await beat('plan_beat', { submissionIds: queued.map((submission: any) => submission.id) });
+    await beat('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat.contracts });
+    await beat('lock_beat'); await beat('render_beat');
+    const manifest = await prepare();
+    const name = playerName();
+    const calls = synthesize.mock.calls.map(call => call[0]);
+    expect(calls.map(call => call.text).slice(0, 2)).toEqual([expect.stringMatching(new RegExp(`^${name}: `)), expect.stringMatching(new RegExp(`^${name}: `))]);
+    expect(calls.map(call => call.text).join('\n')).toContain(`${name}: Hold the door for me.`);
+    expect(calls.map(call => call.text).join('\n')).toContain('Climb the fire escape');
+    expect(calls.every(call => call.voiceProfileId === 'voice_narrator' || call.voiceProfileId.length > 0)).toBe(true);
+    expect(manifest.segments.slice(0, 2).map(segment => segment.speaker)).toEqual([name, name]);
+    expect(manifest.segments.slice(0, 2).map(segment => segment.text)).toEqual(['Hold the door for me.', expect.stringContaining('Climb the fire escape')]);
+    expect(manifest.segments.length).toBe(queued.length + 2);
+    expect(JSON.stringify(calls)).not.toMatch(/archive safe|brass key/);
+  });
+
+  it('prepares a saved script of 30 distinct segments plus the player line as 31 recorded segments', async () => {
+    const segments = Array.from({ length: 30 }, (_, index) => ({ kind: 'narration', text: `Distinct saved line number ${index + 1}.`, delivery: 'neutral', recipientCharacterIds: [] }));
+    await beat('edit_script', { segments });
+    const manifest = await prepare();
+    expect(manifest.segments).toHaveLength(31);
+    expect(manifest.segments.map(segment => segment.index)).toEqual(Array.from({ length: 31 }, (_, index) => index));
+    expect(manifest.segments[0]!.text).toBe(spoken);
+    expect(synthesize).toHaveBeenCalledTimes(31);
+  });
+
+  it('attaches a recording whose segment ids equal the published spoken segments in order for a say-only beat', async () => {
+    const preview = await prepare(); const name = playerName();
+    await publish(preview.preparationId);
+    const publication = snapshot.history.at(-1);
+    expect(publication.textOnly).toBe(false);
+    const spokenIds = publication.segments.filter((segment: any) => segment.kind !== 'system').map((segment: any) => segment.id);
+    expect(publication.segments[0].kind).toBe('player_dialogue');
+    const published = (await request(`/api/sessions/${sessionId}/audio/${publication.id}`, undefined, stage)).json();
+    expect(published.status).toBe('ready');
+    expect(published.manifest.segments.map((segment: any) => segment.id)).toEqual(spokenIds);
+    expect(published.manifest.segments.map((segment: any) => segment.text)).toEqual(preview.segments.map(segment => segment.text));
+    expect(published.manifest.segments[0].speaker).toBe(name);
+    expect(synthesize).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports the host speech status as ready after preparing a beat with a player line', async () => {
+    const before = (await request(`/api/sessions/${sessionId}/operations`)).json();
+    expect(before.speech.draft).toMatchObject({ beatId: snapshot.activeBeat.id, status: 'missing' });
+    await prepare();
+    const after = (await request(`/api/sessions/${sessionId}/operations`)).json();
+    expect(after.speech.draft).toMatchObject({ beatId: snapshot.activeBeat.id, status: 'ready', completedSegments: 3, totalSegments: 3 });
   });
 });

@@ -237,7 +237,12 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
   if (state.activeBeat.draft?.continuity?.length) await beat({ type: 'approve_continuity', updates: state.activeBeat.draft.continuity });
   await beat({ type: 'publish_beat', expectedStateRevision: state.session.stateRevision, draftRevision: state.activeBeat.draftRevision, textOnly: true });
   expect(state.history).toHaveLength(1);
-  const segmentCount = state.history.at(-1).segments.length;
+  // Each Do line publishes first as its own Action line, one per player, before the three script lines.
+  const published = state.history.at(-1).segments;
+  expect(published.slice(0, 4).map((segment: any) => segment.kind)).toEqual(['player_action', 'player_action', 'player_action', 'player_action']);
+  expect(published).toHaveLength(7);
+  // The geometry cases below were built around exactly the three script lines, so the stream page does not see the four action lines.
+  const segmentCount = published.filter((segment: any) => segment.kind !== 'player_action').length;
   expect(segmentCount).toBe(3);
 
   // Second round: opened with its stakes approved so the stakes panel shows beside the dice.
@@ -261,6 +266,7 @@ test('the full scene keeps the story lines, dice and stakes inside the story box
         }
         body.characters.forEach((character: any, index: number) => { character.displayName = scenario.names[index] ?? character.displayName; });
         const latest = body.history.at(-1);
+        latest.segments = latest.segments.filter((segment: any) => segment.kind !== 'player_action');
         if (scenario.doubleText) for (const segment of latest.segments) segment.text = `${segment.text} ${segment.text}`;
         const baseRoll = latest.rolls[0];
         latest.rolls = Array.from({ length: scenario.rolls }, (_, index) => ({ ...baseRoll, id: `roll-${index}`, actorCharacterId: body.characters[index].id, band: 'costly', faces: [4, 3], edge: 1, total: 9 }));

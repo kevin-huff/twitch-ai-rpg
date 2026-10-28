@@ -13,8 +13,9 @@ export function speakerName(segment: Pick<ScriptSegment, 'kind' | 'speaker'>): s
   return segment.kind === 'system' ? 'The show' : 'Narrator';
 }
 
-export function speakerRole(segment: Pick<ScriptSegment, 'kind'>): 'Narrator' | 'Character' | 'Player' {
+export function speakerRole(segment: Pick<ScriptSegment, 'kind'>): 'Narrator' | 'Character' | 'Player' | 'Action' {
   if (segment.kind === 'npc_dialogue') return 'Character';
+  if (segment.kind === 'player_action') return 'Action';
   if (segment.kind === 'player_dialogue') return 'Player';
   return 'Narrator';
 }

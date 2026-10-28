@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, ImageIdSchema, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
-  type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type ScriptSegment, type SessionState, type Submission,
+  AiDraftSchema, ActionContractSchema, ImageIdSchema, isSpokenSegmentKind, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
+  type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission,
 } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
-import { applyResolution, resolveContracts, validateContracts } from '@rpg/rules';
+import { MAX_ROLLS_PER_ROUND, applyResolution, resolveContracts, tooManyRollsMessage, validateContracts } from '@rpg/rules';
 import { transaction } from './database';
 import { attachPreparedAudio } from './draft-audio';
+import { makeScript } from './script';
 import { finishUsageAttempt, startUsageAttempt } from './operations';
 import { draftNarration } from './picture-prompts';
 import { RELEASED } from './picture-views';
@@ -128,20 +129,6 @@ function validateCorrections(changes: CorrectionChange[], state: SessionState) {
     }
   }
 }
-function makeScript(beat: Beat, state: SessionState): ScriptSegment[] {
-  const quotes: ScriptSegment[] = beat.lockedSubmissions.filter((submission) => submission.kind !== 'ooc' && submission.text.trim()).map((submission) => ({
-    id: randomUUID(), kind: 'player_dialogue', text: submission.text,
-    speaker: { entityId: submission.characterId, displayName: state.characters.find((character) => character.id === submission.characterId)!.displayName },
-    recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [submission.id], voiceProfileId: null, ttsEnabled: false,
-  }));
-  const segments: ScriptSegment[] = beat.draft!.segments.map((segment) => {
-    const npc = segment.kind === 'npc_dialogue' ? state.npcs.find((npc) => npc.id === segment.speakerNpcId)! : null;
-    return { id: randomUUID(), kind: segment.kind, text: segment.text, speaker: npc ? { entityId: npc.id, displayName: npc.displayName } : null,
-      recipientCharacterIds: segment.recipientCharacterIds, delivery: segment.delivery, sourceSubmissionIds: beat.lockedSubmissions.map((submission) => submission.id), voiceProfileId: npc?.voiceProfileId ?? 'voice_narrator', ttsEnabled: false };
-  });
-  return [...quotes, ...segments];
-}
-
 // A round gets a fresh picture for its first script and whenever the narration (not the dialogue) changes.
 function narrationChanged(before: Beat['draft'], after: Beat['draft']): boolean {
   return !before || draftNarration(before) !== draftNarration(after);
@@ -457,7 +444,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (command.classification === 'ordinary' && selected.some((submission) => submission.kind === 'act')) conflict('Action submissions require reviewed action contracts.');
         if (command.classification === 'ordinary' && command.contracts.length) conflict('An ordinary conversation has no mechanical contracts.');
         if (command.classification === 'action' && !command.contracts.length) conflict('An action needs at least one reviewed contract.');
-        validateContracts(command.contracts, state);
+        validateContracts(command.contracts, state, selected);
         for (const contract of command.contracts) {
           const referenced = all.filter((submission) => contract.submissionIds.includes(submission.id));
           if (referenced.length !== contract.submissionIds.length || referenced.some((submission) => !beat!.selectedSubmissionIds.includes(submission.id))) conflict('Contracts must reference selected submissions.');
@@ -476,7 +463,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         beat.lockedSubmissions = structuredClone(selected); beat.sourceStateRevision = state.session.stateRevision;
         beat.inputSnapshotHash = digest({ selected, contracts: beat.contracts, stateRevision: state.session.stateRevision });
         for (const contract of beat.contracts) await client.query('INSERT INTO action_contracts(id,session_id,beat_id,version,data) VALUES($1,$2,$3,$4,$5)', [contract.id, sessionId, beat.id, contract.version, contract]);
-        beat.resolution = resolveContracts(beat.contracts, state, deps.rollDie);
+        beat.resolution = resolveContracts(beat.contracts, state, deps.rollDie, selected);
         if (beat.kind === 'action') {
           const staged = applyResolution(state, beat.resolution);
           const roundEffects: Effect[] = [];
@@ -514,7 +501,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         validateDraft(beat.draft, state, beat); validateSources(beat.approvedContinuity, beat, state);
         const segments = makeScript(beat, state);
         const audio = command.textOnly ? null : await attachPreparedAudio(client, { sessionId, beat, state, segments, preparationId: command.audioPreparationId! });
-        if (audio) for (const segment of segments) segment.ttsEnabled = segment.kind === 'narration' || segment.kind === 'npc_dialogue';
+        if (audio) for (const segment of segments) segment.ttsEnabled = isSpokenSegmentKind(segment.kind);
         const carriedSubmissions = await carryUnconsumed(client, beat, all);
         const event = await recordEvent(client, sessionId, actor, command.commandId, 'beat.published', state.session.stateRevision + 1, { beatId: beat.id, draftRevision: beat.draftRevision, carriedSubmissions });
         state = applyResolution(state, beat.resolution!, event.eventId);
@@ -598,9 +585,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (!failure && generation.task === 'plan') {
         const plan = output as Awaited<ReturnType<AiProvider['plan']>>;
         if (!['ordinary', 'needs_action', 'action'].includes(plan.classification)) throw new Error('Invalid classification.');
-        beat.contracts = plan.contracts.map((contract) => ActionContractSchema.parse(contract));
-        validateContracts(beat.contracts, state);
-        beat.classification = plan.classification; beat.phase = 'stakes_review';
+        if (plan.contracts.length > MAX_ROLLS_PER_ROUND) failure = tooManyRollsMessage(plan.contracts.length);
+        else {
+          beat.contracts = plan.contracts.map((contract) => ActionContractSchema.parse(contract));
+          validateContracts(beat.contracts, state, generation.context.submissions);
+          beat.classification = plan.classification; beat.phase = 'stakes_review';
+        }
       } else if (!failure) {
         beat.draft = validateDraft(output, state, beat); beat.draftRevision++; beat.approvedContinuity = []; beat.phase = 'draft_review';
       }

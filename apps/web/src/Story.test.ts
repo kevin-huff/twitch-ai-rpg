@@ -38,6 +38,17 @@ describe('published correction ledger', () => {
     expect(wrapper.text()).toContain(latest.segments[0].text);
   });
 
+  it('shows a player action with its name, an Action tag and the words', () => {
+    const action = { ...latest, segments: [{ ...latest.segments[0], id: 'act', kind: 'player_action' as const,
+      speaker: { entityId: 'dash', displayName: 'Dash' }, text: 'I climb the fire escape.' }] };
+    const wrapper = mount(Story, { props: { history: [action], characters: [] } });
+    const segment = wrapper.get('.segment');
+    expect(segment.classes()).toContain('player_action');
+    expect(segment.get('.speaker').text()).toContain('Dash');
+    expect(segment.get('.speaker .segment-tag').text()).toBe('Action');
+    expect(segment.get('p').text()).toBe('I climb the fire escape.');
+  });
+
   it('names a system line The show', () => {
     const system = { ...latest, segments: [{ ...latest.segments[0], kind: 'system' as const, text: 'The show was paused.' }] };
     const wrapper = mount(Story, { props: { history: [system], characters: [] } });

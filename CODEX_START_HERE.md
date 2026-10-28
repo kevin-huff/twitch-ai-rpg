@@ -25,6 +25,33 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## October 28 update: player lines and the story on the seat
+
+Players can now both speak and act in one round, the stream shows and reads aloud what each player character says and does, and the player's seat shows the story so far.
+
+What changed:
+
+- Rules (`packages/rules`): one action per line. Leading a contract and helping a contract each use one line, and `validateContracts` and `resolveContracts` take the beat's lines so a character with two lines gets two actions. A character helps at most one contract per round and never their own. The dice still roll once per check at lock.
+- Six-roll message: more than six rolls in a plan shows the director "A round can show at most six rolls, and this plan needs N. Untick some lines and plan again, then plan the rest in the next round." The beat stays in collecting. The cap stays because the stream layouts show six.
+- Planner prompt and plan validation (`packages/providers`): the prompt explains one action per line and says the application shows player lines before the script. The plan may hold up to 12 contracts, and `validatePlan` sends back a refusal for too many actions, a second help or a self-help. The refusal retry from earlier in the day is kept.
+- Published script (`apps/server/src/script.ts`): the only builder of published segments and speech lines. Each player line is published word for word before the AI script, as a `player_dialogue` or a new `player_action` segment. Out-of-character lines are skipped.
+- Voice: the narrator reads a player line as "Name: words". Captions and manifests keep the words alone, with the name as speaker.
+- Operations speech status uses the same speech lines as publishing, so it tracks the recording one to one.
+- Recordings hold up to 42 segments (30 script segments plus 12 player lines). Migration `015_spoken_segments.sql` raises the database limit to match.
+- Playback still accepts recordings made before this change (narration and character lines only).
+- Narration made after publishing voices player lines too.
+- Pictures treat `player_action` like a player line.
+- Stream overlay: player actions show an Action tag in a dust-coloured capital label. Narration and system lines show no name. Player lines and actions are never dimmed.
+- Full scene: speaker role gains "Action". Lines not being spoken are dimmed with the dust colour, and facts and the spotlight card clip their text inside their frames.
+- Story history shows an Action tag on actions.
+- Story panel on the seat (`apps/web/src/SeatStory.vue`): under the status banner, shows the latest beat (player lines, then rolls, then the rest) and a toggle for the whole story, oldest first, scrolled to the newest. Say and Do help now tell players their words appear on stream and are read aloud.
+- Director: a read-only "Read aloud first, word for word" list of player lines sits above the script editor.
+- Help (`apps/web/src/help/content.ts`) matches the new labels and copy.
+
+Deploy note: migration 015 runs at start. Nothing else needs configuring.
+
+How it was checked: new and changed tests in `packages/rules`, `packages/providers`, `apps/server/test/script.test.ts`, `player-lines.test.ts`, the draft-audio, audio, playback and picture-cast server tests, the web component tests (overlay, scene, story, seat story, seat, beat panel, help labels), and `tests/browser/player-lines.spec.ts`. Harness screenshots: app screens at 1280x900, phone screens at 390x844, stream pages at 1920x1080. Integration after the fix round: typecheck clean, 2,424 unit and component tests, 1,085 database tests in 80 files and 49 of 49 browser tests, plus one more seat-story test for scrolling back to the top when the whole story closes. After deploying, refresh the OBS browser sources and any open seat pages: pages opened before the deploy keep the old code, which styles an action as narration.
+
 ## October 27 update: design language
 
 This update applies the Story Table design language in `.local/specs/2026-10-27-design-language.md` to the app screens, both stream pages and the public gallery. Behaviour, copy and test ids did not change. Only styles moved, plus the few template edits listed below.

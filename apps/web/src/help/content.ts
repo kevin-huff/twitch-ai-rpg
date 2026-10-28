@@ -133,11 +133,14 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'More holds the steps you need less often. Open conversation starts a plain conversation when you have no lines to answer. Approve stakes only approves the stakes. Roll the dice locks the lines and rolls once, and it is on only when the stakes are approved and unchanged. Plan again goes back and plans the lines afresh. Regenerate script writes the script again, and the box Tell the AI what to change lets you steer it. Save edits keeps the changes you made to the script. When the beat already has a Note for the AI, the box shows it as Current note, and what you type there replaces it. Regenerate script asks Replace the current draft? first; press Yes, regenerate, or Keep draft. With text in Tell the AI what to change, it asks only when the script has unsaved edits. Abandon this beat opens a short form where you give a reason, then press Abandon beat. Published history stays as it was.',
           'Players write an action as one plain description, so the queue shows a single line for it. The What\'s at risk cards turn it into a goal and results.',
+          'Each of a player\'s lines can be one action. An action can lead its own roll or help someone else\'s. A character can help only one action in a round, and never their own.',
+          'A round shows at most six rolls. When a plan needs more, the bar says how many it needs. Untick some lines, plan again, and plan the rest in the next round.',
         ],
       },
       {
         heading: 'Publishing and narration',
         paragraphs: [
+          'Player lines and actions go on stream word for word, before the script, and the narrator reads each one aloud after the character\'s name. The director page lists them under Read aloud first, word for word. You cannot change them there. Only the script below them is yours to edit.',
           'Narration prepares by itself as soon as the script is ready. While it works the gold button reads Preparing voice…, and when it is done the page says Voice ready. If you press Publish while the voice is still preparing, the page says it is waiting for the voice and publishes the moment it is ready. You do not have to press anything twice.',
           'If you edit the script, save the edits under More before you publish. Until you do, Publish is off, because a publish would drop your edits.',
           'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
@@ -373,7 +376,7 @@ export const topics: HelpTopic[] = [
         heading: 'Nothing to accept',
         paragraphs: [
           'You never mark yourself ready, and you never accept any rules. The host can tell the AI what not to write, and those limits stay between the host and the AI. You do not see them, and nothing about them holds you back.',
-          'The AI never writes your character\'s words or choices. What you send with Say something goes into the story exactly as you typed it.',
+          'The AI never writes your character\'s words or choices. What you send with Say something and Do something goes into the story exactly as you typed it.',
         ],
       },
       {
@@ -392,16 +395,24 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Your seat page',
         paragraphs: [
-          'Your seat page is only for sending lines. You follow the story on the stream. The page has:',
+          'Your seat page is for sending lines, and it also shows The story, so you can follow what has happened without leaving it. The page has:',
         ],
         steps: [
           'The scene your character is in, with a small picture of it once one is made, and who you\'re playing (press Who is (your character)? to see your card and portrait again).',
           'A banner that says what\'s happening right now.',
+          'The story, right under the banner. It shows the latest beat.',
           'How this works, a three-step reminder. It starts closed. Press it to open it.',
           'The form: Say something, Do something, a box to write in, and Send.',
           'What you sent, with the progress of each line.',
           'Ask the director privately and Ask for a pause.',
           'Sound, a closed line that holds the narration controls.',
+        ],
+      },
+      {
+        heading: 'The story',
+        paragraphs: [
+          'The story sits under the banner on your seat page. It shows the latest beat: the lines players sent, with their names, then the rolls, then the rest of the scene. A Do something line is tagged Action. A roll is written in words, for example Dash rolled 11: Clean success. It updates by itself when the director publishes a beat.',
+          'Press Show the whole story to open every beat, oldest first, with the newest at the bottom. Press Hide the whole story to close it again. Before the first beat it says: The story starts when the director publishes the first beat.',
         ],
       },
       {
@@ -415,8 +426,8 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Say something or Do something',
         paragraphs: [
-          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, exactly as you typed them, once the director puts them in the story.',
-          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. The storyteller tells what happens. Sometimes dice decide how it goes.',
+          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, exactly as you typed them, and hear the narrator read them aloud, once the director puts them in the story.',
+          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, exactly as you typed them, tagged Action, and hear the narrator read them aloud. The storyteller then tells what happens. Sometimes dice decide how it goes.',
           'When other characters are in the scene, Say something also shows who you are talking to, such as Talking to Mara or Talking to your group. Press Change to pick someone else. Your group means the other players\' characters.',
           'You can write at any time. If the story isn\'t taking new lines yet, yours waits for the next turn.',
         ],
@@ -488,7 +499,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Who sees what I write?',
         paragraphs: [
-          'The director sees every line first. Viewers see your Say something words only after the director puts them in the story. For Do something, the storyteller describes what happens in its own words. Private notes stay with the director.',
+          'The director sees every line first. Viewers see your Say something and Do something words, exactly as you typed them, only after the director puts them in the story, and the narrator reads them aloud. The storyteller then describes what happens in its own words. Private notes stay with the director.',
         ],
       },
       {
@@ -876,9 +887,9 @@ export const topics: HelpTopic[] = [
 export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Beat', definition: 'One round of play. Players send lines, you pick which to use, and the AI writes a short scene. A beat ends when you publish it. The page counts it as Step 1 of 3 for a conversation or Step 1 of 5 for an action round.' },
   { term: 'Conversation', definition: 'A beat for talking. Players send Say something lines and private notes, and there are no dice.' },
-  { term: 'Action round', definition: 'A beat for something risky. A character tries a thing, you set the stakes, and the server rolls dice.' },
+  { term: 'Action round', definition: 'A beat for something risky. Each line a player sends can be one action: it leads its own roll or helps another character\'s. You set the stakes, and the server rolls dice once per roll. A round shows at most six rolls.' },
   { term: 'What\'s at risk', definition: 'The cards that show what a success, a cost or a setback would mean in the story. You approve them with Approve and roll before the dice roll.' },
-  { term: 'Contract', definition: 'The agreement for one character\'s action in an action round: the goal, the ruling, the trait, the risk and the outcomes.' },
+  { term: 'Contract', definition: 'The agreement for one roll in an action round: the goal, the ruling, the trait, the risk and the outcomes. A character leads it, and others may help. A character helps only one contract in a round.' },
   { term: 'Ruling', definition: 'Your decision on whether an action needs dice. Check means roll. No check means it works. Blocked means it cannot happen yet, and you explain what is missing. For No check and Blocked, the stage shows only the outcome that will happen, marked No roll needed or Blocked.' },
   { term: 'Trait', definition: 'One of a character\'s strengths, such as Wits. The server adds its value to the dice.' },
   { term: 'Risk', definition: 'How dangerous an action is. It is written in the contract and shown to viewers with the wager.' },

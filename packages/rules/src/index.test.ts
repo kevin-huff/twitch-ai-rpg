@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionContract, SessionState } from '@rpg/contracts';
-import { applyEffects, applyResolution, outcomeForTotal, resolveContracts, validateContracts, validateTraits } from './index';
+import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits } from './index';
 
 const state = () => ({
   characters: [
@@ -199,5 +199,60 @@ describe('RULE-04 dependent inventory preflight', () => {
     const roll = vi.fn(() => 6);
     expect(() => resolveContracts([left, right], current, roll)).toThrow(/capacity/i);
     expect(roll).not.toHaveBeenCalled();
+  });
+});
+
+describe('one action per line', () => {
+  const lines = (...characterIds: string[]) => characterIds.map((characterId, index) => ({ id: `line-${index}`, characterId }));
+  const second = (overrides: Partial<ActionContract> = {}) => contract({ id: 'second', ...overrides });
+
+  it('lets one character lead two contracts with two lines and rolls twice', () => {
+    const roll = vi.fn(() => 3);
+    const result = resolveContracts([contract(), second()], state(), roll, lines('lead', 'lead'));
+    expect(result.rolls).toHaveLength(2);
+    expect(roll).toHaveBeenCalledTimes(4);
+  });
+
+  it('refuses the same two contracts with one line', () => {
+    const roll = vi.fn(() => 3);
+    expect(() => resolveContracts([contract(), second()], state(), roll, lines('lead'))).toThrow('lead has more actions than lines this round. Each line can be one action.');
+    expect(roll).not.toHaveBeenCalled();
+  });
+
+  it('refuses two contracts led by one character when no lines are given', () => {
+    expect(() => validateContracts([contract(), second()], state())).toThrow(/more actions than lines/);
+  });
+
+  it('lets a character lead one contract and help another with two lines', () => {
+    const helped = second({ actorCharacterId: 'other', helperCharacterIds: ['lead'], edge: 1, edgeReason: 'A lookout' });
+    expect(() => validateContracts([contract(), helped], state(), lines('lead', 'lead', 'other'))).not.toThrow();
+  });
+
+  it('refuses a character helping their own contract', () => {
+    const own = contract({ helperCharacterIds: ['lead'], edge: 1, edgeReason: 'Hands full' });
+    expect(() => validateContracts([own], state(), lines('lead', 'lead'))).toThrow('lead cannot help their own action.');
+  });
+
+  it('refuses helping two contracts even with three lines', () => {
+    const first = contract({ helperCharacterIds: ['helper'], edge: 1, edgeReason: 'Watching' });
+    const next = second({ actorCharacterId: 'other', helperCharacterIds: ['helper'], edge: 1, edgeReason: 'Watching' });
+    expect(() => validateContracts([first, next], state(), lines('lead', 'helper', 'helper', 'helper', 'other'))).toThrow('helper can help only one action in a round.');
+  });
+
+  it('counts a repeated helper inside one contract', () => {
+    const doubled = contract({ helperCharacterIds: ['helper', 'helper'], edge: 1, edgeReason: 'Watching' });
+    expect(() => validateContracts([doubled], state(), lines('lead', 'helper', 'helper'))).toThrow(/can help only one action/);
+  });
+
+  it('names the character by display name when there is one', () => {
+    const current = state();
+    (current.characters[0] as { displayName?: string }).displayName = 'Dash';
+    expect(() => validateContracts([contract(), second()], current, lines('lead'))).toThrow(/^Dash has more actions/);
+  });
+
+  it('refuses more than six contracts with the exact message', () => {
+    const many = Array.from({ length: MAX_ROLLS_PER_ROUND + 1 }, (_, index) => contract({ id: `c${index}` }));
+    expect(() => validateContracts(many, state())).toThrow(tooManyRollsMessage(7));
+    expect(tooManyRollsMessage(7)).toBe('A round can show at most six rolls, and this plan needs 7. Untick some lines and plan again, then plan the rest in the next round.');
   });
 });

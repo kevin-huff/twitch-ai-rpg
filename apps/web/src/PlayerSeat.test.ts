@@ -248,7 +248,7 @@ describe('player seat', () => {
 
   it('shows only the filled-in character card fields', async () => {
     const w = await mountSeat(snapshot({}, { pronouns: 'she/her', appearance: '', personality: 'Careful and dry', specialty: 'Locks', flaw: '', possessions: ['Lockpick', 'Map'], connection: '', secret: 'Owes a debt' }));
-    expect(w.findAll('h2').map(heading => heading.text())).toEqual(['Skooty']);
+    expect(w.findAll('h2').map(heading => heading.text())).toEqual(['Skooty', 'The story']);
     expect(w.get('h1').text()).toBe('The Velvet Static');
     expect(w.get('details summary').text()).toBe('Who is Skooty?');
     const labels = w.findAll('dt').map(term => term.text());
@@ -309,7 +309,7 @@ describe('player seat', () => {
 
     it('adds no headings or card rows', async () => {
       const w = await mountSeat(snapshot(shown, { pronouns: 'she/her', portraitId: '22222222-2222-4222-8222-222222222222' }));
-      expect(w.findAll('h2').map(heading => heading.text())).toEqual(['Skooty']);
+      expect(w.findAll('h2').map(heading => heading.text())).toEqual(['Skooty', 'The story']);
       expect(w.findAll('dt').map(term => term.text())).toEqual(['Pronouns']);
     });
   });
@@ -496,5 +496,35 @@ describe('player seat', () => {
       expect(w.text()).not.toContain('You are changing a line');
       expect(value(w, 'speech-input')).toBe('Fresh follow-up\nWho sent you?');
     });
+  });
+});
+
+const published = (n: number, text: string) => ({
+  id: `beat-${n}`, kind: 'conversation', beatNumber: n, actionRoundNumber: 0, stateRevision: n, publishedAt: '2026-10-28T00:00:00Z',
+  segments: [{ id: `seg-${n}`, kind: 'narration', text, speaker: null, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: false }],
+  rolls: [], outcomes: [], textOnly: true,
+});
+
+describe('the story on the seat', () => {
+  it('shows the latest published beat and follows new snapshots', async () => {
+    const w = await mountSeat(snapshot({ history: [published(1, 'The rain starts.')] }));
+    expect(w.get('[data-testid="seat-story"]').text()).toContain('The rain starts.');
+    await refreshTo(snapshot({ history: [published(1, 'The rain starts.'), published(2, 'The alley goes quiet.')] }));
+    const text = w.get('[data-testid="seat-story"]').text();
+    expect(text).toContain('The alley goes quiet.');
+    expect(text).not.toContain('The rain starts.');
+  });
+
+  it('explains the empty story before any beat', async () => {
+    const w = await mountSeat(snapshot());
+    expect(w.get('[data-testid="seat-story-empty"]').text()).toBe('The story starts when the director publishes the first beat.');
+  });
+
+  it('tells players that viewers see and hear their words', async () => {
+    const w = await mountSeat(snapshot());
+    await click(w, 'Do something');
+    const help = w.findAll('.field-help').map(node => node.text()).join(' ');
+    expect(help).toContain('Viewers see these words on stream exactly as you type them, and hear them read aloud');
+    expect(help).toContain('Describe it in plain words.');
   });
 });

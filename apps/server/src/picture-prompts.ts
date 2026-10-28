@@ -142,7 +142,7 @@ const momentText = (text: string, names: string[]) => tidy(withoutNames(tidy(tex
 
 function momentNarration(moment: PictureMoment, names: string[]): string {
   const of = (kinds: PictureMoment['lines'][number]['kind'][]) => moment.lines.filter((line) => kinds.includes(line.kind)).map((line) => momentText(line.text, names)).filter(Boolean).join(' ');
-  return of(['narration']) || of(['npc_dialogue', 'player_dialogue']) || of(['outcome']);
+  return of(['narration']) || of(['npc_dialogue', 'player_dialogue', 'player_action']) || of(['outcome']);
 }
 
 // A leading article is lowercased so the words read on after "the person from image 1,".

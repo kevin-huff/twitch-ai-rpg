@@ -109,6 +109,9 @@ a.brand:hover { color: var(--candle); }
 .segment.npc_dialogue { padding-left: 16px; box-shadow: inset 4px 0 0 var(--candle); }
 .segment.player_dialogue { padding-left: 16px; box-shadow: inset 4px 0 0 var(--herb); }
 .segment.player_dialogue .speaker { color: var(--herb); }
+.segment.player_action { padding-left: 16px; box-shadow: inset 4px 0 0 var(--herb); }
+.segment.player_action .speaker { color: var(--herb); }
+.segment-tag { margin-left: 8px; font-family: var(--font-label); font-size: 16px; line-height: 20px; color: var(--dust); text-transform: uppercase; }
 .tabs { display: flex; gap: 8px; border-bottom: 2px solid var(--night-raised); padding-bottom: 12px; }
 .tabs button { flex: 1; padding-inline: 8px; }
 .empty { color: var(--dust); line-height: 28px; font-size: 20px; padding: 16px 0; }

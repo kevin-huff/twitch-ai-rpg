@@ -243,7 +243,10 @@ test('the overlay shows each wager in turn without cutting it, then every dice c
   if (state.activeBeat.draft?.continuity?.length) await beat({ type: 'approve_continuity', updates: state.activeBeat.draft.continuity });
   await beat({ type: 'publish_beat', expectedStateRevision: state.session.stateRevision, draftRevision: state.activeBeat.draftRevision, textOnly: true });
   expect(state.history).toHaveLength(1);
+  // The stream shows the real beat: the four Action lines (one per Do line) come first, then the two script lines.
+  expect(state.history.at(-1).segments.slice(0, 4).map((segment: any) => segment.kind)).toEqual(['player_action', 'player_action', 'player_action', 'player_action']);
   const segmentCount = state.history.at(-1).segments.length;
+  expect(segmentCount).toBe(6);
   expect(state.history.at(-1).rolls.length).toBeGreaterThan(0);
 
   // Second round: opened with its stakes approved, so the wager is up.

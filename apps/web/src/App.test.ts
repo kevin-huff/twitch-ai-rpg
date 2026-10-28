@@ -711,7 +711,8 @@ describe('public performance and player authority', () => {
     expect(wrapper.find('[data-testid="submission-form"]').exists()).toBe(true);
     for (const selector of ['.wager', '[data-testid="public-facts"]', '[aria-label="Published story"]', '[aria-label="Published corrections"]', '.roll']) expect(wrapper.find(selector).exists(), selector).toBe(false);
     const text = wrapper.text();
-    for (const absent of ['Tell me why.', 'Goal k1', 'Clean k1', 'Lark', 'Strain', 'wits', 'The ledger is in the safe.', 'The door was already open.', 'Find the missing ledger.']) expect(text, absent).not.toContain(absent);
+    expect(text).toContain('Tell me why.');
+    for (const absent of ['Goal k1', 'Clean k1', 'Lark', 'Strain', 'wits', 'The ledger is in the safe.', 'The door was already open.', 'Find the missing ledger.']) expect(text, absent).not.toContain(absent);
     wrapper.unmount();
   });
 

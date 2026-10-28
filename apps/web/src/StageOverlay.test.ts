@@ -57,11 +57,50 @@ describe('StageOverlay', () => {
     const stories = wrapper.findAll('.stage-story');
     expect(stories).toHaveLength(1);
     const text = stories[0]!.text();
-    expect(text).toContain('Narrator');
+    expect(text).not.toContain('Narrator');
     expect(text).toContain('Rain taps the glass.');
     expect(text).toContain('Old Brann');
     expect(text).toContain('You are late <b>again</b>.');
     expect(wrapper.find('.stage-story b').exists()).toBe(false);
+  });
+
+  it('renders no .who for narration and system lines', () => {
+    const base = snapshot();
+    const line = (id: string, kind: string) => ({
+      id, kind, text: `Line ${id}.`, speaker: null, recipientCharacterIds: [], delivery: 'public', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: false
+    });
+    const history = [{ ...base.history[0]!, segments: [line('n1', 'narration'), line('s1', 'system')] }];
+    const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history }), connected: true } });
+    expect(wrapper.findAll('.line')).toHaveLength(2);
+    expect(wrapper.find('.stage-story .who').exists()).toBe(false);
+    expect(wrapper.get('[data-segment-id="n1"]').text()).toBe('Line n1.');
+  });
+
+  it('shows an action line with its speaker, an Action tag and the words', () => {
+    const base = snapshot();
+    const history = [{
+      ...base.history[0]!,
+      segments: [{
+        id: 'a1', kind: 'player_action', text: 'I climb the fire escape.', speaker: { entityId: 'c1', displayName: 'Mara Vale' },
+        recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: ['sub1'], voiceProfileId: null, ttsEnabled: false
+      }]
+    }];
+    const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history }), connected: true } });
+    const line = wrapper.get('[data-segment-id="a1"]');
+    expect(line.classes()).toEqual(expect.arrayContaining(['line', 'player', 'action']));
+    expect(line.get('.who').text()).toBe('Mara Vale');
+    expect(line.get('.who').element.nextElementSibling?.className).toBe('line-tag');
+    expect(line.get('.line-tag').text()).toBe('Action');
+    expect(line.get('.said').text()).toBe('I climb the fire escape.');
+    expect(cssRule('.line-tag')).toContain('var(--font-label)');
+    expect(cssRule('.line-tag')).toContain('text-transform: uppercase');
+    expect(cssRule('.line-tag')).toContain('var(--dust)');
+  });
+
+  it('clips the stakes text inside the frame', () => {
+    const rule = cssRule('.wager-body');
+    expect(rule).toContain('max-height: calc(612px - 32px)');
+    expect(rule).toContain('overflow: hidden');
   });
 
   it('draws one roll per roll in cast order, and nowhere else', () => {
@@ -606,12 +645,13 @@ describe('StageOverlay', () => {
       recipientCharacterIds: [], delivery: 'public', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: false
     });
     const base = snapshot();
-    const history = [{ ...base.history[0]!, segments: [line('n1', 'narration', null), line('p1', 'player_dialogue', 'Mara Vale'), line('d1', 'npc_dialogue', 'Old Brann')] }];
+    const history = [{ ...base.history[0]!, segments: [line('n1', 'narration', null), line('p1', 'player_dialogue', 'Mara Vale'), line('a1', 'player_action', 'Mara Vale'), line('d1', 'npc_dialogue', 'Old Brann')] }];
     const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history }), connected: true, activeSegmentId: 'n1' } });
     const byId = (id: string) => wrapper.get(`[data-segment-id="${id}"]`).classes();
     expect(byId('n1')).toContain('speaking');
     expect(byId('n1')).not.toContain('dim');
     expect(byId('p1')).not.toContain('dim');
+    expect(byId('a1')).not.toContain('dim');
     expect(byId('d1')).toContain('dim');
     await wrapper.setProps({ activeSegmentId: 'p1' });
     expect(byId('p1')).toContain('speaking');
@@ -620,6 +660,7 @@ describe('StageOverlay', () => {
     expect(byId('d1')).toContain('dim');
     await wrapper.setProps({ activeSegmentId: 'd1' });
     expect(byId('p1')).not.toContain('dim');
+    expect(byId('a1')).not.toContain('dim');
     expect(byId('n1')).toContain('dim');
   });
 

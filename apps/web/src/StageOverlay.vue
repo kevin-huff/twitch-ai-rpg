@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { PublicActionContract, SessionSnapshot } from '@rpg/contracts';
+import { isPlayerSegmentKind, type PublicActionContract, type SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
 import { pictureUrl, portraitAlt, portraitIdFor, shownScenePicture } from './pictures';
 import {
@@ -59,10 +59,13 @@ function kindWord(kind: string): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 function dimmed(line: { id: string; kind: string }): boolean {
-  return hasActive.value && line.id !== props.activeSegmentId && line.kind !== 'player_dialogue';
+  return hasActive.value && line.id !== props.activeSegmentId && !isPlayerSegmentKind(line.kind);
 }
 function lineClass(kind: string): string {
-  return kind === 'npc_dialogue' ? 'npc' : kind === 'player_dialogue' ? 'player' : 'narration';
+  if (kind === 'npc_dialogue') return 'npc';
+  if (kind === 'player_dialogue') return 'player';
+  if (kind === 'player_action') return 'player action';
+  return 'narration';
 }
 
 const SPOTLIGHT_MS = 8000;
@@ -360,7 +363,7 @@ onBeforeUnmount(() => {
             v-for="line in lines" :key="line.id" class="line"
             :class="[lineClass(line.kind), chunkClass(line.id), { speaking: line.id === activeSegmentId, dim: dimmed(line) }]"
             :data-segment-id="line.id"
-          ><span class="who">{{ speakerName(line) }}</span> <span class="said">{{ line.text }}</span></p>
+          ><template v-if="line.kind !== 'narration' && line.kind !== 'system'"><span class="who">{{ speakerName(line) }}</span>{{ ' ' }}<template v-if="line.kind === 'player_action'"><span class="line-tag">Action</span>{{ ' ' }}</template></template><span class="said">{{ line.text }}</span></p>
         </div>
       </div>
     </template>
@@ -444,7 +447,7 @@ onBeforeUnmount(() => {
   left: 480px; top: 140px; width: 960px; max-height: 612px; padding: 16px 24px; box-sizing: border-box; overflow: hidden;
   border: 0; border-radius: 0; background: var(--night); box-shadow: var(--canvas-frame-window); clip-path: var(--cut-1);
 }
-.wager-body { display: grid; gap: 4px; transform-origin: top; }
+.wager-body { display: grid; gap: 4px; transform-origin: top; max-height: calc(612px - 32px); overflow: hidden; }
 .wager-goal {
   font-family: var(--font-body); font-size: 40px; font-weight: 400; line-height: 40px; color: var(--bone); overflow-wrap: anywhere;
 }
@@ -517,6 +520,7 @@ onBeforeUnmount(() => {
 .line.chunk-start { margin-top: auto; }
 .line.off-chunk { display: none; }
 .who { font-family: var(--font-body); font-size: 40px; font-weight: 400; line-height: 48px; color: var(--candle); }
+.line-tag { margin-left: 12px; font-family: var(--font-label); font-size: 24px; font-weight: 400; line-height: 28px; text-transform: uppercase; color: var(--dust); }
 .line.speaking::before {
   content: ''; position: absolute; left: 8px; top: 16px; width: 12px; height: 20px; background: var(--candle);
   clip-path: polygon(0 0, 4px 0, 4px 4px, 8px 4px, 8px 8px, 12px 8px, 12px 12px, 8px 12px, 8px 16px, 4px 16px, 4px 20px, 0 20px);

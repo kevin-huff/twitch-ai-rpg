@@ -51,8 +51,8 @@ test('director sees real task progress, real status and durable recorded usage',
   await expect(page.getByTestId('publish')).toBeEnabled();
   const operations = (await api(page, `${path}/operations`)).body;
   expect(operations.usage.ai).toMatchObject({ attempts: 2, succeeded: 2 });
-  expect(operations.usage.speech).toMatchObject({ attempts: 2, succeeded: 2 });
-  expect(operations.speech.draft).toMatchObject({ status: 'ready', completedSegments: 2, totalSegments: 2 });
+  expect(operations.usage.speech).toMatchObject({ attempts: 3, succeeded: 3 });
+  expect(operations.speech.draft).toMatchObject({ status: 'ready', completedSegments: 3, totalSegments: 3 });
   await page.getByTestId('script-line-0').click();
   const script = page.getByTestId('script-segment-0');
   await script.fill('An unsaved change survives status polling.');

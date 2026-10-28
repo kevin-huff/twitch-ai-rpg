@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { type ActionContract, type AiDraft, type Beat, MOMENT_PORTRAIT_MAX, PictureMomentSchema, type ScriptSegment, type SessionState } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
+import { fallbackDescription } from '../src/picture-prompts';
 import { type BeatPictureSource, buildPictureMoment, pictureCast, pictureLines } from '../src/picture-cast';
 
 const SETTINGS = { style: 'Soft watercolor', model: 'krea-2-turbo' };
@@ -274,5 +275,36 @@ describe('buildPictureMoment', () => {
     const moment = buildPictureMoment(state, { beat, published: null }, SETTINGS, new Set());
     expect(moment.cast.map((person) => person.name)).toEqual(['Rook', 'Lark', 'Mara Vale']);
     expect(JSON.stringify(moment)).not.toContain('SECRET-');
+  });
+});
+
+describe('player actions in a published beat', () => {
+  it('puts the actor in the cast and passes the line through with its kind', () => {
+    const state = makeState();
+    const lark = byName(state, 'Lark');
+    const source: BeatPictureSource = {
+      beat: beatOf(),
+      published: { segments: [segment('player_action', 'Lark climbs the fire escape.', { entityId: lark, displayName: 'Lark' })] },
+    };
+    expect(pictureCast(state, source).map((person) => person.name)).toEqual(['Lark']);
+    expect(pictureLines(state, source)).toEqual([{ kind: 'player_action', speaker: 'Lark', text: 'Lark climbs the fire escape.' }]);
+  });
+
+  it('describes the moment from the action words with names removed when nothing else is narrated', () => {
+    const state = makeState();
+    const [lark, mara] = [byName(state, 'Lark'), byName(state, 'Mara Vale')];
+    const source: BeatPictureSource = {
+      beat: beatOf(),
+      published: {
+        segments: [
+          segment('player_action', 'Lark climbs the fire escape.', { entityId: lark, displayName: 'Lark' }),
+          segment('npc_dialogue', 'Mara Vale waits below.', { entityId: mara, displayName: 'Mara Vale' }),
+        ],
+      },
+    };
+    const text = fallbackDescription(buildPictureMoment(state, source, SETTINGS, new Set()), 1000);
+    expect(text).toContain('climbs the fire escape');
+    expect(text).not.toContain('Lark');
+    expect(text).not.toContain('Mara');
   });
 });

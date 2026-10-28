@@ -167,6 +167,24 @@ describe('beat panel action bar', () => {
     wrapper.unmount();
   });
 
+  it('shows the locked player lines read-only above the script, with an Action tag on Do lines', async () => {
+    const say = line('say-1');
+    const act = { ...line('act-1', 'act'), text: '', intent: 'Climb the fire escape.', approach: 'Quietly.' };
+    const ooc = line('ooc-1', 'ooc');
+    const wrapper = await mountPanel(snapshot(review({ lockedSubmissions: [say, ooc, act] })));
+    const rows = wrapper.findAll('[data-testid="player-line"]');
+    expect(rows).toHaveLength(2);
+    expect(wrapper.get('[data-testid="player-lines"]').text()).toContain('Read aloud first, word for word');
+    expect(rows[0]!.text()).toContain('Skooty');
+    expect(rows[0]!.text()).toContain('Line say-1');
+    expect(rows[0]!.find('.player-line-tag').exists()).toBe(false);
+    expect(rows[1]!.get('.player-line-tag').text()).toBe('Action');
+    expect(rows[1]!.text()).toContain('Climb the fire escape.');
+    expect(rows[1]!.text()).toContain('Quietly.');
+    expect(wrapper.text()).toContain('Player lines and actions are read first, word for word, when you publish.');
+    wrapper.unmount();
+  });
+
   it('offers Save edits for a hand-written script before any draft exists', async () => {
     const wrapper = await mountPanel(snapshot(locked()));
     expect(wrapper.find('[data-testid="save-script"]').exists()).toBe(false);

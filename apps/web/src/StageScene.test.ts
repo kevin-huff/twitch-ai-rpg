@@ -392,6 +392,8 @@ describe('StageScene', () => {
       const spotlightHeight = /\n\.wager-card\.spotlight \{ height:\s*(\d+)px; \}/.exec(css);
       expect(Number(spotlightHeight![1])).toBeGreaterThanOrEqual(300);
       expect(Number(spotlightHeight![1])).toBeLessThanOrEqual(320);
+      expect(css).toMatch(/\n\.wager-card\.spotlight \{ grid-template-rows: minmax\(0, 1fr\); \}/);
+      expect(/\n\.wager-card\.spotlight > \.wager-main, \.wager-card\.spotlight > \.wager-results \{[^}]*min-height:\s*0[^}]*overflow:\s*hidden[^}]*align-self:\s*stretch[^}]*\}/.test(css)).toBe(true);
       expect(/\n\.dice-held \{[^}]*\}/.exec(css)![0]).toMatch(/display:\s*none/);
       const outside = css.replace(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g, '');
       expect(outside).not.toMatch(/animation:|transition:[^;]*border/);
@@ -518,17 +520,48 @@ describe('StageScene', () => {
     }
   });
 
-  it('never dims a player line, but dims narration and character lines while another line is speaking', () => {
+  it('never greys a player line or action, but turns narration and character lines dust while another line is speaking', () => {
     const source = readFileSync(resolve(process.cwd(), 'apps/web/src/StageScene.vue'), 'utf8');
     const css = source.slice(source.indexOf('<style'));
-    const dim = /\n(\.lines\.has-active[^{]*)\{[^}]*opacity:\s*0\.45[^}]*\}/.exec(css)![1]!.trim();
-    const wrapper = mountScene(snapshot(), { activeSegmentId: 'b1-s1' });
-    const lines = wrapper.get('.lines').element;
-    expect(lines.classList.contains('has-active')).toBe(true);
-    const dimmed = Array.from((wrapper.element as Element).querySelectorAll(dim));
-    expect(dimmed.map(line => line.getAttribute('data-segment-id'))).toEqual(['b1-s2']);
+    expect(css).not.toMatch(/opacity:\s*0\.45/);
+    const rule = /\n(\.lines\.has-active[^{]*)\{[^}]*color:\s*var\(--dust\)[^}]*\}/.exec(css)![1]!.trim();
+    const selectors = rule.split(',').map(selector => selector.trim());
+    expect(selectors).toHaveLength(2);
+    const action = { id: 'b1-s4', kind: 'player_action', text: 'I climb the fire escape.', speaker: { entityId: 'c2', displayName: 'Ren Ortega' }, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: true };
+    const base = beat('b1', 1);
+    const wrapper = mountScene(snapshot({ history: [{ ...base, segments: [...base.segments, action] }] }), { activeSegmentId: 'b1-s1' });
+    expect(wrapper.get('.lines').classes()).toContain('has-active');
+    const root = wrapper.element as Element;
+    for (const selector of selectors) {
+      const greyed = Array.from(root.querySelectorAll(selector)).map(node => node.closest('.line')!.getAttribute('data-segment-id'));
+      expect(new Set(greyed)).toEqual(new Set(['b1-s2']));
+    }
     expect(wrapper.get('.line.player_dialogue').classes()).not.toContain('speaking');
-    expect(dim).toContain(':not(.player_dialogue)');
+    expect(rule).toContain(':not(.player_dialogue)');
+    expect(rule).toContain(':not(.player_action)');
+  });
+
+  it('shows a player action with its name and the Action role word', () => {
+    const action = { id: 'b1-s4', kind: 'player_action', text: 'I climb the fire escape.', speaker: { entityId: 'c2', displayName: 'Ren Ortega' }, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: true };
+    const base = beat('b1', 1);
+    const wrapper = mountScene(snapshot({ history: [{ ...base, segments: [...base.segments, action] }] }));
+    const line = wrapper.get('[data-segment-id="b1-s4"]');
+    expect(line.classes()).toContain('player_action');
+    expect(line.get('.line-name').text()).toBe('Ren Ortega');
+    expect(line.get('.line-role').text()).toBe('Action');
+    expect(line.get('.line-text').text()).toBe('I climb the fire escape.');
+  });
+
+  it('keeps the facts inside a clipped body so a long list stays in its window', () => {
+    const wrapper = mountScene(snapshot({ facts: [{ id: 'f1', text: 'The vault is flooded.' }, { id: 'f2', text: 'Ren is the heir.' }] }));
+    const body = wrapper.get('[data-testid="public-facts"] .facts-body');
+    expect(body.findAll('.fact').map(fact => fact.text())).toEqual(['Ren is the heir.', 'The vault is flooded.']);
+    expect(wrapper.get('[data-testid="public-facts"] > .label').text()).toBe('Known to the party');
+    const source = readFileSync(resolve(process.cwd(), 'apps/web/src/StageScene.vue'), 'utf8');
+    const css = source.slice(source.indexOf('<style'));
+    expect(/\n\.facts-body\s*\{[^}]*overflow:\s*hidden[^}]*\}/.test(css)).toBe(true);
+    expect(/\n\.facts-body\s*\{[^}]*min-height:\s*0[^}]*\}/.test(css)).toBe(true);
+    expect(/\n\.facts\s*\{[^}]*flex-direction:\s*column[^}]*\}/.test(css)).toBe(true);
   });
 
   it('renders authored markup as text and never as elements', () => {

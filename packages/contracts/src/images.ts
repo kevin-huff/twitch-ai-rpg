@@ -94,7 +94,7 @@ export type PortraitJob = z.infer<typeof PortraitJobSchema>;
 export const PictureSceneSchema = z.strictObject({ title: z.string().max(160), description: z.string().max(6000), place: z.string().max(160) });
 export type PictureScene = z.infer<typeof PictureSceneSchema>;
 export const PictureLineSchema = z.strictObject({
-  kind: z.enum(['narration', 'npc_dialogue', 'player_dialogue', 'intent', 'approach', 'outcome']),
+  kind: z.enum(['narration', 'npc_dialogue', 'player_dialogue', 'player_action', 'intent', 'approach', 'outcome']),
   speaker: z.string().max(80).nullable(),
   text: z.string().max(6000),
 });

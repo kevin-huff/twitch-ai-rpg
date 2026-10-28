@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from 'pg';
 import { SessionOperationsSchema, type SessionOperations, type Beat, type SessionState } from '@rpg/contracts';
 import { transaction } from './database';
 import { AppError, authorize, currentBeat, readState, type Actor } from './repository';
+import { makeScript, speechLines } from './script';
 
 type AttemptKind = 'plan' | 'render' | 'speech';
 type AttemptStatus = 'succeeded' | 'failed' | 'interrupted';
@@ -59,10 +60,8 @@ export async function recordSpeechHit(pool: Pool, input: { sessionId: string; be
 
 function draftBinding(beat: Beat | null, state: SessionState, options: OperationsOptions) {
   if (!beat?.draft || beat.phase !== 'draft_review' || !beat.resolution || beat.sourceStateRevision !== state.session.stateRevision || state.session.status === 'ended') return null;
-  const lines = beat.draft.segments.map(segment => {
-    const npc = segment.kind === 'npc_dialogue' ? state.npcs.find(npc => npc.id === segment.speakerNpcId) : undefined;
-    return { kind: segment.kind, text: segment.text, speaker: npc?.displayName ?? 'Narrator', voiceProfileId: npc?.voiceProfileId ?? 'voice_narrator', delivery: segment.delivery };
-  });
+  if (beat.draft.segments.some(segment => segment.kind === 'npc_dialogue' && !state.npcs.some(npc => npc.id === segment.speakerNpcId))) return null;
+  const lines = speechLines(makeScript(beat, state));
   return { sourceHash: hash(lines), configHash: hash({ model: options.model, voiceId: options.voiceId, voices: options.voices ?? {}, segments: lines }) };
 }
 function speechStatus(row: any, now: number): 'preparing' | 'ready' | 'failed' | 'expired' {

@@ -174,6 +174,10 @@ const labels = [
   'Shows you can run',
   'Open the director page',
   'Back to the show',
+  'The story',
+  'Show the whole story',
+  'Hide the whole story',
+  'Read aloud first, word for word',
 ];
 
 // Help pages quote these as buttons; they ship on the help page itself.

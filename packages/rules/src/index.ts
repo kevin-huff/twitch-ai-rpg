@@ -90,10 +90,27 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
   return next;
 }
 
-export function validateContracts(contracts: ActionContract[], state: SessionState): void {
-  if (contracts.length > 6) throw new Error('At most six action contracts can be reviewed in one round.');
+export const MAX_ROLLS_PER_ROUND = 6;
+
+export function tooManyRollsMessage(count: number): string {
+  return `A round can show at most six rolls, and this plan needs ${count}. Untick some lines and plan again, then plan the rest in the next round.`;
+}
+
+export interface ContractLine { id: string; characterId: string }
+
+export function validateContracts(contracts: ActionContract[], state: SessionState, lines?: readonly ContractLine[]): void {
+  if (contracts.length > MAX_ROLLS_PER_ROUND) throw new Error(tooManyRollsMessage(contracts.length));
   const ordered = orderedContracts(contracts.map(contract => ActionContractSchema.parse(contract)));
-  const spent = new Set<string>();
+  const allowed = new Map<string, number>();
+  for (const line of lines ?? []) allowed.set(line.characterId, (allowed.get(line.characterId) ?? 0) + 1);
+  const used = new Map<string, number>();
+  const helped = new Map<string, number>();
+  const nameOf = (characterId: string) => state.characters.find(character => character.id === characterId)?.displayName ?? characterId;
+  const spend = (characterId: string) => {
+    const count = (used.get(characterId) ?? 0) + 1;
+    used.set(characterId, count);
+    if (count > (lines ? allowed.get(characterId) ?? 0 : 1)) throw new Error(`${nameOf(characterId)} has more actions than lines this round. Each line can be one action.`);
+  };
   for (const contract of ordered) {
     const actor = state.characters.find(character => character.id === contract.actorCharacterId);
     if (!actor) throw new Error('Unknown action actor.');
@@ -101,10 +118,14 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     if (actor.strain >= 4 && contract.ruling === 'check') throw new Error('Character needs help at four strain before another risky action.');
     if (contract.edge && !contract.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
     if (contract.helperCharacterIds.length && contract.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');
-    for (const characterId of [contract.actorCharacterId, ...contract.helperCharacterIds]) {
+    spend(contract.actorCharacterId);
+    for (const characterId of contract.helperCharacterIds) {
       if (!state.characters.some(character => character.id === characterId)) throw new Error('Unknown action helper.');
-      if (spent.has(characterId)) throw new Error('A character action cannot be spent as both helper and lead or twice in a round.');
-      spent.add(characterId);
+      if (characterId === contract.actorCharacterId) throw new Error(`${nameOf(characterId)} cannot help their own action.`);
+      const helps = (helped.get(characterId) ?? 0) + 1;
+      helped.set(characterId, helps);
+      if (helps > 1) throw new Error(`${nameOf(characterId)} can help only one action in a round.`);
+      spend(characterId);
     }
   }
   const ancestors = new Map<string, Set<string>>();
@@ -165,8 +186,8 @@ function validatePossibleEffects(contracts: ActionContract[], depths: Map<string
   visit(0);
 }
 
-export function resolveContracts(contracts: ActionContract[], state: SessionState, rollDie: () => number): Resolution {
-  validateContracts(contracts, state);
+export function resolveContracts(contracts: ActionContract[], state: SessionState, rollDie: () => number, lines?: readonly ContractLine[]): Resolution {
+  validateContracts(contracts, state, lines);
   const result: Resolution = { rolls: [], effects: [], outcomes: [], effectGroups: [] };
   const depths = new Map<string, number>();
   for (const contract of orderedContracts(contracts)) {

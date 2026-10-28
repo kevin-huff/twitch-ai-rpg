@@ -57,7 +57,7 @@ suite('durable coordinated public playback', () => {
     }
     throw new Error('The playback request did not enter an observable database lock wait.');
   }
-  async function seedPublication(number = 1) {
+  async function seedPublication(number = 1, withPlayerLine = false) {
     const id = randomUUID();
     const segments = [
       { id: randomUUID(), kind: 'narration', text: 'Only approved public narration.', speaker: null, voiceProfileId: null },
@@ -67,7 +67,7 @@ suite('durable coordinated public playback', () => {
     const publication = { id, kind: 'conversation', beatNumber: number, actionRoundNumber: 0, stateRevision: 1, publishedAt: new Date().toISOString(), segments, rolls: [], outcomes: [], textOnly: true };
     await pool.query("INSERT INTO beats(id,session_id,kind,phase,data) VALUES($1,$2,'conversation','published',$3)", [id, sessionId, {}]);
     await pool.query('INSERT INTO published_beats(id,session_id,beat_number,data) VALUES($1,$2,$3,$4)', [id, sessionId, number, publication]);
-    const prepared: AudioManifest = { beatId: id, segments: segments.filter(segment => segment.kind !== 'player_dialogue').map((segment, index) => ({ id: segment.id, text: segment.text, speaker: segment.speaker?.displayName ?? 'Narrator', voiceProfileId: segment.voiceProfileId ?? 'voice_narrator', url: `/api/sessions/${sessionId}/audio/assets/${createHash('sha256').update(`${id}-${index}`).digest('hex')}` })) };
+    const prepared: AudioManifest = { beatId: id, segments: segments.filter(segment => withPlayerLine || segment.kind !== 'player_dialogue').map((segment, index) => ({ id: segment.id, text: segment.text, speaker: segment.speaker?.displayName ?? 'Narrator', voiceProfileId: segment.voiceProfileId ?? 'voice_narrator', url: `/api/sessions/${sessionId}/audio/assets/${createHash('sha256').update(`${id}-${index}`).digest('hex')}` })) };
     for (const segment of prepared.segments) await pool.query("INSERT INTO audio_assets(id,session_id,content_type,byte_length) VALUES($1,$2,'audio/mpeg',4)", [segment.url.split('/').at(-1), sessionId]);
     await pool.query("INSERT INTO audio_manifests(session_id,beat_id,config_hash,status,lease_id,lease_until,manifest) VALUES($1,$2,'original','ready',$3,clock_timestamp(),$4)", [sessionId, id, randomUUID(), prepared]);
     return { id, manifest: prepared };
@@ -87,6 +87,25 @@ suite('durable coordinated public playback', () => {
     await start();
     expect(snapshot.manifest).toEqual(manifest);
   });
+  it('plays a recording that includes the player line, and refuses one missing the narration', async () => {
+    const withPlayer = await seedPublication(2, true);
+    expect(withPlayer.manifest.segments.map(segment => segment.speaker)).toEqual(['Narrator', 'Player', 'Mara']);
+    expect(withPlayer.manifest.segments[1]).toMatchObject({ speaker: 'Player', voiceProfileId: 'voice_narrator' });
+    await claim();
+    await ok('/commands', command('start', { beatId: withPlayer.id }));
+    expect(snapshot.manifest).toEqual(withPlayer.manifest);
+    const missing = await seedPublication(3, true);
+    await pool.query('UPDATE audio_manifests SET manifest=$3 WHERE session_id=$1 AND beat_id=$2', [sessionId, missing.id, { ...missing.manifest, segments: missing.manifest.segments.slice(1) }]);
+    expect((await request('/commands', command('start', { beatId: missing.id }))).statusCode).toBe(409);
+  });
+
+  it('stores segment index 41 and refuses 42', async () => {
+    await claim();
+    await ok('/commands', command('start'));
+    await pool.query('UPDATE session_playback SET segment_index=41 WHERE session_id=$1', [sessionId]);
+    await expect(pool.query('UPDATE session_playback SET segment_index=42 WHERE session_id=$1', [sessionId])).rejects.toMatchObject({ code: '23514' });
+  });
+
   beforeEach(async () => {
     hostToken = `playback-host-${randomUUID()}`;
     pool = createPool(databaseUrl!);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AudioManifestSchema, MAX_PLAYBACK_POSITION_MS, PLAYBACK_SCHEDULE_LEAD_MS, PRESENTER_LEASE_MS,
+  AudioManifestSchema, isSpokenSegmentKind, MAX_PLAYBACK_POSITION_MS, PLAYBACK_SCHEDULE_LEAD_MS, PRESENTER_LEASE_MS,
   PlaybackCommandSchema, PlaybackTelemetrySchema, PresenterCommandSchema, PublishedBeatSchema,
   type AudioManifest, type PlaybackCommand, type PlaybackResponse, type PlaybackSnapshot,
   type PlaybackTelemetry, type PresenterCommand,
@@ -92,8 +92,10 @@ async function preparedManifest(client: PoolClient, sessionId: string, beatId: s
   const parsed = AudioManifestSchema.safeParse(found.rows[0]?.manifest);
   if (!published.success || !parsed.success || parsed.data.beatId !== beatId) return conflict('Prepare valid published narration before playing it.');
   const manifest = parsed.data;
-  const canonical = published.data.segments.filter(segment => segment.kind === 'narration' || segment.kind === 'npc_dialogue');
-  if (canonical.length !== manifest.segments.length) conflict('The prepared narration does not match the published script.');
+  const spoken = published.data.segments.filter(segment => isSpokenSegmentKind(segment.kind));
+  const legacy = published.data.segments.filter(segment => segment.kind === 'narration' || segment.kind === 'npc_dialogue');
+  const sameIds = (list: typeof spoken) => list.length === manifest.segments.length && list.every((segment, index) => segment.id === manifest.segments[index]!.id);
+  const canonical = sameIds(spoken) ? spoken : sameIds(legacy) ? legacy : conflict('The prepared narration does not match the published script.');
   const prefix = `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/`;
   for (const [index, segment] of manifest.segments.entries()) {
     const source = canonical[index]!;

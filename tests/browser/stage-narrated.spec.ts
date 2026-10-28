@@ -14,6 +14,8 @@ test.setTimeout(150000);
 const MIN_CHUNK_MS = 4000;
 const WORDS_PER_SECOND = 2.5;
 
+const neededMs = (text: string) => Math.max(MIN_CHUNK_MS, (text.split(/\s+/).length / WORDS_PER_SECOND) * 1000);
+
 type Script = { narration: string; reply: string };
 
 // Signs in as host, has two test seats each send one Say line, plans, locks and drafts the beat, replaces the script
@@ -182,16 +184,24 @@ test('short player lines that share a chunk with a short first narration line st
     await expect.poll(async () => obs.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.stage-story .line'))
       .filter(line => !line.classList.contains('off-chunk')).map(line => line.dataset.segmentId))).toEqual([first, second, laugh]);
 
-    // Playback starts by itself after publishing. The narrator voices the short line briefly, then the director skips to the reply and stops.
+    // Playback starts by itself after publishing and reads the player lines first. Each stays up for its reading time while it is spoken, then the director
+    // skips to the short narration line, which the narrator voices briefly, then to the reply, and stops.
+    const speaking = async () => obs.evaluate(() => document.querySelector<HTMLElement>('.stage-story .line.speaking')?.dataset.segmentId ?? null);
     await expect.poll(async () => (await api(page, `${path}/playback`)).body.status, { timeout: 20000 }).toBe('playing');
-    await expect.poll(async () => obs.evaluate(() => document.querySelector<HTMLElement>('.stage-story .line.speaking')?.dataset.segmentId ?? null)).toBe(laugh);
+    await expect.poll(speaking).toBe(first);
+    await page.waitForTimeout(neededMs(lines[0]!) + 500);
+    await page.getByTestId('skip-audio').click();
+    await expect.poll(speaking).toBe(second);
+    await page.waitForTimeout(neededMs(lines[1]!) + 500);
+    await page.getByTestId('skip-audio').click();
+    await expect.poll(speaking).toBe(laugh);
     await page.waitForTimeout(1500);
     await page.getByTestId('skip-audio').click();
     await expect.poll(async () => obs.evaluate(() => document.querySelector<HTMLElement>('.stage-story .line.speaking')?.dataset.segmentId ?? null)).toBe(answer);
     await page.waitForTimeout(3000);
     await page.getByTestId('stop-audio').click();
     await expect.poll(async () => obs.evaluate(() => document.querySelector('.stage-story .line.speaking'))).toBeNull();
-    // The reply chunk finishes its reading time, then the player chunk comes back for its own.
+    // Let the overlay settle; the player lines were voiced and read, so their chunk need not come back.
     await page.waitForTimeout(25000);
 
     const samples: { t: number; shown: string[]; full: string[]; speaking: string | null }[] = await obs.evaluate(() => (window as any).__samples);
@@ -209,7 +219,7 @@ test('short player lines that share a chunk with a short first narration line st
           longest = Math.max(longest, run);
         } else run = 0;
       }
-      const needed = Math.max(MIN_CHUNK_MS, (text.split(/\s+/).length / WORDS_PER_SECOND) * 1000);
+      const needed = neededMs(text);
       report.push(`${text}: longest ${longest}ms, total ${total}ms, needs ${needed}ms`);
       expect(longest, report.join('; ')).toBeGreaterThanOrEqual(needed);
     }

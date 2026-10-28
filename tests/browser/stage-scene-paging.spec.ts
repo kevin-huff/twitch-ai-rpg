@@ -96,8 +96,13 @@ test('the full scene pages tall lines so every row shows, with the wager feature
   expect(state.history).toHaveLength(1);
   const published = state.history.at(-1);
   expect(published.rolls.length).toBeGreaterThanOrEqual(3);
-  const segmentIds: string[] = published.segments.map((segment: any) => segment.id);
+  // Each Do line publishes first as its own Action line, one per player, before the three script lines.
+  expect(published.segments.slice(0, 4).map((segment: any) => segment.kind)).toEqual(['player_action', 'player_action', 'player_action', 'player_action']);
+  expect(published.segments).toHaveLength(7);
+  // The page-by-page timing below was built around exactly the three script lines, so the stream pages here do not see the four action lines.
+  const segmentIds: string[] = published.segments.filter((segment: any) => segment.kind !== 'player_action').map((segment: any) => segment.id);
   expect(segmentIds).toHaveLength(3);
+  const withoutActions = (body: any) => { const latest = body.history.at(-1); latest.segments = latest.segments.filter((segment: any) => segment.kind !== 'player_action'); };
 
   // Second round: open it and approve its stakes so the public wager shows in the full scene.
   await openRound('Leave by the coal chute');
@@ -119,6 +124,7 @@ test('the full scene pages tall lines so every row shows, with the wager feature
     await stakesContext.route(/\/api\/sessions\/[^/?]+\?view=stage$/, async route => {
       const response = await route.fetch();
       const body = await response.json();
+      withoutActions(body);
       const stakes = body.activeBeat.stakes;
       body.activeBeat.stakes = body.characters.slice(0, 4).map((character: any, index: number) => ({ ...stakes[index % stakes.length], id: `stake-${index}`, actorCharacterId: character.id, intent: goals[index] }));
       await route.fulfill({ response, json: body });
@@ -206,6 +212,7 @@ test('the full scene pages tall lines so every row shows, with the wager feature
     await diceContext.route(/\/api\/sessions\/[^/?]+\?view=stage$/, async route => {
       const response = await route.fetch();
       const body = await response.json();
+      withoutActions(body);
       delete body.activeBeat.stakes;
       await route.fulfill({ response, json: body });
     });

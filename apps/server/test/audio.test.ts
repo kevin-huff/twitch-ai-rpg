@@ -53,17 +53,24 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
     expect((await request(`/api/sessions/${sessionId}/audio/${draftId}`, host, { commandId: crypto.randomUUID() })).statusCode).toBe(404);
     expect(synthesize).not.toHaveBeenCalled();
   });
-  it('sends only approved narrator/NPC text and caches identical requests', async () => {
+  it('voices player lines with the name in front, never private text, and caches identical requests', async () => {
     const first = await request(`/api/sessions/${sessionId}/audio/${beatId}`, host, { commandId: crypto.randomUUID() });
     expect(first.statusCode, first.body).toBe(200);
     expect(first.json().status).toBe('ready');
-    expect(synthesize).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(synthesize.mock.calls)).not.toContain('My exact player words');
+    expect(synthesize).toHaveBeenCalledTimes(3);
+    const sent = synthesize.mock.calls.map(call => call[0].text);
+    const lookup = createPool(process.env.TEST_DATABASE_URL!);
+    const published = (await lookup.query('SELECT data FROM published_beats WHERE session_id=$1 AND id=$2', [sessionId, beatId]).finally(() => lookup.end())).rows[0].data;
+    const playerSegment = published.segments.find((s: any) => s.kind === 'player_dialogue');
+    expect(playerSegment.text).toBe('My exact player words stay silent.');
+    expect(sent).toContain(`${playerSegment.speaker.displayName}: My exact player words stay silent.`);
+    for (const segment of published.segments.filter((s: any) => s.kind === 'narration' || s.kind === 'npc_dialogue')) expect(sent).toContain(segment.text);
+    expect(first.json().manifest.segments.find((s: any) => s.id === playerSegment.id)).toMatchObject({ text: 'My exact player words stay silent.', speaker: playerSegment.speaker.displayName });
     expect(JSON.stringify(synthesize.mock.calls)).not.toContain('archive safe');
     expect(JSON.stringify(synthesize.mock.calls)).not.toContain('brass key');
     const repeated = await request(`/api/sessions/${sessionId}/audio/${beatId}`, host, { commandId: crypto.randomUUID() });
     expect(repeated.json()).toEqual(first.json());
-    expect(synthesize).toHaveBeenCalledTimes(2);
+    expect(synthesize).toHaveBeenCalledTimes(3);
   });
   it('allows authorized stage assets and denies anonymous access without changing canon', async () => {
     const publicManifest = await request(`/api/sessions/${sessionId}/audio/${beatId}`, stage);

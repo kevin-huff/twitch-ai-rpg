@@ -8,7 +8,12 @@ import {
   PublicCharacterSchema,
   NpcKnowledgeSchema,
   RedeemResponseSchema,
+  ScriptSegmentSchema,
   SessionSnapshotSchema,
+  isPlayerSegmentKind,
+  isSpokenSegmentKind,
+  playerWords,
+  spokenText,
   TraitsSchema,
 } from './index.js';
 
@@ -116,5 +121,39 @@ describe('Sprint A contracts', () => {
     expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'player', characterName: 'Ana' }).success).toBe(true);
     expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'stage' }).success).toBe(true);
     expect(InvitePreviewResponseSchema.safeParse({ title: 'T', role: 'stage', x: 1 }).success).toBe(false);
+  });
+});
+
+describe('player line helpers', () => {
+  const act = (intent: string, approach: string) => ({ kind: 'act' as const, text: '', intent, approach });
+  it('parses a player_action segment', () => {
+    const segment = { id: 's1', kind: 'player_action', text: 'I climb.', speaker: { entityId: 'c1', displayName: 'Dash' }, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: ['u1'], voiceProfileId: null, ttsEnabled: false };
+    expect(ScriptSegmentSchema.parse(segment).kind).toBe('player_action');
+  });
+  it('returns say text unchanged', () => {
+    expect(playerWords({ kind: 'say', text: '  hello   there \n', intent: 'x', approach: 'y' })).toBe('  hello   there \n');
+  });
+  it('returns a seat-style act once', () => {
+    expect(playerWords(act('I climb up.', 'I climb up.'))).toBe('I climb up.');
+  });
+  it('joins differing intent and approach with a newline', () => {
+    expect(playerWords(act('Get in', ' quietly '))).toBe('Get in\n quietly ');
+  });
+  it('skips a blank approach or intent', () => {
+    expect(playerWords(act('Get in', '  '))).toBe('Get in');
+    expect(playerWords(act('', 'Slowly'))).toBe('Slowly');
+  });
+  it('returns nothing for ooc', () => {
+    expect(playerWords({ kind: 'ooc', text: 'brb', intent: '', approach: '' })).toBe('');
+  });
+  it('prefixes the speaker for player kinds only', () => {
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: 'Hi.' })).toBe('Dash: Hi.');
+    expect(spokenText({ kind: 'player_action', speaker: 'Dash', text: 'I run.' })).toBe('Dash: I run.');
+    expect(spokenText({ kind: 'narration', speaker: 'Narrator', text: 'Night falls.' })).toBe('Night falls.');
+  });
+  it('classifies every kind', () => {
+    const kinds = ['narration', 'npc_dialogue', 'player_dialogue', 'player_action', 'system'];
+    expect(kinds.map(isSpokenSegmentKind)).toEqual([true, true, true, true, false]);
+    expect(kinds.map(isPlayerSegmentKind)).toEqual([false, false, true, true, false]);
   });
 });

@@ -284,6 +284,67 @@ describe('ClewdR native adapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  describe('one action per line', () => {
+    const outcome = { publicText: 'It goes as planned.', effects: [] };
+    function lines(...owners: number[]) {
+      const ctx = context();
+      const submissions = owners.map((owner, index) => SubmissionSchema.parse({
+        id: `line-${index}`, sessionId: ctx.state.session.id, characterId: ctx.state.characters[owner].id,
+        contextBeatId: 'beat', inputEpoch: 1, revision: 1, kind: 'act', text: '', intent: `Intent ${index}.`, approach: `Approach ${index}.`, status: 'locked',
+      }));
+      ctx.submissions = submissions;
+      ctx.beat = { ...ctx.beat, selectedSubmissionIds: submissions.map((submission) => submission.id), lockedSubmissions: submissions };
+      return ctx;
+    }
+    function contract(ctx: ProviderContext, id: string, actor: number, helpers: number[], submissionId: string) {
+      return {
+        id, version: 1, actorCharacterId: ctx.state.characters[actor].id, helperCharacterIds: helpers.map((helper) => ctx.state.characters[helper].id),
+        submissionIds: [submissionId], intent: 'Do the thing.', approach: 'Carefully.', ruling: 'no_check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
+        prerequisites: [], fallback: { kind: 'hold' }, outcomes: { clean: outcome, costly: outcome, setback: outcome },
+      };
+    }
+    const plan = (contracts: unknown[]) => ({ classification: 'action', directorSummary: 'Actions.', contracts });
+
+    it('puts the one-action-per-line rule in the planner rules and the shown-first line in the system prompt', async () => {
+      const ctx = context();
+      const fetchMock = replying({ classification: 'ordinary', contracts: [], directorSummary: 'A question.' });
+      await ai(fetchMock).plan(ctx);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      const sent = JSON.parse(body.messages[0].content);
+      expect(sent.rules).toContain('One action per line: each selected line lets its character lead one contract, with its own roll, or help another character\'s contract. A character helps at most one contract per round, and never one they lead.');
+      expect(sent.rules).not.toContain('One action per character');
+      expect(body.system).toContain('continue from them instead of restating them');
+    });
+
+    it('accepts two contracts led by one character on that character\'s two lines', async () => {
+      const ctx = lines(0, 0);
+      const result = plan([contract(ctx, 'first', 0, [], 'line-0'), contract(ctx, 'second', 0, [], 'line-1')]);
+      const fetchMock = replying(result);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(result);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts seven valid contracts on seven lines', async () => {
+      const ctx = lines(0, 0, 0, 1, 1, 2, 3);
+      const owners = [0, 0, 0, 1, 1, 2, 3];
+      const result = plan(owners.map((owner, index) => contract(ctx, `c${index}`, owner, [], `line-${index}`)));
+      expect(await ai(replying(result)).plan(ctx)).toEqual(result);
+    });
+
+    it.each([
+      ['leading two contracts with one line', () => { const ctx = lines(0, 1); return [ctx, [contract(ctx, 'a', 0, [], 'line-0'), contract(ctx, 'b', 0, [], 'line-0')], 'more actions than they have selected lines'] as const; }],
+      ['helping two contracts', () => { const ctx = lines(0, 1, 2, 2); return [ctx, [contract(ctx, 'a', 0, [2], 'line-0'), contract(ctx, 'b', 1, [2], 'line-1')], 'helps at most one contract per round'] as const; }],
+      ['helping your own contract', () => { const ctx = lines(0, 1); return [ctx, [contract(ctx, 'a', 0, [0], 'line-0'), contract(ctx, 'b', 1, [], 'line-1')], 'cannot help a contract they lead'] as const; }],
+    ])('refuses %s twice and then fails', async (_name, build) => {
+      const [ctx, contracts, reason] = build();
+      const fetchMock = replying(plan([...contracts]));
+      await expect(ai(fetchMock).plan(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+      expect(second.messages[2].content).toContain(reason);
+    });
+  });
+
   it('sends a refused draft back once with the reason and accepts the corrected draft', async () => {
     const ctx = context();
     const update = {

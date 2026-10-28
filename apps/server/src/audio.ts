@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { PublishedBeatSchema } from '@rpg/contracts';
+import { isSpokenSegmentKind, PublishedBeatSchema, spokenText } from '@rpg/contracts';
 import { cachedSpeech, saveSpeechProgress } from './draft-audio';
 import { transaction } from './database';
 import { AppError, authorize, type Actor } from './repository';
@@ -57,7 +57,7 @@ export function registerAudio(app: FastifyInstance, options: AudioOptions) {
     if (!options.provider) throw new AppError(503, 'speech_disabled', 'Speech is not configured. Continue with the published text.');
     const { sessionId, beatId } = request.params;
     const configHash = digest({ model: options.model, voiceId: options.voiceId, voices: options.voices ?? {}, segments: publication.segments });
-    const segments = publication.segments.filter(segment => segment.kind === 'narration' || segment.kind === 'npc_dialogue');
+    const segments = publication.segments.filter(segment => isSpokenSegmentKind(segment.kind));
     const lease = randomUUID();
     const acquired = await transaction(pool, async client => {
       const result = await client.query(`INSERT INTO audio_manifests(session_id,beat_id,config_hash,status,lease_id,lease_until,started_at,total_segments)
@@ -84,8 +84,9 @@ export function registerAudio(app: FastifyInstance, options: AudioOptions) {
       for (const segment of segments) {
         await current(async () => {});
         const voiceProfileId = segment.voiceProfileId ?? 'voice_narrator';
-        const { assetId } = await cachedSpeech(options, { sessionId, beatId, operationId: lease, text: segment.text, voiceProfileId, delivery: segment.delivery });
-        manifest.segments.push({ id: segment.id, text: segment.text, speaker: segment.speaker?.displayName ?? 'Narrator', voiceProfileId, url: `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${assetId}` });
+        const speaker = segment.speaker?.displayName ?? 'Narrator';
+        const { assetId } = await cachedSpeech(options, { sessionId, beatId, operationId: lease, text: spokenText({ kind: segment.kind, speaker, text: segment.text }), voiceProfileId, delivery: segment.delivery });
+        manifest.segments.push({ id: segment.id, text: segment.text, speaker, voiceProfileId, url: `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${assetId}` });
         await current(client => saveSpeechProgress(client, sessionId, { kind: 'published', beatId, configHash, leaseId: lease, completed: manifest.segments.length, total: segments.length }));
       }
       await current(async client => {

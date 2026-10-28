@@ -55,7 +55,10 @@ test('director previews saved narration privately and publishes that recording o
   await expect(publish).toBeEnabled();
   await expect(publish).toHaveText('Publish');
   const ready = (await api(page, audioPath)).body.manifest;
-  expect(ready.segments).not.toContainEqual(expect.objectContaining({ text: quote }));
+  // The player's quoted line is voiced: it is the first recorded segment, word for word, ahead of the AI's script.
+  expect(ready.segments[0]).toMatchObject({ text: quote });
+  expect(ready.segments).toHaveLength(before.activeBeat.draft.segments.length + 1);
+  expect(ready.segments.slice(1).map((s: any) => s.text)).toEqual(before.activeBeat.draft.segments.map((s: any) => s.text));
   expect((await api(player, audioPath)).status).toBe(403);
   const privateMedia = ready.segments[0].url;
   expect((await api(player, privateMedia.replace(/^\/api/, ''))).status).toBe(403);
@@ -87,9 +90,10 @@ test('director previews saved narration privately and publishes that recording o
   const publication = after.history[0];
   expect(publication.textOnly).toBe(false);
   expect(publication.audioManifestKey).toMatch(/^[a-f0-9]{64}$/);
-  expect(publication.segments.filter((s: any) => s.kind === 'player_dialogue')).toEqual([expect.objectContaining({ text: quote, ttsEnabled: false })]);
+  expect(publication.segments.filter((s: any) => s.kind === 'player_dialogue')).toEqual([expect.objectContaining({ text: quote, ttsEnabled: true })]);
   const publicAudio = (await api(player, `${path}/audio/${publication.id}`)).body.manifest;
   expect(publicAudio.segments.map((s: any) => s.text)).toEqual(ready.segments.map((s: any) => s.text));
+  expect(publicAudio.segments.map((s: any) => s.id)).toEqual(publication.segments.map((s: any) => s.id));
   expect((await api(page, audioPath)).status).toBe(409);
   expect((await api(page, `${path}/playback`)).body.status).toBe('idle');
   await player.close();

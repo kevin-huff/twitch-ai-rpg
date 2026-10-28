@@ -72,7 +72,7 @@ function portraitSrc(entityId: string): string | null {
   return imageId && !broken.value.has(imageId) ? pictureUrl({ kind: 'session', sessionId: session.value.id }, imageId) : null;
 }
 function speakerPortrait(segment: { kind: string; speaker: { entityId: string } | null }): string | null {
-  return segment.speaker && (segment.kind === 'player_dialogue' || segment.kind === 'npc_dialogue') ? portraitSrc(segment.speaker.entityId) : null;
+  return segment.speaker && (segment.kind === 'player_dialogue' || segment.kind === 'player_action' || segment.kind === 'npc_dialogue') ? portraitSrc(segment.speaker.entityId) : null;
 }
 function markPortraitBroken(entityId: string) {
   const imageId = portraitIdFor(props.snapshot, entityId);
@@ -412,7 +412,9 @@ onBeforeUnmount(() => {
       </div>
       <section v-if="facts.length" class="facts" data-testid="public-facts">
         <p class="label">Known to the party</p>
-        <p v-for="fact in facts" :key="fact.id" class="fact">{{ fact.text }}</p>
+        <div class="facts-body">
+          <p v-for="fact in facts" :key="fact.id" class="fact">{{ fact.text }}</p>
+        </div>
       </section>
       <section v-if="!pictureSrc" class="about">
         <p class="label">The scene</p>
@@ -488,6 +490,8 @@ onBeforeUnmount(() => {
 }
 .wager-list[data-count='1'] .wager-card, .wager-card.spotlight { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 24px; align-items: start; }
 .wager-card.spotlight { height: 320px; }
+.wager-card.spotlight { grid-template-rows: minmax(0, 1fr); }
+.wager-card.spotlight > .wager-main, .wager-card.spotlight > .wager-results { min-height: 0; overflow: hidden; align-self: stretch; }
 .wager-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .wager-results { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .wager-name { font-family: var(--font-body); font-size: 40px; line-height: 48px; font-weight: 400; color: var(--candle); overflow-wrap: anywhere; }
@@ -568,7 +572,7 @@ onBeforeUnmount(() => {
 .line .line-role { font-family: var(--font-label); font-size: 24px; line-height: 40px; font-weight: 400; color: var(--dust); text-transform: uppercase; letter-spacing: 0; }
 .line .line-text { font-family: var(--font-body); font-size: 40px; line-height: 48px; font-weight: 400; color: var(--bone); white-space: pre-wrap; overflow-wrap: anywhere; }
 .line.narration .line-text, .line.system .line-text { color: var(--dust); }
-.lines.has-active .line:not(.speaking):not(.player_dialogue) { opacity: 0.45; }
+.lines.has-active .line:not(.speaking):not(.player_dialogue):not(.player_action) .line-name, .lines.has-active .line:not(.speaking):not(.player_dialogue):not(.player_action) .line-text { color: var(--dust); }
 .line.speaking::after {
   content: ''; position: absolute; inset: 88px auto auto 8px; width: 12px; height: 20px; background: var(--candle);
   clip-path: polygon(0 0, 4px 0, 4px 4px, 8px 4px, 8px 8px, 12px 8px, 12px 12px, 8px 12px, 8px 16px, 4px 16px, 4px 20px, 0 20px);
@@ -597,7 +601,8 @@ onBeforeUnmount(() => {
 .meter-line .pip { width: 12px; }
 .meter-line .meter-count { line-height: 32px; }
 .facts, .about { box-sizing: border-box; min-height: 0; overflow: hidden; padding: 16px 20px; background: var(--night); box-shadow: var(--canvas-frame-window); clip-path: var(--cut-1); }
-.facts { flex: 1 1 0; }
+.facts { flex: 1 1 0; display: flex; flex-direction: column; }
+.facts-body { flex: 1 1 0; min-height: 0; overflow: hidden; }
 .fact { font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--bone); margin-bottom: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rail.with-picture { top: 455px; height: 345px; }
 .about { flex: 0 0 auto; }

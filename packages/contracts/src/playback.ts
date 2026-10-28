@@ -6,18 +6,20 @@ export const PLAYBACK_POSITION_REPORT_MS = 1_000;
 export const PLAYBACK_SCHEDULE_LEAD_MS = 500;
 export const PLAYBACK_SEEK_THRESHOLD_MS = 750;
 export const MAX_PLAYBACK_POSITION_MS = 3_600_000;
+// 30 script segments plus up to 12 player lines (plan_beat selects at most 12) in one recording.
+export const MAX_SPOKEN_SEGMENTS = 42;
 
 const id = z.string().min(1).max(128);
 const revision = z.number().int().nonnegative();
 const time = z.number().int().nonnegative();
 const position = z.number().int().min(0).max(MAX_PLAYBACK_POSITION_MS);
-const segmentIndex = z.number().int().min(0).max(29);
+const segmentIndex = z.number().int().min(0).max(MAX_SPOKEN_SEGMENTS - 1);
 export const AudioManifestSchema = z.strictObject({
   beatId: id,
   segments: z.array(z.strictObject({
     id, text: z.string().min(1).max(6000), speaker: z.string().min(1).max(120), voiceProfileId: id,
     url: z.string().regex(/^\/api\/sessions\/[^/?#]+\/audio\/assets\/[a-f0-9]{64}$/),
-  })).min(1).max(30),
+  })).min(1).max(MAX_SPOKEN_SEGMENTS),
 });
 export type AudioManifest = z.infer<typeof AudioManifestSchema>;
 
