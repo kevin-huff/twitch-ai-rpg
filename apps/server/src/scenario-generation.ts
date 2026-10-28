@@ -13,6 +13,7 @@ export function scenarioFromDraft(
   draft: ScenarioDraft,
   boundaries: string[],
   makeId: () => string = randomUUID,
+  voiceIds: readonly string[] = [],
 ): { definition: ScenarioDefinition; adjustments: string[]; warnings: string[]; suggestedBoundaries: string[] } {
   const adjustments: string[] = [];
   const warnings: string[] = [];
@@ -85,12 +86,15 @@ export function scenarioFromDraft(
     const limits = cleanList(npc.limits, 'limits of');
     const dialogueExamples = cleanList(npc.dialogueExamples, 'sample lines of');
     const secrets = cleanList(npc.secrets, 'secrets of');
+    const pickedVoice = npc.voice?.trim() ?? '';
+    const voiceProfileId = pickedVoice && voiceIds.includes(pickedVoice) ? pickedVoice : 'narrator';
+    if (pickedVoice && voiceIds.length > 0 && voiceProfileId === 'narrator') adjustCharacter(`${name}'s voice is not on the voice list, so the narrator reads them.`);
     npcs.push({
       id: makeId(), displayName: name, role: npc.role.trim(), appearance: npc.appearance.trim(),
       aliases, hiddenIdentity, personality,
       motivation: npc.motivation.trim(), goal: npc.goal.trim(), limits,
       dialogueExamples, mood: mood || 'neutral', locationId, status,
-      communicationChannel: channel, voiceProfileId: 'narrator', secrets,
+      communicationChannel: channel, voiceProfileId, secrets,
       knowledge, partyRelationship,
     });
   }

@@ -21,7 +21,7 @@ export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | 
       : { headline: `What does ${name} say?`, detail: 'Type the exact words, then press Send.', tone: 'act' };
   }
   if (beat.phase === 'stakes_review') {
-    return beat.kind === 'action'
+    return beat.kind === 'action' || beat.stakes.length === 0 || beat.stakes.some(stake => stake.ruling === 'check')
       ? { headline: 'Getting the dice ready', detail: 'The director is deciding what could happen. You can still change your line until it is locked in.', tone: 'wait' }
       : { headline: 'The director is checking the lines', detail: 'You can still change your line until it is locked in.', tone: 'wait' };
   }

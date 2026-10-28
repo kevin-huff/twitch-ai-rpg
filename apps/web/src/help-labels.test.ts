@@ -178,6 +178,14 @@ const labels = [
   'Show the whole story',
   'Hide the whole story',
   'Read aloud first, word for word',
+  'Your voice',
+  'The narrator reads my lines',
+  'Play sample',
+  'Tuned for v4',
+  'Help me say it',
+  'Use this',
+  'Read as',
+  'Delivery',
 ];
 
 // Help pages quote these as buttons; they ship on the help page itself.

@@ -141,4 +141,16 @@ describe('SeatStory', () => {
     expect(wrapper.text()).toContain('The alley goes quiet.');
     expect(wrapper.text()).not.toContain('The rain starts.');
   });
+
+  it('shows a voice copy line as its plain words, never its audio tags', () => {
+    const tagged = (id: string, kind: ScriptSegment['kind'], name?: string): ScriptSegment => ({
+      ...segment(id, kind, 'Keep your voice down.', name), voiceText: '[whispers] Keep your voice down.',
+    });
+    const whispered = beat(4, [tagged('vn', 'narration'), tagged('vx', 'npc_dialogue', 'Guard'), tagged('vp', 'player_dialogue', 'Dash')]);
+    const wrapper = mount(SeatStory, { props: { history: [whispered], characters } });
+    expect(wrapper.text()).toContain('Keep your voice down.');
+    expect(wrapper.findAll('[data-testid="seat-story-line"]')).toHaveLength(3);
+    expect(wrapper.html()).not.toContain('[whispers]');
+    expect(wrapper.text()).not.toContain('[whispers]');
+  });
 });

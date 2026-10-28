@@ -208,6 +208,6 @@ describe('critical band and tag-free speech', () => {
     expect(spokenText({ kind: 'player_action', speaker: 'Dash', text: 'Get in\nquietly' })).toBe('Dash: Get in\nquietly');
   });
   it('speaks a tag-only line as the name', () => {
-    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: '<grin>' })).toBe('Dash:');
+    expect(spokenText({ kind: 'player_dialogue', speaker: 'Dash', text: '<grin>' })).toBe('Dash');
   });
 });

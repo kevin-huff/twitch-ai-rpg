@@ -175,6 +175,34 @@ describe('StakesCards', () => {
     wrapper.unmount();
   });
 
+  it('shows no critical row or field for blocked and no-check contracts', async () => {
+    const blocked = contract('c-1', { ruling: 'blocked' });
+    const free = contract('c-2', { ruling: 'no_check' });
+    for (const item of [blocked, free]) (item.outcomes as Record<string, unknown>).critical = { publicText: 'Disaster.', effects: [] };
+    const { wrapper } = await mountCards({ contracts: [blocked, free] });
+    for (const id of ['c-1', 'c-2']) {
+      const card = wrapper.get(`[data-testid="stakes-card-${id}"]`);
+      expect(card.find('[data-testid="outcome-critical-read"]').exists()).toBe(false);
+      expect(card.text()).not.toContain('Critical failure');
+      await wrapper.get(`[data-testid="stakes-edit-${id}"]`).trigger('click');
+      expect(card.find('[data-testid="outcome-critical"]').exists()).toBe(false);
+      expect(card.text()).not.toContain('Critical failure');
+    }
+    wrapper.unmount();
+  });
+
+  it('removes the critical branch when its text is cleared and Load contract edits still works', async () => {
+    const { wrapper, contracts } = await mountCards({ contracts: [contract('c-1')] });
+    await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
+    await wrapper.get('[data-testid="outcome-critical"]').setValue('It all goes wrong.');
+    expect((contracts[0].outcomes as { critical?: unknown }).critical).toBeTruthy();
+    await wrapper.get('[data-testid="outcome-critical"]').setValue('   ');
+    expect('critical' in contracts[0].outcomes).toBe(false);
+    await wrapper.get('[data-testid="load-contract-edits"]').trigger('click');
+    expect(wrapper.find('[data-testid="contract-json-error"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('loads contract edits that carry a critical branch', async () => {
     const { wrapper, contracts } = await mountCards({ contracts: [contract('c-1')] });
     await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');

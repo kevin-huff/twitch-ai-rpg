@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ActionContract, SessionState } from '@rpg/contracts';
-import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits } from './index';
+import { ActionContractSchema, type ActionContract, type Effect, type OutcomeBand, type SessionState } from '@rpg/contracts';
+import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits, type ContractLine } from './index';
 
 const state = () => ({
   characters: [
@@ -362,5 +362,238 @@ describe('one action per line', () => {
     const many = Array.from({ length: MAX_ROLLS_PER_ROUND + 1 }, (_, index) => contract({ id: `c${index}` }));
     expect(() => validateContracts(many, state())).toThrow(tooManyRollsMessage(7));
     expect(tooManyRollsMessage(7)).toBe('A round can show at most six rolls, and this plan needs 7. Untick some lines and plan again, then plan the rest in the next round.');
+  });
+});
+
+// The walk validateContracts used before the fast check, kept here to prove the answers match.
+function oldValidateContracts(contracts: ActionContract[], current: SessionState, lines?: readonly ContractLine[]): void {
+  if (contracts.length > MAX_ROLLS_PER_ROUND) throw new Error(tooManyRollsMessage(contracts.length));
+  const parsed = contracts.map(value => ActionContractSchema.parse(value));
+  const byId = new Map(parsed.map(value => [value.id, value]));
+  if (byId.size !== parsed.length) throw new Error('Contract IDs must be unique.');
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const ordered: ActionContract[] = [];
+  const order = (value: ActionContract) => {
+    if (visiting.has(value.id)) throw new Error('Contract dependency cycle.');
+    if (visited.has(value.id)) return;
+    visiting.add(value.id);
+    for (const prerequisite of value.prerequisites) {
+      const parent = byId.get(prerequisite.contractId);
+      if (!parent) throw new Error('Unknown prerequisite contract.');
+      order(parent);
+    }
+    visiting.delete(value.id);
+    visited.add(value.id);
+    ordered.push(value);
+  };
+  [...parsed].sort((a, b) => a.id.localeCompare(b.id)).forEach(order);
+  const allowed = new Map<string, number>();
+  for (const line of lines ?? []) allowed.set(line.characterId, (allowed.get(line.characterId) ?? 0) + 1);
+  const used = new Map<string, number>();
+  const helped = new Map<string, number>();
+  const nameOf = (characterId: string) => current.characters.find(character => character.id === characterId)?.displayName ?? characterId;
+  const spend = (characterId: string) => {
+    const count = (used.get(characterId) ?? 0) + 1;
+    used.set(characterId, count);
+    if (count > (lines ? allowed.get(characterId) ?? 0 : 1)) throw new Error(`${nameOf(characterId)} has more actions than lines this round. Each line can be one action.`);
+  };
+  for (const value of ordered) {
+    const actor = current.characters.find(character => character.id === value.actorCharacterId);
+    if (!actor) throw new Error('Unknown action actor.');
+    if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
+    if (actor.strain >= 4 && value.ruling === 'check') {
+      const own = lines ? lines.filter(line => value.submissionIds.includes(line.id) && line.characterId === value.actorCharacterId) : [];
+      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(value.actorCharacterId)} is at four strain, so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
+    }
+    if (value.edge && !value.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
+    if (value.helperCharacterIds.length && value.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');
+    spend(value.actorCharacterId);
+    for (const characterId of value.helperCharacterIds) {
+      if (!current.characters.some(character => character.id === characterId)) throw new Error('Unknown action helper.');
+      if (characterId === value.actorCharacterId) throw new Error(`${nameOf(characterId)} cannot help their own action.`);
+      const helps = (helped.get(characterId) ?? 0) + 1;
+      helped.set(characterId, helps);
+      if (helps > 1) throw new Error(`${nameOf(characterId)} can help only one action in a round.`);
+      spend(characterId);
+    }
+  }
+  const bands = (value: ActionContract): OutcomeBand[] => value.ruling === 'blocked' ? [] : value.ruling === 'no_check' ? ['clean'] : value.outcomes.critical ? ['clean', 'costly', 'setback', 'critical'] : ['clean', 'costly', 'setback'];
+  const ancestors = new Map<string, Set<string>>();
+  const depths = new Map<string, number>();
+  const claims = new Map<string, Set<string>>();
+  for (const value of ordered) {
+    const inherited = new Set<string>();
+    for (const prerequisite of value.prerequisites) {
+      inherited.add(prerequisite.contractId);
+      for (const ancestor of ancestors.get(prerequisite.contractId)!) inherited.add(ancestor);
+    }
+    ancestors.set(value.id, inherited);
+    depths.set(value.id, value.prerequisites.length ? 1 + Math.max(...value.prerequisites.map(prerequisite => depths.get(prerequisite.contractId)!)) : 0);
+    for (const band of bands(value)) for (const effect of value.outcomes[band]!.effects) {
+      const key = effect.kind === 'fact_add' ? `fact:${effect.factId}`
+        : effect.kind === 'inventory_add' || effect.kind === 'inventory_remove' ? `item:${effect.characterId}:${effect.item}` : null;
+      if (!key) continue;
+      const owners = claims.get(key) ?? new Set<string>();
+      for (const owner of owners) {
+        if (owner !== value.id && !inherited.has(owner)) throw new Error('Conflicting nonnumeric changes require a ruling before lock.');
+      }
+      owners.add(value.id);
+      claims.set(key, owners);
+    }
+  }
+  const goals = new Map<string, boolean>();
+  const groups: Effect[][] = [];
+  const visit = (index: number) => {
+    if (index === ordered.length) {
+      const effectGroups = groups.filter(group => group?.length);
+      applyResolution(current, { rolls: [], outcomes: [], effects: effectGroups.flat(), effectGroups });
+      return;
+    }
+    const value = ordered[index];
+    if (value.ruling === 'blocked' || value.prerequisites.some(prerequisite => !goals.get(prerequisite.contractId))) {
+      goals.set(value.id, false);
+      visit(index + 1);
+    } else {
+      const depth = depths.get(value.id)!;
+      const previous = groups[depth] ?? [];
+      for (const band of bands(value)) {
+        goals.set(value.id, band === 'clean' || band === 'costly');
+        groups[depth] = [...previous, ...value.outcomes[band]!.effects];
+        visit(index + 1);
+      }
+      groups[depth] = previous;
+    }
+    goals.delete(value.id);
+  };
+  visit(0);
+}
+
+function answer(run: () => void): string {
+  try {
+    run();
+    return 'pass';
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+function seeded(seed: number) {
+  let value = seed >>> 0;
+  const next = () => {
+    value = (value + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(value ^ (value >>> 15), 1 | value);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+  const int = (max: number) => Math.floor(next() * max);
+  const pick = <T,>(items: readonly T[]): T => items[int(items.length)];
+  return { next, int, pick };
+}
+
+describe('fast possible-effects check', () => {
+  const generatedState = (random: ReturnType<typeof seeded>) => {
+    const current = state();
+    current.characters[0].possessions = random.next() < 0.3 ? Array.from({ length: 19 }, (_, index) => `item-${index}`) : ['lockpick', 'rope'];
+    current.characters[1].possessions = random.next() < 0.5 ? ['brass key'] : [];
+    current.facts = random.next() < 0.6 ? [{ id: 'ledger', text: 'The ledger is safe.', visibility: 'public', sourceEventId: 'start' }] : [];
+    return current;
+  };
+
+  const generatedEffect = (random: ReturnType<typeof seeded>): Effect => {
+    const incident = random.next() < 0.25 ? { incidentId: random.pick(['shared', 'other']) } : {};
+    const roll = random.next();
+    if (roll < 0.3) return { kind: 'track_delta', trackId: random.pick(['access', 'alarm', 'access', 'alarm', 'missing']), delta: random.pick([1, 2, -1]), ...incident };
+    if (roll < 0.45) return { kind: 'strain_delta', characterId: random.pick(['lead', 'helper', 'other', 'ghost']), delta: random.pick([1, 2]), ...incident };
+    if (roll < 0.6) return { kind: 'fact_add', factId: random.pick(['ledger', 'door', 'door']), text: random.pick(['The ledger is safe.', 'The door is open.', 'The ledger burned.']), visibility: random.pick(['public', 'public', 'director']), ...incident } as Effect;
+    return {
+      kind: random.pick(['inventory_add', 'inventory_remove'] as const),
+      characterId: random.pick(['lead', 'helper', 'other', 'ghost']),
+      item: random.pick(['lockpick', 'brass key', 'rope', 'new key', 'lamp']),
+      ...incident,
+    };
+  };
+
+  const generatedPlan = (random: ReturnType<typeof seeded>) => {
+    const count = 1 + random.int(6);
+    const actors = ['lead', 'helper', 'other'];
+    const plan = Array.from({ length: count }, (_, index) => {
+      const value = contract({
+        id: `c${index}`,
+        actorCharacterId: random.pick(actors),
+        ruling: random.pick(['check', 'check', 'check', 'no_check', 'blocked'] as const),
+        submissionIds: [`line-${index}`],
+      });
+      const prerequisites = index > 0 && random.next() < 0.35 ? [{ contractId: `c${random.int(index)}`, requirement: 'goal_achieved' as const }] : [];
+      value.prerequisites = prerequisites;
+      const effects = () => Array.from({ length: random.int(3) }, () => generatedEffect(random));
+      value.outcomes.clean.effects = effects();
+      value.outcomes.costly.effects = effects();
+      value.outcomes.setback.effects = effects();
+      if (random.next() < 0.5) value.outcomes.critical = { publicText: 'It all goes wrong.', effects: effects() };
+      return value;
+    });
+    const lines = plan.map((value, index) => ({ id: `line-${index}`, characterId: value.actorCharacterId }));
+    return { plan: random.next() < 0.5 ? [...plan].reverse() : plan, lines };
+  };
+
+  it('gives the same pass or fail and the same first error as the old walk on generated plans', () => {
+    const random = seeded(20261028);
+    const answers = new Map<string, number>();
+    for (let run = 0; run < 1500; run++) {
+      const current = generatedState(random);
+      const { plan, lines } = generatedPlan(random);
+      const expected = answer(() => oldValidateContracts(structuredClone(plan), structuredClone(current), lines));
+      expect(answer(() => validateContracts(plan, current, lines)), `generated plan ${run}`).toBe(expected);
+      answers.set(expected, (answers.get(expected) ?? 0) + 1);
+    }
+    expect(answers.get('pass') ?? 0).toBeGreaterThan(100);
+    for (const message of [
+      'Unknown track in effect.', 'Unknown character in effect.', 'Conflicting shared incident effects.',
+      'Conflicting fact updates require a ruling.', 'Cannot consume an item the character does not possess.',
+      'Cannot duplicate an existing inventory item.', 'Conflicting inventory changes require a ruling.',
+      'Inventory capacity exceeded.', 'Conflicting nonnumeric changes require a ruling before lock.',
+    ]) expect(answers.get(message) ?? 0, message).toBeGreaterThan(0);
+  });
+
+  it('matches the old walk on dependent chains that add and spend items across depths', () => {
+    const random = seeded(7);
+    for (let run = 0; run < 400; run++) {
+      const current = generatedState(random);
+      const parent = contract({ id: 'a-parent', ruling: random.pick(['check', 'no_check'] as const) });
+      const child = contract({ id: 'b-child', actorCharacterId: 'other', ruling: random.pick(['check', 'no_check'] as const), prerequisites: [{ contractId: 'a-parent', requirement: 'goal_achieved' }] });
+      const grandchild = contract({ id: 'c-grandchild', actorCharacterId: 'helper', prerequisites: [{ contractId: 'b-child', requirement: 'goal_achieved' }] });
+      for (const value of [parent, child, grandchild]) {
+        for (const band of ['clean', 'costly', 'setback'] as const) value.outcomes[band].effects = Array.from({ length: random.int(3) }, () => generatedEffect(random));
+        if (random.next() < 0.5) value.outcomes.critical = { publicText: 'It breaks.', effects: [generatedEffect(random)] };
+      }
+      const plan = [grandchild, parent, child];
+      const expected = answer(() => oldValidateContracts(structuredClone(plan), structuredClone(current)));
+      expect(answer(() => validateContracts(plan, current)), `chain ${run}`).toBe(expected);
+    }
+  });
+
+  it('checks six four-outcome contracts on a 100 KB state in under 100 ms', () => {
+    const current = state();
+    const filler = 'The archive hums with old secrets and older dust. '.repeat(8);
+    current.facts = Array.from({ length: 220 }, (_, index) => ({ id: `fact-${index}`, text: `${index}: ${filler}`, visibility: 'public', sourceEventId: 'start' }));
+    for (const character of current.characters) Object.assign(character, { backstory: filler.repeat(4), appearance: filler, possessions: ['lockpick', 'rope', 'lamp'].map(item => `${character.id} ${item}`) });
+    expect(JSON.stringify(current).length).toBeGreaterThan(100_000);
+    const actors = ['lead', 'helper', 'other', 'lead', 'helper', 'other'];
+    const heavy = actors.map((actor, index) => {
+      const value = contract({ id: `heavy-${index}`, actorCharacterId: actor, submissionIds: [`input-${index}`] });
+      value.outcomes.clean.effects = [{ kind: 'track_delta', trackId: 'access', delta: 1 }, { kind: 'fact_add', factId: `won-${index}`, text: `Contract ${index} won.`, visibility: 'public' }];
+      value.outcomes.costly.effects = [{ kind: 'track_delta', trackId: 'access', delta: 1 }, { kind: 'track_delta', trackId: 'alarm', delta: 1 }, { kind: 'inventory_add', characterId: actor, item: `token ${index}` }];
+      value.outcomes.setback.effects = [{ kind: 'track_delta', trackId: 'alarm', delta: 2 }, { kind: 'strain_delta', characterId: actor, delta: 1, incidentId: 'cave-in' }];
+      value.outcomes.critical = { publicText: 'It all collapses.', effects: [{ kind: 'track_delta', trackId: 'alarm', delta: 3 }, { kind: 'inventory_remove', characterId: actor, item: index < 3 ? `${actor} lamp` : `${actor} rope` }] };
+      return value;
+    });
+    const lines = heavy.map((value, index) => ({ id: `input-${index}`, characterId: actors[index] }));
+    const times = [0, 1, 2].map(() => {
+      const started = performance.now();
+      validateContracts(heavy, current, lines);
+      return performance.now() - started;
+    });
+    expect(Math.min(...times)).toBeLessThan(100);
   });
 });

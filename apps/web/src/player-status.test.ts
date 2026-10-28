@@ -69,8 +69,14 @@ describe('playerStatus', () => {
     expect(status({ beat: beat({ kind: 'action' }) })).toMatchObject({ headline: 'What does your character do?', detail: 'Describe one thing to try, then press Send. Dice may decide how it goes.', tone: 'act' });
   });
   it('explains the stakes review, even when a line was selected', () => {
-    expect(status({ beat: beat({ phase: 'stakes_review' }), own: [line({ status: 'selected' })] })).toMatchObject({ headline: 'The director is checking the lines', detail: 'You can still change your line until it is locked in.', tone: 'wait' });
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'conversation', stakes: [] }), own: [line({ status: 'selected' })] })).toMatchObject({ headline: 'Getting the dice ready', detail: 'The director is deciding what could happen. You can still change your line until it is locked in.', tone: 'wait' });
     expect(status({ beat: beat({ phase: 'stakes_review', kind: 'action' }), own: [line({ status: 'selected' })] })).toMatchObject({ headline: 'Getting the dice ready', detail: 'The director is deciding what could happen. You can still change your line until it is locked in.', tone: 'wait' });
+  });
+  it('says the dice are being readied for a conversation round with a check in stakes review', () => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'conversation', stakes: [stakeWith('no_check'), stakeWith('check')] }) })).toMatchObject({ headline: 'Getting the dice ready', tone: 'wait' });
+  });
+  it.each(['no_check', 'blocked'] as const)('says the director is checking the lines when approved stakes of a conversation round are only %s', ruling => {
+    expect(status({ beat: beat({ phase: 'stakes_review', kind: 'conversation', stakes: [stakeWith(ruling)] }) })).toMatchObject({ headline: 'The director is checking the lines', detail: 'You can still change your line until it is locked in.', tone: 'wait' });
   });
   it.each(['locked', 'draft_review'] as const)('says a conversation is locked, without dice, while %s', phase => {
     expect(status({ beat: beat({ phase }), own: [line({ status: 'locked' })] })).toMatchObject({ headline: 'Lines locked in. The story is being written', detail: 'Watch the stream. New lines wait for the next turn.', tone: 'wait' });

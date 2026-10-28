@@ -53,14 +53,26 @@ describe('fake narrator speaker identity', () => {
     }
     expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
   });
-  it('blocks a Do line from a character at four strain and keeps four outcomes', async () => {
+  it('blocks a Do line from a character at four strain with no critical outcome', async () => {
     const input = context();
     input.state.characters[0]!.strain = 4;
     input.submissions[0]!.kind = 'act';
     const result = await provider.plan(input);
     expect(result.contracts[0]!.ruling).toBe('blocked');
-    expect(Object.keys(result.contracts[0]!.outcomes).sort()).toEqual(['clean', 'costly', 'critical', 'setback']);
+    expect(Object.keys(result.contracts[0]!.outcomes).sort()).toEqual(['clean', 'costly', 'setback']);
     expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
+  });
+  it('keeps the critical outcome on check contracts', async () => {
+    const result = await provider.plan(context());
+    expect(result.contracts[0]!.ruling).toBe('check');
+    expect(result.contracts[0]!.outcomes.critical).toBeDefined();
+  });
+  it('keeps square-bracket tags out of the contract intent', async () => {
+    const input = context();
+    input.submissions[0]!.text = '[sighs] Fine.';
+    const result = await provider.plan(input);
+    expect(result.contracts[0]!.intent).toBe('Fine.');
+    expect(JSON.stringify(result)).not.toContain('[sighs]');
   });
   it('does not import the Ledger story into an authored NPC’s sale memory', async () => {
     const input = context();
@@ -229,5 +241,26 @@ describe('fake picture description', () => {
     await expect(fake.describePicture({ ...request, extra: true } as unknown as PictureDescriptionRequest)).rejects.toThrow();
     expect(fake.pictureRequests).toEqual([]);
     expect(PictureDescriptionRequestSchema.safeParse(request).success).toBe(true);
+  });
+});
+
+describe('fake line assist and voice picks', () => {
+  const baseInput = (idea: string) => ({
+    idea, character: { displayName: 'Dash', pronouns: 'they/them', appearance: '', personality: '', backstory: '', specialty: '', flaw: '', connection: '', secret: '', possessions: [] },
+    talkingTo: [], present: { npcs: [], characters: [] }, scene: { title: 'Hall', description: 'A hall.' }, story: null, facts: [], recentRounds: [], boundaries: [],
+  });
+  it('suggests a line with exactly one warm tag that holds the idea', async () => {
+    const { text } = await provider.suggestLine!(baseInput('  ask   about the key '));
+    expect(text.startsWith('[warmly] ')).toBe(true);
+    expect(text).toContain('ask about the key');
+    expect(text.match(/\[[^\]]*\]/g)).toHaveLength(1);
+  });
+  it('picks voices only when voices are given', async () => {
+    const withVoices = await provider.generateScenario!({ prompt: 'A harbor', size: 'medium', boundaries: [] }, { voices: [{ id: 'eleven:fake-ada', name: 'Ada', summary: '' }] });
+    expect(withVoices.npcs.map((npc) => npc.voice)).toEqual(['eleven:fake-ada', 'eleven:not-on-the-list']);
+    for (const options of [undefined, { voices: [] }]) {
+      const none = await provider.generateScenario!({ prompt: 'A harbor', size: 'medium', boundaries: [] }, options);
+      expect(none.npcs.every((npc) => !('voice' in npc))).toBe(true);
+    }
   });
 });

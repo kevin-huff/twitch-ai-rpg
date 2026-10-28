@@ -122,4 +122,32 @@ describe('script editor', () => {
     await row.trigger('click');
     expect(wrapper.find('textarea').exists()).toBe(true);
   });
+
+  it('shows Read as for a line with a voice copy', () => {
+    const { wrapper } = mountEditor([{ ...narration('Run now.'), voiceText: '[urgently] Run now.' }]);
+    expect(wrapper.get(id('script-read-as-0')).text()).toBe('Read as: [urgently] Run now.');
+  });
+
+  it('shows the delivery tag in Read as for a quiet line without a voice copy, and nothing for neutral', () => {
+    const { wrapper } = mountEditor([{ ...narration('Hush.'), delivery: 'quiet' }, narration('Plain.')]);
+    expect(wrapper.get(id('script-read-as-0')).text()).toBe('Read as: [quietly] Hush.');
+    expect(wrapper.find(id('script-read-as-1')).exists()).toBe(false);
+  });
+
+  it('drops the voice copy when the words are edited', async () => {
+    const { wrapper, segments } = mountEditor([{ ...narration('Run now.'), delivery: 'urgent', voiceText: '[urgently] Run now.' }]);
+    await wrapper.get(id('script-line-0')).trigger('click');
+    await wrapper.get(id('script-segment-0')).setValue('Walk now.');
+    expect(segments[0]!.voiceText).toBeUndefined();
+    expect(wrapper.get(id('script-read-as-0')).text()).toBe('Read as: [urgently] Walk now.');
+  });
+
+  it('changes the delivery from the select', async () => {
+    const { wrapper, segments } = mountEditor([narration('Hello.')]);
+    await wrapper.get(id('script-line-0')).trigger('click');
+    expect(wrapper.get(id('script-delivery-0')).findAll('option').map(o => o.text())).toEqual(['Neutral', 'Quiet', 'Urgent', 'Amused']);
+    await wrapper.get(id('script-delivery-0')).setValue('amused');
+    expect(segments[0]!.delivery).toBe('amused');
+    expect(wrapper.get(id('script-read-as-0')).text()).toBe('Read as: [amused] Hello.');
+  });
 });

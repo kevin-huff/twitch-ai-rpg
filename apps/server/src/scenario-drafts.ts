@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { ScenarioDraftSchema, ScenarioGenerationRequestSchema, type AiProvider, type ScenarioSize } from '@rpg/contracts';
+import { ScenarioDraftSchema, ScenarioGenerationRequestSchema, type AiProvider, type VoiceSource, type ScenarioSize } from '@rpg/contracts';
 import { AppError, type Actor } from './repository';
 import { ScenarioDraftJobs } from './scenario-jobs';
 import { scenarioFromDraft } from './scenario-generation';
@@ -9,6 +9,7 @@ const SIZE_FACTOR: Record<ScenarioSize, number> = { small: 1, medium: 4 / 3, lar
 export function registerScenarioDrafts(app: FastifyInstance, options: {
   authenticate(request: FastifyRequest): Promise<Actor>;
   provider: AiProvider;
+  voices?: VoiceSource;
   scenarioTimeoutMs?: number;
 }) {
   const jobs = new ScenarioDraftJobs();
@@ -29,9 +30,12 @@ export function registerScenarioDrafts(app: FastifyInstance, options: {
     if (!provider.generateScenario) {
       throw new AppError(503, 'generation_unavailable', 'AI drafting is not available right now. You can still fill in the form yourself.');
     }
+    const list = await Promise.resolve(options.voices?.listVoices()).then(result => result?.voices ?? [], () => []);
+    const voiceIds = list.map(voice => voice.id);
+    const choices = list.map(({ id, name, summary }) => ({ id, name, summary }));
     const deadlineMs = Math.round(scenarioTimeoutMs * SIZE_FACTOR[body.size]);
     const job = jobs.start(ownerKey(actor), body.size, deadlineMs, async (deadlineAt) =>
-      scenarioFromDraft(ScenarioDraftSchema.parse(await provider.generateScenario!(body, { deadlineAt })), body.boundaries));
+      scenarioFromDraft(ScenarioDraftSchema.parse(await provider.generateScenario!(body, { deadlineAt, voices: choices })), body.boundaries, undefined, voiceIds));
     return reply.code(202).send(job);
   });
 

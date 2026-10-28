@@ -1,5 +1,5 @@
 import {
-  type Beat, ImageIdSchema, isPlayerSegmentKind, MOMENT_PORTRAIT_MAX, type PictureLine, type PictureMoment, type PicturePerson, type PictureSettings, type PublishedBeat, type SessionState,
+  type Beat, hasAudioTags, ImageIdSchema, isPlayerSegmentKind, MOMENT_PORTRAIT_MAX, type PictureLine, type PictureMoment, type PicturePerson, type PictureSettings, type PublishedBeat, type SessionState, stripAudioTags,
 } from '@rpg/contracts';
 import { namesInState, sceneLocationTitle } from './picture-prompts';
 
@@ -65,9 +65,10 @@ export function pictureLines(state: SessionState, source: BeatPictureSource): Pi
   const { beat } = source;
   const characterName = (id: string) => state.characters.find((character) => character.id === id)?.displayName ?? null;
   const lines: PictureLine[] = [
-    ...beat.lockedSubmissions.filter((submission) => submission.kind !== 'ooc' && submission.text.trim()).map((submission): PictureLine => (
-      { kind: 'player_dialogue', speaker: characterName(submission.characterId), text: submission.text }
-    )),
+    ...beat.lockedSubmissions.filter((submission) => submission.kind !== 'ooc' && submission.text.trim()).flatMap((submission): PictureLine[] => {
+      const text = hasAudioTags(submission.text) ? stripAudioTags(submission.text) : submission.text;
+      return text.trim() ? [{ kind: 'player_dialogue', speaker: characterName(submission.characterId), text }] : [];
+    }),
     ...(beat.draft?.segments ?? []).map((segment): PictureLine => (
       segment.kind === 'npc_dialogue'
         ? { kind: 'npc_dialogue', speaker: state.npcs.find((npc) => npc.id === segment.speakerNpcId)?.displayName ?? null, text: segment.text }

@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, ImageIdSchema, isSpokenSegmentKind, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
-  type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission,
+  AiDraftSchema, ActionContractSchema, ImageIdSchema, fakeVoiceSource, hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, voiceTextMatches, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
+  type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission, type VoiceSource,
 } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
 import { MAX_ROLLS_PER_ROUND, applyResolution, resolveContracts, tooManyRollsMessage, validateContracts } from '@rpg/rules';
@@ -16,6 +16,12 @@ import { AppError, authorize, conflict, corrections, currentBeat, history, proje
 
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering']);
+function dropBlankCritical<T extends { outcomes: { critical?: { publicText: string; effects: readonly unknown[] } } }>(contract: T): T {
+  const critical = contract.outcomes?.critical;
+  if (critical && !critical.publicText.trim() && !critical.effects?.length) delete contract.outcomes.critical;
+  return contract;
+}
+
 const directorCommands = new Set([...liveCommands, 'approve_character', 'remove_seat', 'set_boundaries', 'start_session', 'open_beat', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
 
 export function applyCard(character: Character, card: CharacterCardDefinition, source: 'host' | 'player') {
@@ -74,6 +80,7 @@ function validateSources(updates: ContinuityUpdate[], beat: Beat, state: Session
 function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
   const parsed = AiDraftSchema.parse(draft);
   for (const segment of parsed.segments) {
+    if (segment.voiceText !== undefined && !voiceTextMatches(segment.text, segment.voiceText)) delete segment.voiceText;
     if (segment.kind === 'npc_dialogue') {
       const speaker = state.npcs.find((npc) => npc.id === segment.speakerNpcId);
       if (!speaker || ((speaker.status !== 'present' || speaker.locationId !== state.session.scene.locationId) && !speaker.communicationChannel)) conflict('An NPC speaker is unknown or unavailable.');
@@ -142,10 +149,14 @@ export interface CommandPictures {
   releaseActionPicture(client: PoolClient, sessionId: string, beatId: string): Promise<string | null>;
   run(imageIds: string[]): void;
 }
-export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource }
+export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource; voices?: VoiceSource }
 export async function executeCommand(deps: CommandDependencies, sessionId: string, actor: Actor, command: Command): Promise<CommandResponse> {
   if (actor.role === 'stage' || (directorCommands.has(command.type) && actor.role !== 'host')) throw new AppError(403, 'forbidden', 'This command requires a director.');
-  if (['set_ready', 'save_submission', 'cancel_submission'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
+  if (['set_ready', 'save_submission', 'cancel_submission', 'set_voice'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
+  if (command.type === 'set_voice' && command.voiceProfileId !== null) {
+    const listed = await (deps.voices ?? fakeVoiceSource).listVoices();
+    if (!listed.voices.some((voice) => voice.id === command.voiceProfileId)) conflict('That voice is not on the voice list. Pick another.');
+  }
   const requestHash = digest({ sessionId, command });
   const prepared = await transaction(deps.pool, async (client) => {
     await authorize(client, sessionId, actor);
@@ -165,7 +176,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     let eventData: Record<string, unknown> = {};
     let createdNpcId: string | undefined;
     if (state.session.status === 'ended') conflict('This session has ended.');
-    if (state.session.status === 'paused' && command.type !== 'set_status' && command.type !== 'save_submission' && command.type !== 'set_ready' && !liveCommands.has(command.type)) conflict('Resume the session before advancing the story.');
+    if (state.session.status === 'paused' && command.type !== 'set_status' && command.type !== 'save_submission' && command.type !== 'set_ready' && command.type !== 'set_voice' && !liveCommands.has(command.type)) conflict('Resume the session before advancing the story.');
 
     if (command.type === 'record_correction') {
       if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the session before recording corrections.');
@@ -357,6 +368,10 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (command.contextBeatId && (!beat || command.contextBeatId !== beat.id || !['collecting', 'stakes_review'].includes(beat.phase))) conflict('This beat is locked or no longer active. Queue the line for the next beat.');
       if (!command.text.trim() && command.kind !== 'act') throw new AppError(400, 'invalid_input', 'Speech and out-of-character notes need text.');
       if (command.kind === 'act' && (!command.intent.trim() || !command.approach.trim())) throw new AppError(400, 'invalid_input', 'Actions need an intent and an approach.');
+      if (command.kind === 'say' || command.kind === 'act') {
+        const words = playerWords(command);
+        if (hasAudioTags(words) && !stripAudioTags(words).trim()) throw new AppError(400, 'invalid_input', 'Write some words as well as the tags.');
+      }
       if (command.recipientNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id && ((npc.status === 'present' && npc.locationId === state.session.scene.locationId) || npc.communicationChannel)))) conflict('The addressed NPC is unavailable.');
       const previous = command.submissionId ? all.find((item) => item.id === command.submissionId) : undefined;
       if (command.submissionId && (!previous || previous.characterId !== actor.character_id)) throw new AppError(404, 'not_found', 'Submission was not found.');
@@ -368,7 +383,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       await saveSubmission(client, submission);
       eventData = { submissionId: submission.id };
       if (beat?.selectedSubmissionIds.includes(submission.id)) {
-        beat.phase = 'collecting'; beat.stakesApproved = false; beat.contracts = []; beat.inputSnapshotHash = null; beat.draft = null; beat.generation++; beat.revision++;
+        beat.phase = 'collecting'; beat.classification = null; beat.stakesApproved = false; beat.contracts = []; beat.inputSnapshotHash = null; beat.draft = null; beat.generation++; beat.revision++;
         await saveBeat(client, beat);
       }
     } else if (command.type === 'cancel_submission') {
@@ -377,7 +392,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (submission.revision !== command.expectedSubmissionRevision || !['queued', 'selected'].includes(submission.status)) conflict('Submission can no longer be cancelled.');
       submission.status = 'cancelled'; submission.revision++;
       await saveSubmission(client, submission);
-      if (beat?.selectedSubmissionIds.includes(submission.id)) { beat.selectedSubmissionIds = beat.selectedSubmissionIds.filter((id) => id !== submission.id); beat.phase = 'collecting'; beat.stakesApproved = false; beat.contracts = []; beat.generation++; beat.revision++; await saveBeat(client, beat); }
+      if (beat?.selectedSubmissionIds.includes(submission.id)) { beat.selectedSubmissionIds = beat.selectedSubmissionIds.filter((id) => id !== submission.id); beat.phase = 'collecting'; beat.classification = null; beat.stakesApproved = false; beat.contracts = []; beat.generation++; beat.revision++; await saveBeat(client, beat); }
+    } else if (command.type === 'set_voice') {
+      const character = state.characters.find((item) => item.id === actor.character_id);
+      if (!character) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
+      character.voiceProfileId = command.voiceProfileId;
+      eventData = { characterId: character.id, voiceProfileId: command.voiceProfileId };
+      await saveState(client, state);
     } else if (command.type === 'open_beat') {
       if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
       if (beat) conflict('Finish or abort the active beat first.');
@@ -444,6 +465,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (command.classification === 'ordinary' && selected.some((submission) => submission.kind === 'act')) conflict('Action submissions require reviewed action contracts.');
         if (command.classification === 'ordinary' && command.contracts.length) conflict('An ordinary conversation has no mechanical contracts.');
         if (command.classification === 'action' && !command.contracts.length) conflict('An action needs at least one reviewed contract.');
+        command.contracts.forEach(dropBlankCritical);
         validateContracts(command.contracts, state, selected);
         for (const contract of command.contracts) {
           const referenced = all.filter((submission) => contract.submissionIds.includes(submission.id));
@@ -584,7 +606,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!['ordinary', 'needs_action', 'action'].includes(plan.classification)) throw new Error('Invalid classification.');
         if (plan.contracts.length > MAX_ROLLS_PER_ROUND) failure = tooManyRollsMessage(plan.contracts.length);
         else {
-          beat.contracts = plan.contracts.map((contract) => ActionContractSchema.parse(contract));
+          beat.contracts = plan.contracts.map((contract) => dropBlankCritical(ActionContractSchema.parse(contract)));
           validateContracts(beat.contracts, state, generation.context.submissions);
           beat.classification = plan.classification; beat.phase = 'stakes_review';
         }

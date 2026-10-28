@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
 import type { ActionContract, AiSegment, Beat } from '@rpg/contracts';
-import { ActionContractSchema, playerWords } from '@rpg/contracts';
+import { ActionContractSchema, hasAudioTags, playerWords, stripAudioTags } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
 import StakesCards from './StakesCards.vue';
@@ -93,10 +93,18 @@ onUnmounted(() => { if (ticker) clearInterval(ticker); });
 const errorText = computed(() => barError.value || (!idle.value && beat.value?.lastError) || '');
 
 const needsLines = computed(() => ['answer', 'plan'].includes(gold.value));
+const MAX_ROLLS_PER_ROUND = 6;
+const tickedLineCount = computed(() => {
+  const kinds = new Map((director.value?.submissions ?? []).map(item => [item.id, item.kind]));
+  return selected.value.filter(id => kinds.get(id) !== 'ooc').length;
+});
+const tooManyLines = computed(() => needsLines.value && tickedLineCount.value > MAX_ROLLS_PER_ROUND);
+const tooManyWarning = computed(() => `${tickedLineCount.value} lines need ${tickedLineCount.value} rolls, and a round shows at most six. Untick some lines, then plan the rest next round.`);
 const goldDisabled = computed(() => {
   if (busy.value) return true;
   if (gold.value === 'resume') return false;
   if (needsLines.value && !tickedIds.value.length) return true;
+  if (tooManyLines.value) return true;
   if (gold.value === 'publish') return scriptDirty.value || rendering.value || Boolean(working.value) || Boolean(waiting.value) || voice.value.status === 'failed';
   return Boolean(working.value);
 });
@@ -214,17 +222,19 @@ function approveStakes() { return runBar(async () => {
 function resumeShow() { return runBar(() => send({ type: 'set_status', commandId: crypto.randomUUID(), status: 'live', expectedStateRevision: snapshot.value!.session.stateRevision })); }
 function ensureContracts() {
   if (reviewClassification.value !== 'action' || contracts.value.length) return;
-  const inputs = director.value?.submissions.filter(item => beat.value?.selectedSubmissionIds.includes(item.id) && item.kind !== 'ooc') ?? [];
-  const actors = [...new Set(inputs.map(item => item.characterId))];
-  contracts.value = actors.map(actorCharacterId => {
-    const actorInputs = inputs.filter(item => item.characterId === actorCharacterId);
-    const action = actorInputs.find(item => item.kind === 'act');
+  const clean = (value: string) => hasAudioTags(value) ? stripAudioTags(value) : value;
+  const order = new Map((director.value?.submissions ?? []).map((item, index) => [item.id, index]));
+  const inputs = (director.value?.submissions.filter(item => beat.value?.selectedSubmissionIds.includes(item.id) && item.kind !== 'ooc') ?? [])
+    .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  const blank = () => ({ publicText: '', effects: [] });
+  contracts.value = inputs.map(item => {
+    const action = item.kind === 'act';
     return {
-      id: crypto.randomUUID(), version: 1, actorCharacterId, helperCharacterIds: [], submissionIds: actorInputs.map(item => item.id),
-      intent: action?.intent || `Resolve the requested concession: ${actorInputs.map(item => item.text).join(' ')}`,
-      approach: action?.approach || 'Use the submitted dialogue.', ruling: 'check', trait: action ? 'wits' : 'presence', edge: 0, edgeReason: null,
+      id: crypto.randomUUID(), version: 1, actorCharacterId: item.characterId, helperCharacterIds: [], submissionIds: [item.id],
+      intent: action ? clean(item.intent) : `Resolve the requested concession: ${clean(item.text)}`,
+      approach: action ? clean(item.approach) : 'Use the submitted dialogue.', ruling: 'check', trait: action ? 'wits' : 'presence', edge: 0, edgeReason: null,
       risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
-      outcomes: { clean: { publicText: 'The agreed goal is achieved.', effects: [] }, costly: { publicText: '', effects: [] }, setback: { publicText: '', effects: [] } },
+      outcomes: { clean: blank(), costly: blank(), setback: blank(), critical: blank() },
     };
   });
 }
@@ -345,6 +355,7 @@ function runGold() {
         <div v-if="confirmRegenerate === 'replace' && beat" class="beat-confirm"><p>Replace what you wrote? The AI writes a new script and the lines you typed are lost. The dice stay the same.</p><button class="secondary" :disabled="locked" data-testid="confirm-replace" @click="confirmRender">Yes, replace it</button><button class="secondary" :disabled="paused" data-testid="keep-written" @click="confirmRegenerate = null">Keep what I wrote</button></div>
         <div class="actions">
           <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
+          <p v-if="tooManyLines" class="beat-status" data-testid="too-many-lines">{{ tooManyWarning }}</p>
           <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-action" @click="openBeat('action')">Open action round</button>
           <button v-if="hasDraft && voice.status !== 'unavailable'" class="secondary" :disabled="locked || scriptDirty || rendering || Boolean(working)" data-testid="publish-text-only" @click="publishTextOnly">Publish without voice</button>
           <button v-if="step.step === 'draft' && !idle && beat?.lastError" class="secondary" :disabled="locked" data-testid="write-it-myself" @click="writeItMyself">Write it myself</button>

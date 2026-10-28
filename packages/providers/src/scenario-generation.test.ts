@@ -296,6 +296,48 @@ describe('ClewdR two-pass scenario writer', () => {
     }
   });
 
+  describe('voice picks', () => {
+    const voices = [
+      { id: 'eleven:fake-ada', name: 'Ada', summary: 'female · young · american · bright' },
+      { id: 'eleven:fake-bram', name: 'Bram', summary: 'male · old · irish · raspy' },
+    ];
+    const voicedOutline = { ...outline, cast: outline.cast.map((entry, index) => ({ ...entry, voice: ['eleven:fake-ada', 'eleven:fake-bram', ''][index] })) };
+    const voicedFetch = () => vi.fn<typeof fetch>(async (_url, init) => isOutline(init) ? nativeResponse(voicedOutline) : nativeResponse(details(castIndex(init))));
+
+    it('sends the voices in the outline input and asks for a pick in the prompt', async () => {
+      const fetchMock = voicedFetch();
+      await ai(fetchMock).generateScenario(input, { voices: [{ ...voices[0], previewUrl: 'https://example.invalid/x.mp3' } as any, voices[1]] });
+      const [first, ...rest] = calls(fetchMock);
+      expect(first.user.voices).toEqual(voices);
+      expect(first.system).toContain('voices list');
+      expect(first.system).toContain('never invent an id');
+      expect(first.system).toContain('Give a different voice to each character when possible');
+      expect(first.system).toContain('"voice"');
+      for (const call of rest) {
+        expect(call.user).not.toHaveProperty('voices');
+        expect(JSON.stringify(call.user.character)).not.toContain('eleven:');
+      }
+    });
+
+    it('keeps the model\'s picks in the merged draft npcs', async () => {
+      const result = await ai(voicedFetch()).generateScenario(input, { voices });
+      expect(result.npcs.map((npc) => npc.voice)).toEqual(['eleven:fake-ada', 'eleven:fake-bram', '']);
+      expect(ScenarioDraftSchema.parse(result)).toEqual(result);
+    });
+
+    it('sends no voices key and no voice rule when no voices are supplied', async () => {
+      for (const options of [undefined, { voices: [] }]) {
+        const fetchMock = voicedFetch();
+        const result = await ai(fetchMock).generateScenario(input, options);
+        const [first] = calls(fetchMock);
+        expect(first.user).not.toHaveProperty('voices');
+        expect(first.system).not.toContain('voices list');
+        expect(first.system).not.toContain('"voice"');
+        expect(result.npcs.every((npc) => npc.voice === undefined)).toBe(true);
+      }
+    });
+  });
+
   it('sends the prompt and boundaries only in user messages', async () => {
     const fetchMock = routedFetch();
     await ai(fetchMock).generateScenario(input);

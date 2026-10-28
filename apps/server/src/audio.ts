@@ -85,7 +85,7 @@ export function registerAudio(app: FastifyInstance, options: AudioOptions) {
         await current(async () => {});
         const voiceProfileId = segment.voiceProfileId ?? 'voice_narrator';
         const speaker = segment.speaker?.displayName ?? 'Narrator';
-        const { assetId } = await cachedSpeech(options, { sessionId, beatId, operationId: lease, text: spokenText({ kind: segment.kind, speaker, text: segment.text }), voiceProfileId, delivery: segment.delivery });
+        const { assetId } = await cachedSpeech(options, { sessionId, beatId, operationId: lease, text: spokenText({ kind: segment.kind, speaker, text: segment.text, voiceText: segment.voiceText, delivery: segment.delivery, voiceProfileId }), voiceProfileId, delivery: segment.delivery });
         manifest.segments.push({ id: segment.id, text: segment.text, speaker, voiceProfileId, url: `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${assetId}` });
         await current(client => saveSpeechProgress(client, sessionId, { kind: 'published', beatId, configHash, leaseId: lease, completed: manifest.segments.length, total: segments.length }));
       }

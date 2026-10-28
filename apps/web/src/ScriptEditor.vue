@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue';
+import { computed, reactive, watch } from 'vue';
+import { voicedWords, voiceTextMatches } from '@rpg/contracts';
 import type { AiSegment, PublicNpc } from '@rpg/contracts';
 import FieldGenerator from './FieldGenerator.vue';
 
@@ -22,6 +23,15 @@ function speakerName(segment: AiSegment): string {
 function rowParts(segment: AiSegment): { speaker: string; words: string } {
   return { speaker: `${speakerName(segment)}:`, words: segment.text.trim() ? segment.text : '(empty line)' };
 }
+function readAs(segment: AiSegment): string | null {
+  const words = voicedWords({ text: segment.text, voiceText: segment.voiceText, delivery: segment.delivery });
+  return words !== segment.text ? words : null;
+}
+watch(() => props.segments, list => {
+  for (const segment of list) {
+    if (segment.voiceText !== undefined && !voiceTextMatches(segment.text, segment.voiceText)) delete segment.voiceText;
+  }
+}, { deep: true, immediate: true });
 function open(segment: AiSegment) { openKeys.add(rowKey(segment)); }
 function push(segment: AiSegment) {
   props.segments.push(segment);
@@ -50,6 +60,7 @@ defineExpose({ addNarration });
   <div class="script-editor">
     <div v-for="(segment, index) in segments" :key="rowKey(segment)" class="segment">
       <button type="button" class="script-line" :data-testid="`script-line-${index}`" @click="open(segment)"><strong class="script-speaker">{{ rowParts(segment).speaker }}</strong> {{ rowParts(segment).words }}</button>
+      <p v-if="readAs(segment) !== null" class="script-read-as" :data-testid="`script-read-as-${index}`">Read as: {{ readAs(segment) }}</p>
       <div v-if="openKeys.has(rowKey(segment))" class="segment-editor">
         <label v-if="segment.kind === 'npc_dialogue'">Speaker
           <select v-model="segment.speakerNpcId" :data-testid="`script-speaker-${index}`">
@@ -58,6 +69,14 @@ defineExpose({ addNarration });
         </label>
         <label>{{ segment.kind === 'narration' ? 'Narrator' : 'NPC dialogue' }}
           <textarea v-model="segment.text" :data-testid="`script-segment-${index}`" />
+        </label>
+        <label>Delivery
+          <select v-model="segment.delivery" :data-testid="`script-delivery-${index}`">
+            <option value="neutral">Neutral</option>
+            <option value="quiet">Quiet</option>
+            <option value="urgent">Urgent</option>
+            <option value="amused">Amused</option>
+          </select>
         </label>
         <FieldGenerator v-model="segment.text" :field="segment.kind === 'narration' ? 'script.narration' : 'script.npcDialogue'" :context-key="`${contextKey}:${rowKey(segment)}:${segment.speakerNpcId}`" :premise="premise" :premise-label="premiseLabel" :disabled="busy" />
         <button type="button" class="quiet" :disabled="busy" :data-testid="`script-remove-${index}`" @click="remove(index)">Remove</button>
@@ -90,5 +109,6 @@ defineExpose({ addNarration });
 }
 .script-line::before { content: none; }
 .script-line:hover { background: var(--night-raised); }
+.script-read-as { margin: 0; padding: 0 12px 8px; color: var(--dust); line-height: 24px; overflow-wrap: anywhere; }
 .script-speaker { font-weight: 400; color: var(--candle); }
 </style>

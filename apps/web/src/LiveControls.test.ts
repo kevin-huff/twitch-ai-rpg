@@ -8,8 +8,11 @@ import LiveControls from './LiveControls.vue';
 import FieldGenerator from './FieldGenerator.vue';
 import App from './App.vue';
 import { npcFieldContext } from './field-context';
+import { FAKE_VOICES } from '@rpg/contracts';
 
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), generateField: vi.fn() }));
+const voiceApi = vi.hoisted(() => ({ loadVoices: vi.fn() }));
+vi.mock('./voices', async (original) => ({ ...(await original<typeof import('./voices')>()), loadVoices: voiceApi.loadVoices }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
 const npc = NpcSchema.parse({ id: 'mara', displayName: 'Mara', role: 'Keeper', locationId: 'bar', status: 'present', voiceProfileId: 'voice_mara', hiddenIdentity: 'Private identity', secrets: ['Private secret\nOnly after midnight.'], knowledge: [{ id: 'memory', statement: 'Private memory', category: 'fact', acquisition: 'scenario', sourceEventId: 'event', sourceEntityId: null, learnedBeatNumber: 0 }], relationships: [{ targetCharacterId: null, stance: 'wary', reason: 'Private relationship', sourceEventId: 'event' }], version: 3 });
 const { id: npcFixtureId, version: npcFixtureVersion, knowledge: npcFixtureKnowledge, relationships: npcFixtureRelationships, ...npcProfile } = npc;
@@ -24,7 +27,7 @@ function snapshotWithPremise(): DirectorSnapshot {
 const field = (id: string) => `[data-testid="${id}"]`;
 async function begin(wrapper: ReturnType<typeof mount>, kind: string) { await wrapper.get(field(`begin-${kind}`)).trigger('click'); }
 async function acknowledge(wrapper: ReturnType<typeof mount>) { await wrapper.get(field('live-reason')).setValue('The cast agreed.'); await wrapper.get(field('discard-input')).setValue(true); }
-beforeEach(() => { vi.clearAllMocks(); transport.subscribe.mockReturnValue(() => {}); transport.command.mockResolvedValue({}); });
+beforeEach(() => { vi.clearAllMocks(); transport.subscribe.mockReturnValue(() => {}); transport.command.mockResolvedValue({}); voiceApi.loadVoices.mockResolvedValue({ voices: FAKE_VOICES.map(voice => ({ ...voice })) }); });
 
 function generator(wrapper: ReturnType<typeof mount>, name: FieldGenerationField, index = 0) {
   const found = wrapper.findAllComponents(FieldGenerator).filter(item => item.props('field') === name)[index];
@@ -58,7 +61,7 @@ describe('live field guidance', () => {
     for (const name of ['npc-identity', 'npc-motivation', 'npc-goal', 'npc-aliases-0']) expect(help(name)).toMatch(/not automatically included in AI dialogue prompts/);
     for (const name of ['npc-mood', 'npc-channel', 'npc-personality-0', 'npc-limits-0', 'npc-dialogueExamples-0']) expect(help(name)).toMatch(/included.*AI dialogue prompts/);
     expect(help('npc-secrets-0')).toMatch(/conditions do not trigger automatic reveals/);
-    expect(help('npc-voice')).toMatch(/server-configured voice.*default voice/);
+    expect(help('npc-voice')).toBe("Who reads this character's lines. Narrator means the narrator's voice.");
     expect(wrapper.get(field('npc-name')).element.closest('label')!.textContent).toBe('Public name');
     await begin(wrapper, 'reveal');
     expect(help('reveal-source')).toMatch(/raw text stays private/);
@@ -407,6 +410,45 @@ describe('live director controls', () => {
     await wrapper.get(field('reload-live')).trigger('click');
     expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('Saved elsewhere');
     expect((wrapper.get(field('discard-input')).element as HTMLInputElement).checked).toBe(false); wrapper.unmount();
+  });
+  describe('character voice pick', () => {
+    async function open(id: string) {
+      const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } }); await flushPromises(); await begin(wrapper, 'npc');
+      await wrapper.get(field('npc-choice')).setValue(id); await acknowledge(wrapper);
+      return wrapper;
+    }
+    const saved = (wrapper: ReturnType<typeof mount>) => (wrapper.emitted('command')![0][0] as Record<string, any>).profile.voiceProfileId;
+    const choose = async (wrapper: ReturnType<typeof mount>, label: string) => {
+      await wrapper.get(field('npc-voice')).findAll('button').find(button => button.text().includes(label))!.trigger('click');
+    };
+    it('lists Narrator and every voice, and shows a logical value as Narrator', async () => {
+      const wrapper = await open('mara');
+      expect(wrapper.get(field('npc-voice')).get('summary').text()).toBe('Voice: Narrator');
+      expect(wrapper.get(field('npc-voice')).findAll('[data-testid="voice-option"]')).toHaveLength(3);
+      expect(wrapper.get(field('npc-voice')).get('[data-testid="voice-narrator"]').text()).toContain('Narrator');
+      wrapper.unmount();
+    });
+    it('saves a picked voice and Narrator over an eleven: value', async () => {
+      const wrapper = await open('mara');
+      await choose(wrapper, 'Ada');
+      expect(wrapper.get(field('npc-voice')).get('summary').text()).toBe('Voice: Ada');
+      await wrapper.get('form').trigger('submit');
+      expect(saved(wrapper)).toBe('eleven:fake-ada');
+      wrapper.unmount();
+      const again = await open('mara'); await choose(again, 'Ada'); await choose(again, 'Narrator');
+      await again.get('form').trigger('submit');
+      expect(saved(again)).toBe('narrator');
+      again.unmount();
+    });
+    it('keeps an untouched logical value and does not submit the form on a pick', async () => {
+      const wrapper = await open('mara');
+      await wrapper.get('form').trigger('submit');
+      expect(saved(wrapper)).toBe('voice_mara');
+      wrapper.unmount();
+      const picked = await open('mara'); await choose(picked, 'Bram');
+      expect(picked.emitted('command')).toBeUndefined();
+      picked.unmount();
+    });
   });
   it('edits an NPC with the captured version, preserving multiline entries and excluding memory and relationships', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper, 'npc');

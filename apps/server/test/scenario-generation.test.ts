@@ -293,4 +293,25 @@ describe('scenarioFromDraft', () => {
     expect(ScenarioDefinitionSchema.safeParse(result.definition).success).toBe(true);
     expect(result.definition.tracks.map(item => item.trigger)).toEqual([null, 'action_round']);
   });
+
+  describe('voice picks', () => {
+    const note = "Mara's voice is not on the voice list, so the narrator reads them.";
+    it('keeps a listed pick', () => {
+      const result = scenarioFromDraft(draftOf({ npcs: [npc({ voice: ' eleven:fake-ada ' })] }), [], counter(), ['eleven:fake-ada']);
+      expect(result.definition.npcs[0]!.voiceProfileId).toBe('eleven:fake-ada');
+      expect(result.adjustments).not.toContain(note);
+    });
+    it('turns an unlisted pick into the narrator with a note', () => {
+      const result = scenarioFromDraft(draftOf({ npcs: [npc({ voice: 'eleven:nope' })] }), [], counter(), ['eleven:fake-ada']);
+      expect(result.definition.npcs[0]!.voiceProfileId).toBe('narrator');
+      expect(result.adjustments).toContain(note);
+    });
+    it('gives every character the narrator without a list, and no note', () => {
+      const result = scenarioFromDraft(draftOf({ npcs: [npc({ voice: 'eleven:fake-ada' }), npc({ name: 'Tom' })] }), [], counter());
+      expect(result.definition.npcs.map(item => item.voiceProfileId)).toEqual(['narrator', 'narrator']);
+      expect(result.adjustments.some(item => item.includes('voice list'))).toBe(false);
+      const blank = scenarioFromDraft(draftOf({ npcs: [npc({ voice: '  ' }), npc({ name: 'Tom' })] }), [], counter());
+      expect(blank.adjustments.some(item => item.includes('voice list'))).toBe(false);
+    });
+  });
 });

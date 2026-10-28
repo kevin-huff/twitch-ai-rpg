@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
-import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role, type SessionListEntry } from '@rpg/contracts';
+import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role, type SessionListEntry, type VoiceSource, fakeVoiceSource } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { createPool, migrate, transaction } from './database';
 import { AppError, authorize, project, saveState, type Actor } from './repository';
@@ -17,7 +17,9 @@ import { FakeAiProvider } from './fake-provider';
 import { materializeSession, registerLibrary } from './library';
 import { registerFieldGeneration } from './field-generation';
 import { registerSeatGeneration } from './seat-generation';
+import { registerLineAssist } from './line-assist';
 import { registerScenarioDrafts } from './scenario-drafts';
+import { VoiceCatalog, registerVoices } from './voices';
 import { registerCharacterBuilders } from './character-builder';
 import { registerProducers } from './producers';
 import { createMainShowLink, registerStreamLinks } from './stream-links';
@@ -47,6 +49,7 @@ export interface AppOptions {
   speechModel?: string;
   speechVoiceId?: string;
   speechVoices?: Record<string, string>;
+  voiceCatalog?: VoiceSource;
   assetDir?: string;
   images?: ImageProvider;
   imageHourlyLimit?: number;
@@ -65,6 +68,8 @@ export async function buildApp(options: AppOptions) {
   const assetDir = options.assetDir ?? '.local/audio';
   const provider = options.provider ?? new FakeAiProvider();
   // Only a story AI the server was given describes pictures; without one the server describes each beat from its own text.
+  const hasVoiceList = (value: unknown): value is VoiceSource => typeof (value as { listVoices?: unknown } | undefined)?.listVoices === 'function';
+  const voices = new VoiceCatalog(options.voiceCatalog ?? (hasVoiceList(options.speech) ? options.speech : fakeVoiceSource));
   const gallery = new GalleryService({ pool, assetDir, origin: options.origin });
   const images = new ImageService({ pool, provider: options.images, assetDir, hourlyLimit: options.imageHourlyLimit, ai: options.provider, onReady: id => { void gallery.refreshIfOn(id); } });
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -217,7 +222,7 @@ export async function buildApp(options: AppOptions) {
     const view = request.query.view && z.enum(['director', 'player', 'stage']).parse(request.query.view);
     return transaction(pool, (client) => project(client, request.params.sessionId, actor, view, { picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined, gallery }));
   });
-  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client), pictures: images.enabled ? images : undefined, picturesEnabled: images.enabled, defaultPictureModel: images.defaultModel ?? undefined, gallery }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
+  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/commands', async (request) => executeCommand({ pool, provider, rollDie: options.rollDie ?? (() => randomInt(1, 7)), providerTimeoutMs: options.providerTimeoutMs, authenticate: client => authenticate(request, client), pictures: images.enabled ? images : undefined, picturesEnabled: images.enabled, voices, defaultPictureModel: images.defaultModel ?? undefined, gallery }, request.params.sessionId, await authenticate(request), CommandSchema.parse(request.body)));
   const accessDeps: AccessRouteDeps = { pool, authenticate, hostToken: options.hostToken, origin: options.origin, persistCredential, issueCookie };
   registerLibrary(app, { pool, authenticate, picturesEnabled: images.enabled });
   registerCharacterBuilders(app, { pool, authenticate, hostToken: options.hostToken, origin: options.origin, provider, timeoutMs: options.providerTimeoutMs, picturesEnabled: images.enabled });
@@ -226,7 +231,9 @@ export async function buildApp(options: AppOptions) {
   registerInvites(app, accessDeps);
   registerFieldGeneration(app, { authenticate, provider, timeoutMs: options.providerTimeoutMs });
   registerSeatGeneration(app, { pool, authenticate, provider, timeoutMs: options.providerTimeoutMs });
-  registerScenarioDrafts(app, { authenticate, provider, scenarioTimeoutMs: options.scenarioTimeoutMs });
+  registerLineAssist(app, { pool, authenticate, provider, timeoutMs: options.providerTimeoutMs });
+  registerVoices(app, { authenticate, catalog: voices });
+  registerScenarioDrafts(app, { authenticate, provider, voices, scenarioTimeoutMs: options.scenarioTimeoutMs });
   registerAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir });
   registerDraftAudio(app, { pool, authenticate, provider: options.speech, model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices, assetDir });
   registerOperations(app, { pool, authenticate, speechConfigured: Boolean(options.speech), model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices });

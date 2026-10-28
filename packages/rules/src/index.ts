@@ -161,13 +161,83 @@ function applicableBands(contract: ActionContract): OutcomeBand[] {
   return contract.ruling === 'blocked' ? [] : contract.ruling === 'no_check' ? ['clean'] : contract.outcomes.critical ? ['clean', 'costly', 'setback', 'critical'] : ['clean', 'costly', 'setback'];
 }
 
+function incidentKey(effect: Effect): string {
+  const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
+  return `${effect.incidentId}:${effect.kind}:${target}`;
+}
+
+// Mirrors applyResolution (global shared-incident check, then each group through applyEffects)
+// without cloning the state: only track ids, facts and possessions can make a branch fail.
+function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][]) => void {
+  const trackIds = new Set(state.tracks.map(track => track.id));
+  const baseFacts = new Map<string, { text: string; visibility: string }>();
+  for (const fact of state.facts) if (!baseFacts.has(fact.id)) baseFacts.set(fact.id, fact);
+  const basePossessions = new Map<string, readonly string[]>();
+  for (const character of state.characters) if (!basePossessions.has(character.id)) basePossessions.set(character.id, character.possessions);
+  const signatures = new WeakMap<Effect, string>();
+  const signature = (effect: Effect) => {
+    let value = signatures.get(effect);
+    if (value === undefined) signatures.set(effect, value = JSON.stringify(effect));
+    return value;
+  };
+  return effectGroups => {
+    const incidents = new Map<string, string>();
+    for (const group of effectGroups) for (const effect of group) {
+      if (!effect.incidentId) continue;
+      const key = incidentKey(effect);
+      const previous = incidents.get(key);
+      if (previous === undefined) incidents.set(key, signature(effect));
+      else if (previous !== signature(effect)) throw new Error('Conflicting shared incident effects.');
+    }
+    const seen = new Set<string>();
+    const addedFacts = new Map<string, { text: string; visibility: string }>();
+    const possessions = new Map<string, string[]>();
+    for (const group of effectGroups) {
+      const inventoryOperations = new Set<string>();
+      for (const effect of group) {
+        if (effect.incidentId) {
+          const key = incidentKey(effect);
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        if (effect.kind === 'track_delta') {
+          if (!trackIds.has(effect.trackId)) throw new Error('Unknown track in effect.');
+        } else if (effect.kind === 'fact_add') {
+          const existing = baseFacts.get(effect.factId) ?? addedFacts.get(effect.factId);
+          if (existing && (existing.text !== effect.text || existing.visibility !== effect.visibility)) throw new Error('Conflicting fact updates require a ruling.');
+          if (!existing) addedFacts.set(effect.factId, { text: effect.text, visibility: effect.visibility });
+        } else {
+          const base = basePossessions.get(effect.characterId);
+          if (!base) throw new Error('Unknown character in effect.');
+          if (effect.kind === 'strain_delta') continue;
+          const operation = `${effect.characterId}:${effect.item}`;
+          if (inventoryOperations.has(operation)) throw new Error('Conflicting inventory changes require a ruling.');
+          inventoryOperations.add(operation);
+          let items = possessions.get(effect.characterId);
+          if (!items) possessions.set(effect.characterId, items = [...base]);
+          if (effect.kind === 'inventory_remove') {
+            const index = items.indexOf(effect.item);
+            if (index < 0) throw new Error('Cannot consume an item the character does not possess.');
+            items.splice(index, 1);
+          } else {
+            if (items.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');
+            if (items.length >= 20) throw new Error('Inventory capacity exceeded.');
+            items.push(effect.item);
+          }
+        }
+      }
+    }
+  };
+}
+
 function validatePossibleEffects(contracts: ActionContract[], depths: Map<string, number>, state: SessionState): void {
+  for (const contract of contracts) for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band]!.effects) EffectSchema.parse(effect);
+  const check = possibleEffectsChecker(state);
   const goals = new Map<string, boolean>();
   const groups: Effect[][] = [];
   const visit = (index: number) => {
     if (index === contracts.length) {
-      const effectGroups = groups.filter(group => group?.length);
-      applyResolution(state, { rolls: [], outcomes: [], effects: effectGroups.flat(), effectGroups });
+      check(groups.filter(group => group?.length));
       return;
     }
     const contract = contracts[index];

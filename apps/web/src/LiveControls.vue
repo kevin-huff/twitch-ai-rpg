@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue';
+import { computed, onMounted, ref, useId } from 'vue';
 import { CommandSchema, LiveNpcProfileSchema } from '@rpg/contracts';
 import type { Command, DirectorSnapshot, LiveNpcProfile } from '@rpg/contracts';
 import FieldGenerator from './FieldGenerator.vue';
 import { npcFieldContext } from './field-context';
+import VoicePicker from './VoicePicker.vue';
+import { loadVoices, npcVoicePick, npcVoiceValue, voiceName } from './voices';
+import type { VoiceOption } from '@rpg/contracts';
 
 const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
@@ -28,7 +31,15 @@ const revealSource = ref('');
 const publicText = ref('');
 const witnessNpcIds = ref<string[]>([]);
 const locations = computed(() => props.snapshot.locations?.length ? props.snapshot.locations : [{ id: props.snapshot.session.scene.locationId, title: props.snapshot.session.scene.title, description: '' }]);
-const voiceProfiles = computed(() => [...new Set(['voice_narrator', ...props.snapshot.npcDetails.map(npc => npc.voiceProfileId)])]);
+const voiceList = ref<VoiceOption[]>([]);
+const voiceReason = ref<string | undefined>(undefined);
+onMounted(async () => {
+  const list = await loadVoices();
+  voiceList.value = list.voices;
+  voiceReason.value = list.reason;
+});
+const voicePick = computed(() => profile.value ? npcVoicePick(profile.value.voiceProfileId) : null);
+const setVoice = (pick: string | null) => { if (profile.value) profile.value.voiceProfileId = npcVoiceValue(pick, profile.value.voiceProfileId); };
 const chosenNpc = computed(() => props.snapshot.npcDetails.find(npc => npc.id === npcId.value));
 const characterContext = computed(() => profile.value ? npcFieldContext(profile.value, chosenNpc.value) : undefined);
 const revealNpc = computed(() => props.snapshot.npcDetails.find(npc => npc.id === revealNpcId.value));
@@ -125,13 +136,13 @@ function save() {
         <template v-else-if="operation === 'npc' && profile">
           <h3>Create or edit a non-player character</h3>
           <label>Character<select v-model="npcId" data-testid="npc-choice" :aria-describedby="helpId('npc-choice')" :disabled="locked" @change="loadNpc"><option value="">Create a new character</option><option v-for="npc in snapshot.npcDetails" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option></select></label><p class="field-help" :id="helpId('npc-choice')">Create a character or load a saved character to edit.</p>
-          <p class="notice">Name, role, appearance, presence and voice profile are public, even when the character is offstage. Keep unrevealed details in the private fields.</p>
+          <p class="notice">Name, role, appearance, presence and voice are public, even when the character is offstage. Keep unrevealed details in the private fields.</p>
           <div class="generated-field"><label><span class="field-label">Public name</span><input v-model="profile.displayName" data-testid="npc-name" :aria-describedby="helpId('npc-name')" required maxlength="80"></label><p class="field-help" :id="helpId('npc-name')">The name shown to the party and stage, even while this character is offstage.</p><FieldGenerator :character-context="characterContext" class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="npc.displayName" v-model="profile.displayName" :context-key="generationContext" :disabled="locked || stale" /></div>
           <div class="generated-field"><label><span class="field-label">Public role</span><input v-model="profile.role" data-testid="npc-role" :aria-describedby="helpId('npc-role')" maxlength="160"></label><p class="field-help" :id="helpId('npc-role')">The public role shown to the party and stage, even while offstage.</p><FieldGenerator :character-context="characterContext" class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="npc.role" v-model="profile.role" :context-key="generationContext" :disabled="locked || stale" /></div>
           <div class="generated-field"><label><span class="field-label">Public appearance</span><textarea v-model="profile.appearance" data-testid="npc-appearance" :aria-describedby="helpId('npc-appearance')" maxlength="1000" rows="3" /></label><p class="field-help" :id="helpId('npc-appearance')">Visible details shown to the party and stage, even while offstage.</p><FieldGenerator :character-context="characterContext" class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="npc.appearance" v-model="profile.appearance" :context-key="generationContext" :disabled="locked || stale" /></div>
           <label>Presence<select v-model="profile.status" data-testid="npc-status" :aria-describedby="helpId('npc-status')"><option value="present">Present</option><option value="offstage">Offstage</option></select></label><p class="field-help" :id="helpId('npc-status')">Marks the character present or offstage. Presence is public; present characters must be in the current scene.</p>
           <label>Location<select v-model="profile.locationId" data-testid="npc-location" :aria-describedby="helpId('npc-location')"><option v-for="location in locations" :key="location.id" :value="location.id">{{ location.title }}</option></select></label><p class="field-help" :id="helpId('npc-location')">Sets the character’s location. Present characters must use the current scene’s location.</p><p v-if="profile.status === 'present' && profile.locationId !== snapshot.session.scene.locationId" class="notice">A present character must be in the current scene. Choose the current location or mark them offstage.</p>
-          <label>Logical voice profile<select v-model="profile.voiceProfileId" data-testid="npc-voice" :aria-describedby="helpId('npc-voice')"><option v-for="voice in voiceProfiles" :key="voice" :value="voice">{{ voice === 'voice_narrator' ? 'Narrator voice' : snapshot.npcDetails.find(npc => npc.voiceProfileId === voice)?.displayName + ' voice' }}</option></select></label><p class="field-help" :id="helpId('npc-voice')">Selects a public logical voice profile mapped to a server-configured voice, with the default voice as fallback.</p>
+          <details data-testid="npc-voice" :aria-describedby="helpId('npc-voice')"><summary>Voice: {{ voiceName(profile.voiceProfileId, voiceList, 'Narrator') }}</summary><VoicePicker :model-value="voicePick" :voices="voiceList" narrator-label="Narrator" :reason="voiceReason" @update:model-value="setVoice" /></details><p class="field-help" :id="helpId('npc-voice')">Who reads this character's lines. Narrator means the narrator's voice.</p>
           <details><summary>Private characterization & secrets</summary>
             <div class="generated-field"><label><span class="field-label">Hidden identity</span><input v-model="profile.hiddenIdentity" data-testid="npc-identity" :aria-describedby="helpId('npc-identity')" maxlength="160"></label><p class="field-help" :id="helpId('npc-identity')">Private identity kept for reference and a later reveal; it is not automatically included in AI dialogue prompts.</p><FieldGenerator :character-context="characterContext" class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="npc.hiddenIdentity" :model-value="profile.hiddenIdentity ?? ''" @update:model-value="profile.hiddenIdentity = $event" :context-key="generationContext" :disabled="locked || stale" /></div>
             <div class="generated-field"><label><span class="field-label">Motivation</span><textarea v-model="profile.motivation" data-testid="npc-motivation" :aria-describedby="helpId('npc-motivation')" maxlength="1000" /></label><p class="field-help" :id="helpId('npc-motivation')">Private reference for what drives this character; it is not automatically included in AI dialogue prompts.</p><FieldGenerator :character-context="characterContext" class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="npc.motivation" v-model="profile.motivation" :context-key="generationContext" :disabled="locked || stale" /></div>

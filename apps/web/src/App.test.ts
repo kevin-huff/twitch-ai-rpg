@@ -793,6 +793,7 @@ describe('public performance and player authority', () => {
     await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
     expect(wrapper.find('[data-testid="contract-ruling"]').exists()).toBe(true);
     await wrapper.get('[data-testid="contract-ruling"]').setValue('no_check');
+    await wrapper.get('[data-testid="outcome-clean"]').setValue('Access is granted.');
     await wrapper.get('[data-testid="outcome-costly"]').setValue('Access is granted, but security notices.');
     await wrapper.get('[data-testid="outcome-setback"]').setValue('Access is refused; the guard asks them to leave.');
     await wrapper.get('[data-testid="beat-more"] [data-testid="approve-stakes"]').trigger('click');
@@ -881,7 +882,7 @@ describe('field explanations', () => {
     window.history.replaceState({}, '', '/sessions/show/play'); transport.snapshot.mockResolvedValue(snapshot('player'));
     const wrapper = mount(App, options); await flushPromises(); checkHelp(wrapper);
     expect(wrapper.get('label').element.firstChild?.textContent).toBe('What Skooty says');
-    for (const [button, testid, phrase] of [['Do something', 'action-input', 'plain words'], ['Ask the director privately', 'note-input', 'Only the director sees this'], ['Say something', 'speech-input', 'exactly as you type them']]) {
+    for (const [button, testid, phrase] of [['Do something', 'action-input', 'plain words'], ['Ask the director privately', 'note-input', 'Only the director sees this'], ['Say something', 'speech-input', 'are never shown']]) {
       await wrapper.findAll('button').find(item => item.text() === button)!.trigger('click'); await flushPromises(); checkHelp(wrapper);
       const helpId = wrapper.get(`[data-testid="${testid}"]`).attributes('aria-describedby');
       const help = wrapper.findAll('[id]').find(node => node.attributes('id') === helpId)!.text();

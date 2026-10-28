@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import {
-  BeatSchema, DraftAudioManifestSchema, MAX_SPOKEN_SEGMENTS, PrepareDraftAudioSchema, isSpokenSegmentKind, spokenText,
+  BeatSchema, DraftAudioManifestSchema, MAX_SPOKEN_SEGMENTS, PrepareDraftAudioSchema, elevenVoiceId, isSpokenSegmentKind, spokenText,
   type AudioManifest, type Beat, type DraftAudioManifest, type DraftAudioResponse, type PrepareDraftAudio,
   type ScriptSegment, type SessionState,
 } from '@rpg/contracts';
@@ -13,7 +13,7 @@ import type { SpeechEngine } from './audio';
 import { transaction } from './database';
 import { AppError, authorize, currentBeat, readState, type Actor } from './repository';
 import { finishUsageAttempt, markUsagePartial, recordSpeechHit, startUsageAttempt } from './operations';
-import { makeScript, speechLines, type SpeechLine } from './script';
+import { makeScript, speechLines, voicedLines, type SpeechLine } from './script';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const conflict = (message: string): never => { throw new AppError(409, 'conflict', message); };
@@ -35,13 +35,13 @@ interface Preparation {
   source_hash: string; config_hash: string; status: 'preparing' | 'ready' | 'failed';
   lease_until: Date; segments: CachedLine[]; manifest: DraftAudioManifest | null;
 }
-interface Context { beat: Beat; state: SessionState; lines: SpeechLine[]; sourceHash: string }
+interface Context { beat: Beat; state: SessionState; lines: SpeechLine[]; voiced: SpeechLine[]; sourceHash: string }
 type Params = { sessionId: string; beatId: string };
 type Asset = { assetId: string; contentType: string; byteLength: number };
 const pendingAssets = new Map<string, Promise<Asset>>();
 
 export async function cachedSpeech(options: SpeechCacheOptions, input: { sessionId: string; beatId: string; operationId: string; text: string; voiceProfileId: string; delivery: Delivery }): Promise<Asset> {
-  const assetId = speechCacheKey({ sessionId: input.sessionId, text: input.text, provider: 'elevenlabs', model: options.model, voiceId: options.voices?.[input.voiceProfileId] ?? options.voiceId, delivery: input.delivery });
+  const assetId = speechCacheKey({ sessionId: input.sessionId, text: input.text, provider: 'elevenlabs', model: options.model, voiceId: elevenVoiceId(input.voiceProfileId) ?? options.voices?.[input.voiceProfileId] ?? options.voiceId, delivery: input.delivery });
   const flightKey = `${resolve(options.assetDir)}\0${assetId}`;
   const existing = pendingAssets.get(flightKey);
   if (existing) {
@@ -99,12 +99,12 @@ export async function saveSpeechProgress(client: PoolClient, sessionId: string, 
   }
 }
 
-function speechProjection(beat: Beat, state: SessionState): SpeechLine[] {
+function speechSegments(beat: Beat, state: SessionState): ScriptSegment[] {
   if (beat.phase !== 'draft_review' || !beat.draft || !beat.resolution || beat.sourceStateRevision !== state.session.stateRevision || state.session.status === 'ended') return conflict('Review a current saved script before preparing or publishing narration.');
   for (const segment of beat.draft.segments) {
     if (segment.kind === 'npc_dialogue' && !state.npcs.find(npc => npc.id === segment.speakerNpcId)) return conflict('The saved speaker is unavailable.');
   }
-  return speechLines(makeScript(beat, state));
+  return makeScript(beat, state);
 }
 async function noCurrentRender(client: PoolClient, beat: Beat) {
   if ((await client.query("SELECT 1 FROM generation_jobs WHERE beat_id=$1 AND generation=$2 AND task='render' AND status IN ('queued','running')", [beat.id, beat.generation])).rowCount) conflict('Wait for the current narration draft to finish before preparing or publishing it.');
@@ -115,9 +115,10 @@ async function context(client: PoolClient, sessionId: string, beatId: string): P
   if (!parsed.success || parsed.data.id !== beatId) return conflict('This saved draft is no longer current.');
   const beat = parsed.data, state = await readState(client, sessionId);
   await noCurrentRender(client, beat);
-  const lines = speechProjection(beat, state);
+  const segments = speechSegments(beat, state);
+  const lines = speechLines(segments);
   if (!lines.length || lines.length > MAX_SPOKEN_SEGMENTS) return conflict('Save narration before preparing speech.');
-  return { beat, state, lines, sourceHash: hash(lines) };
+  return { beat, state, lines, voiced: voicedLines(segments), sourceHash: hash(lines) };
 }
 function matches(preparation: Preparation, current: Context) {
   return preparation.beat_id === current.beat.id && preparation.draft_revision === current.beat.draftRevision && preparation.generation === current.beat.generation && preparation.source_hash === current.sourceHash;
@@ -144,6 +145,9 @@ export async function attachPreparedAudio(client: PoolClient, input: { sessionId
     const cached = preparation.segments[index]!;
     if (!cached.assetId || !(await client.query('SELECT 1 FROM audio_assets WHERE id=$1 AND session_id=$2', [cached.assetId, input.sessionId])).rowCount) return conflict('The selected recording is unavailable.');
     manifest.segments.push({ id: segment.id, text: segment.text, speaker: cached.speaker, voiceProfileId: cached.voiceProfileId, url: `/api/sessions/${encodeURIComponent(input.sessionId)}/audio/assets/${cached.assetId}` });
+  }
+  for (const [index, segment] of saved.entries()) {
+    if (segment.kind === 'player_dialogue') segment.voiceProfileId = elevenVoiceId(preparation.segments[index]!.voiceProfileId) ? preparation.segments[index]!.voiceProfileId : null;
   }
   return { configHash: hash({ preparationId: preparation.id, configHash: preparation.config_hash, sourceHash: preparation.source_hash }), manifest };
 }
@@ -189,7 +193,7 @@ export function registerDraftAudio(app: FastifyInstance, options: DraftAudioOpti
       if (!preparation || preparation.status === 'failed') {
         if (!options.provider) throw new AppError(503, 'speech_disabled', 'Speech is not configured. Continue with the saved text.');
         const id = randomUUID();
-        preparation = (await client.query("INSERT INTO draft_audio_preparations(id,session_id,beat_id,draft_revision,generation,source_hash,config_hash,status,lease_until,segments,total_segments) VALUES($1,$2,$3,$4,$5,$6,$7,'preparing',clock_timestamp()+interval '5 minutes',$8,$9) RETURNING *", [id, request.params.sessionId, current.beat.id, current.beat.draftRevision, current.beat.generation, current.sourceHash, config(current), JSON.stringify(current.lines), current.lines.length])).rows[0];
+        preparation = (await client.query("INSERT INTO draft_audio_preparations(id,session_id,beat_id,draft_revision,generation,source_hash,config_hash,status,lease_until,segments,total_segments) VALUES($1,$2,$3,$4,$5,$6,$7,'preparing',clock_timestamp()+interval '5 minutes',$8,$9) RETURNING *", [id, request.params.sessionId, current.beat.id, current.beat.draftRevision, current.beat.generation, current.sourceHash, config(current), JSON.stringify(current.voiced), current.voiced.length])).rows[0];
         start = true;
       }
       await client.query('INSERT INTO draft_audio_receipts(actor_id,command_id,request_hash,session_id,beat_id,preparation_id) VALUES($1,$2,$3,$4,$5,$6)', [actor.actor_id, command.commandId, requestHash, request.params.sessionId, current.beat.id, preparation!.id]);

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DELIVERY_TAGS, isSpokenSegmentKind } from '@rpg/contracts';
 import { buildApp } from '../src/app';
 import { createPool } from '../src/database';
 
@@ -64,7 +65,15 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
     const playerSegment = published.segments.find((s: any) => s.kind === 'player_dialogue');
     expect(playerSegment.text).toBe('My exact player words stay silent.');
     expect(sent).toContain(`${playerSegment.speaker.displayName}: My exact player words stay silent.`);
-    for (const segment of published.segments.filter((s: any) => s.kind === 'narration' || s.kind === 'npc_dialogue')) expect(sent).toContain(segment.text);
+    const story = published.segments.filter((s: any) => s.kind === 'narration' || s.kind === 'npc_dialogue');
+    for (const segment of story) {
+      const tag = DELIVERY_TAGS[segment.delivery as keyof typeof DELIVERY_TAGS];
+      expect(sent).toContain(segment.voiceText ?? (tag ? `${tag} ${segment.text}` : segment.text));
+    }
+    const quiet = story.find((s: any) => s.delivery === 'quiet');
+    expect(quiet, 'the test AI gives Mara a quiet line').toBeTruthy();
+    expect(sent).toContain(`[quietly] ${quiet.text}`);
+    expect(sent).not.toContain(quiet.text);
     expect(first.json().manifest.segments.find((s: any) => s.id === playerSegment.id)).toMatchObject({ text: 'My exact player words stay silent.', speaker: playerSegment.speaker.displayName });
     expect(JSON.stringify(synthesize.mock.calls)).not.toContain('archive safe');
     expect(JSON.stringify(synthesize.mock.calls)).not.toContain('brass key');
@@ -93,6 +102,77 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
       await writeFile(join(directory, `${assetId}.mp3`), new Uint8Array([73, 68, 51, 0]));
       for (const actor of [host, stage]) expect((await request(`/api/sessions/${sessionId}/audio/assets/${assetId}`, actor)).statusCode).toBe(404);
     } finally { await pool.end(); }
+  });
+
+  async function voicedTable() {
+    const creation = (await request('/api/sessions', host, { commandId: crypto.randomUUID() })).json();
+    const id: string = creation.sessionId;
+    const seat = cookie(await request('/api/auth/redeem', '', { token: creation.invites.find((invite: any) => invite.role === 'player').token }));
+    let current: any = (await request(`/api/sessions/${id}`)).json();
+    const send = async (credential: string, body: Record<string, unknown>) => {
+      const result = await request(`/api/sessions/${id}/commands`, credential, { commandId: crypto.randomUUID(), ...body });
+      expect(result.statusCode, result.body).toBe(200);
+      if (credential === host) current = result.json().snapshot;
+      return result.json().snapshot;
+    };
+    const step = (type: string, extra = {}) => send(host, { type, beatId: current.activeBeat.id, expectedBeatRevision: current.activeBeat.revision, ...extra });
+    const own = await send(seat, { type: 'set_voice', voiceProfileId: 'eleven:fake-ada' });
+    expect(own.ownCharacter.voiceProfileId).toBe('eleven:fake-ada');
+    await send(host, { type: 'open_beat', kind: 'conversation', expectedInputEpoch: current.session.inputEpoch });
+    const line = await send(seat, { type: 'save_submission', contextBeatId: current.activeBeat.id, expectedInputEpoch: current.session.inputEpoch, expectedSubmissionRevision: 0, kind: 'say', text: '[softly] I chose this voice myself.', recipientNpcIds: [current.npcs[0].id] });
+    await step('plan_beat', { submissionIds: line.submissions.map((s: any) => s.id) });
+    await step('approve_stakes', { classification: 'ordinary', contracts: [] });
+    await step('lock_beat');
+    await step('render_beat');
+    return { id, seat, send, step, get current() { return current; }, character: own.ownCharacter };
+  }
+  const publishedBeat = async (id: string, beat: string) => {
+    const lookup = createPool(process.env.TEST_DATABASE_URL!);
+    return (await lookup.query('SELECT data FROM published_beats WHERE session_id=$1 AND id=$2', [id, beat]).finally(() => lookup.end())).rows[0].data;
+  };
+  const matchesPlayback = (manifest: any, published: any) => {
+    const spoken = published.segments.filter((s: any) => isSpokenSegmentKind(s.kind));
+    expect(manifest.segments.map((s: any) => [s.id, s.voiceProfileId])).toEqual(spoken.map((s: any) => [s.id, s.voiceProfileId ?? 'voice_narrator']));
+  };
+
+  it('reads a Say line in the speaker\'s own voice, without the name, when narration is prepared after a text-only publication', async () => {
+    const table = await voicedTable();
+    const published = table.current.activeBeat.id;
+    await table.step('publish_beat', { expectedStateRevision: table.current.session.stateRevision, draftRevision: table.current.activeBeat.draftRevision, textOnly: true });
+    const data = await publishedBeat(table.id, published);
+    const say = data.segments.find((s: any) => s.kind === 'player_dialogue');
+    expect(say).toMatchObject({ text: 'I chose this voice myself.', voiceText: '[softly] I chose this voice myself.', voiceProfileId: 'eleven:fake-ada' });
+    synthesize.mockClear();
+    const prepared = await request(`/api/sessions/${table.id}/audio/${published}`, host, { commandId: crypto.randomUUID() });
+    expect(prepared.statusCode, prepared.body).toBe(200);
+    const own = synthesize.mock.calls.map(call => call[0]).filter(call => call.voiceProfileId === 'eleven:fake-ada');
+    expect(own).toEqual([{ text: '[softly] I chose this voice myself.', voiceProfileId: 'eleven:fake-ada' }]);
+    expect(JSON.stringify(synthesize.mock.calls)).not.toContain(`${table.character.displayName}:`);
+    expect(prepared.json().manifest.segments.find((s: any) => s.id === say.id)).toMatchObject({ text: 'I chose this voice myself.', voiceProfileId: 'eleven:fake-ada' });
+    matchesPlayback(prepared.json().manifest, data);
+  });
+
+  it('publishes a reviewed Say line with the voice its recording used, even after the player changes voice', async () => {
+    const table = await voicedTable();
+    const path = `/api/sessions/${table.id}/beats/${table.current.activeBeat.id}/draft-audio`;
+    const before = (await request(path)).json();
+    synthesize.mockClear();
+    const preview = await request(path, host, { commandId: crypto.randomUUID(), expectedBeatRevision: table.current.activeBeat.revision, draftRevision: table.current.activeBeat.draftRevision, generation: table.current.activeBeat.generation });
+    expect(preview.statusCode, preview.body).toBe(200);
+    expect(preview.json().status).toBe('ready');
+    expect(synthesize.mock.calls.map(call => call[0])).toContainEqual({ text: '[softly] I chose this voice myself.', voiceProfileId: 'eleven:fake-ada' });
+    expect(preview.json().manifest.segments.find((s: any) => s.text === 'I chose this voice myself.').voiceProfileId).toBe('eleven:fake-ada');
+    await table.send(table.seat, { type: 'set_voice', voiceProfileId: null });
+    const after = (await request(path)).json();
+    expect(after).toEqual({ status: 'ready', manifest: preview.json().manifest });
+    expect(before.status).toBe('missing');
+    const beat = table.current.activeBeat.id;
+    await table.step('publish_beat', { expectedStateRevision: table.current.session.stateRevision, draftRevision: table.current.activeBeat.draftRevision, textOnly: false, audioPreparationId: preview.json().manifest.preparationId });
+    const data = await publishedBeat(table.id, beat);
+    expect(data.segments.find((s: any) => s.kind === 'player_dialogue').voiceProfileId).toBe('eleven:fake-ada');
+    const manifest = (await request(`/api/sessions/${table.id}/audio/${beat}`)).json();
+    expect(manifest.status).toBe('ready');
+    matchesPlayback(manifest.manifest, data);
   });
 
   it('returns the reviewed recording when newer audio configurations exist', async () => {

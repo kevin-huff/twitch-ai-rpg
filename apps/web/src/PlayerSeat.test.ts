@@ -524,7 +524,43 @@ describe('the story on the seat', () => {
     const w = await mountSeat(snapshot());
     await click(w, 'Do something');
     const help = w.findAll('.field-help').map(node => node.text()).join(' ');
-    expect(help).toContain('Viewers see these words on stream exactly as you type them, and hear them read aloud');
+    expect(help).toContain('Viewers see these words on stream as you write them, and hear them read aloud');
     expect(help).toContain('Describe it in plain words.');
+  });
+  describe('voice and line help', () => {
+    const LineAssistStub = defineComponent({ name: 'LineAssist', props: ['sessionId', 'idea', 'recipientNpcIds', 'canSend'], emits: ['use'], template: '<button type="button" data-testid="assist-stub" @click="$emit(\'use\', \'[warmly] Hello friend.\')">Help me say it</button>' });
+    const SeatVoiceStub = { name: 'SeatVoice', props: ['snapshot', 'busy'], emits: ['command'], template: '<div data-testid="voice-stub">Your voice</div>' };
+    async function mountStubbed(state: ReturnType<typeof snapshot>) {
+      transport.snapshot.mockResolvedValue(state);
+      const Host = defineComponent({ setup() { table = createTable(); provideTable(table); return () => h(PlayerSeat); } });
+      wrapper = mount(Host, { global: { stubs: { AudioPanel: AudioPanelStub, LineAssist: LineAssistStub, SeatVoice: SeatVoiceStub } } });
+      await table.refresh();
+      await flushPromises();
+      return wrapper;
+    }
+
+    it('shows the voice section in the character section', async () => {
+      const w = await mountStubbed(snapshot());
+      expect(w.get('section.character [data-testid="voice-stub"]').text()).toBe('Your voice');
+    });
+
+    it('offers Help me say it for Say and not for Do', async () => {
+      const w = await mountStubbed(snapshot());
+      expect(w.find('[data-testid="assist-stub"]').exists()).toBe(true);
+      await click(w, 'Do something');
+      expect(w.find('[data-testid="assist-stub"]').exists()).toBe(false);
+    });
+
+    it('fills the box with Use this without sending, then Send sends it', async () => {
+      const w = await mountStubbed(snapshot());
+      transport.command.mockClear();
+      await w.get('[data-testid="speech-input"]').setValue('hello');
+      await w.get('[data-testid="assist-stub"]').trigger('click');
+      await flushPromises();
+      expect(value(w, 'speech-input')).toBe('[warmly] Hello friend.');
+      expect(transport.command).not.toHaveBeenCalled();
+      await submit(w);
+      expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ type: 'save_submission', kind: 'say', text: '[warmly] Hello friend.' }));
+    });
   });
 });

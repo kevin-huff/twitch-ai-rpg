@@ -25,6 +25,25 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## October 28 update: player and character voices
+
+Players now pick their own voice from the ElevenLabs voices on the account, their Say lines play in it, the director picks voices for non-player characters, and the storyteller writes audio tags into a hidden voice copy of each line so narration carries emotion. The spec is `.local/specs/2026-10-28-voices.md`.
+
+What changed:
+
+- Voices (`packages/contracts`, `packages/providers`): `voices.ts` holds the `eleven:` reference format, the voice list shapes, fake voices and the tag helpers. A character gains `voiceProfileId` (null means the narrator). The ElevenLabs provider lists voices and speaks `eleven:` references directly. Players choose with the player-only `set_voice` command, checked against a ten-minute catalog behind `GET /api/voices`. New stories get AI-picked voices for the cast, and an unlisted pick falls back to the narrator.
+- Speech hashes and recordings (`apps/server/src/script.ts`, `draft-audio.ts`): the hash never depends on a chosen voice. Preparations store the voiced lines, and publishing copies the recorded voice onto the Say segment, so a voice change never orphans a recording.
+- Tags: square-bracket tags live only in a hidden `voiceText` and in player text. Shown text, stakes, outcomes and pictures never hold them. The storyteller's `voiceText` is refused, with a reason and one corrected attempt, when its words differ from the text. The script review shows a Read as line, and a manual script has a Delivery choice.
+- Help me say it (`apps/server/src/line-assist.ts`, `LineAssist.vue`): a player-only route that suggests a fuller line from a rough idea, using only what that player can see. It never sends anything. The player chooses Use this and still presses Send.
+- Leftover fixes: rule refusals get a corrected attempt, a warning shows before planning more than six lines, the manual fallback makes one roll per line, contract validation is faster, the plan check counts one roll per line, and blank critical outcomes count as absent.
+- Web: `VoicePicker`, `LineAssist` and `SeatVoice`, wired into the seat, the pre-show page, the live controls, the story editor and the script review. Help matches the new labels.
+
+The ElevenLabs key needs the Voices: Read permission. Without it the voice list comes back empty with a reason, and everyone keeps the narrator.
+
+Deploy note: no migration and nothing new to configure. After deploying, refresh the OBS browser sources and reopen any seat pages.
+
+How it was checked: new and changed tests in `packages/contracts`, `packages/providers`, `packages/rules`, the server voices, line-assist, set-voice, round-leftovers, script and draft-audio tests, the web component tests (voice picker, seat voice, line assist, seat, live controls, library, script editor, beat panel, stakes cards, help labels), and the voices browser spec. Phone screens were checked at 390x844 and director screens at 1280x900.
+
 ## October 28 update: every line rolls and critical failures
 
 Every Say and Do line now rolls, in conversation rounds as well as action rounds. The AI scales each roll's consequences to the moment, and a double 1 is a critical failure with its own written outcome, shown wherever results show.

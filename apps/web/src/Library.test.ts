@@ -13,6 +13,9 @@ const transport = vi.hoisted(() => ({ library: vi.fn(), starter: vi.fn(), saveSc
 vi.mock('./api', () => ({ api: transport }));
 const navigation = vi.hoisted(() => ({ navigate: vi.fn(), clearIdentity: vi.fn() }));
 vi.mock('./navigate', () => navigation);
+const voiceApi = vi.hoisted(() => ({ loadVoices: vi.fn() }));
+vi.mock('./voices', async (importOriginal) => ({ ...(await importOriginal<typeof import('./voices')>()), loadVoices: voiceApi.loadVoices }));
+const listedVoices = [{ id: 'eleven:fake-ada', name: 'Ada', group: 'clone', summary: 'female', previewUrl: null, tuned: true }, { id: 'eleven:fake-bram', name: 'Bram', group: 'added', summary: 'male', previewUrl: null, tuned: false }];
 
 const card = { schemaVersion: 1, displayName: 'Aster', pronouns: 'they/them', appearance: 'A silver coat.', personality: 'Patient.', backstory: 'A former courier.', traits: { force: 0, finesse: 2, wits: 1, presence: 1 }, specialty: 'Navigation', flaw: 'Distrustful', possessions: ['Map', 'Compass', 'Coat'], connection: 'Owes the crew a favor.', secret: 'The map is a forgery.', extensions: {} };
 const scenario = { schemaVersion: 1, title: 'The Glass Moon', premise: 'Recover a lost observatory.', genre: 'Science fantasy', tone: 'Hopeful mystery', boundaries: ['No harm to children.'], locations: [{ id: 'tower', title: 'Observatory', description: 'A cold dome.' }], openingScene: { id: 'arrival', title: 'A locked door', description: 'The crew reaches the tower.', locationId: 'tower' }, npcs: [], tracks: [], facts: [], playerHooks: ['An old debt.'], objectives: ['Enter the observatory.'], discoveries: [], opportunities: [], directorNotes: 'The telescope is alive.', rulesVersion: '0.1', pacing: { conversationWords: 90, actionWords: 120 }, extensions: {} };
@@ -30,6 +33,7 @@ async function generate(wrapper: ReturnType<typeof mount>, field: string, seed: 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  voiceApi.loadVoices.mockResolvedValue({ voices: listedVoices });
   window.sessionStorage.clear();
   window.history.replaceState({}, '', `/library?identity=${'a'.repeat(32)}`);
   transport.library.mockResolvedValue({ scenarios: [{ id: 'scenario-one', version: 2, definition: scenario }], characters: [{ id: 'card-one', version: 1, definition: card }] });
@@ -110,6 +114,50 @@ describe('native scenario and character library', () => {
       return wrapper;
     };
     const labelsIn = (root: { findAll: (selector: string) => Array<{ text: () => string }> }) => root.findAll('label').map(label => label.text());
+
+    describe('non-player character voice', () => {
+      const savedNpc = () => (transport.saveScenario.mock.calls.at(-1)![0] as { definition: { npcs: Array<{ voiceProfileId: string }> } }).definition.npcs[0];
+      const save = async (wrapper: ReturnType<typeof mount>) => { await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises(); };
+      const pick = async (wrapper: ReturnType<typeof mount>, label: RegExp) => {
+        const button = wrapper.get('[data-testid="npc-voice"]').findAll('button.voice-choose').find(b => label.test(b.text()))!;
+        await button.trigger('click');
+      };
+      const voiceOf = (npc: string) => NpcDefinitionSchema.parse({ id: 'v', displayName: 'Vee', role: 'Keeper', locationId: 'tower', status: 'present', voiceProfileId: npc });
+
+      it('shows the Voice pick with the chosen voice name', async () => {
+        const wrapper = await open([voiceOf('eleven:fake-ada')]);
+        const fold = wrapper.get('[data-testid="npc-voice"]');
+        expect(fold.get('summary').text()).toBe('Voice: Ada');
+        expect(wrapper.text()).toContain("Who reads this character's lines. Narrator means the narrator's voice.");
+        expect(fold.text()).toContain('Bram');
+        wrapper.unmount();
+      });
+
+      it('shows a logical value as Narrator and saves it unchanged when untouched', async () => {
+        const wrapper = await open([libraryNpc]);
+        expect(wrapper.get('[data-testid="npc-voice"]').get('summary').text()).toBe('Voice: Narrator');
+        await save(wrapper);
+        expect(savedNpc().voiceProfileId).toBe('voice_mara');
+        wrapper.unmount();
+      });
+
+      it('stores the eleven: reference of a picked voice', async () => {
+        const wrapper = await open([libraryNpc]);
+        await pick(wrapper, /Bram/);
+        expect(wrapper.get('[data-testid="npc-voice"]').get('summary').text()).toBe('Voice: Bram');
+        await save(wrapper);
+        expect(savedNpc().voiceProfileId).toBe('eleven:fake-bram');
+        wrapper.unmount();
+      });
+
+      it('stores narrator when the director picks Narrator over a voice', async () => {
+        const wrapper = await open([voiceOf('eleven:fake-ada')]);
+        await pick(wrapper, /Narrator/);
+        await save(wrapper);
+        expect(savedNpc().voiceProfileId).toBe('narrator');
+        wrapper.unmount();
+      });
+    });
 
     it('shows title, premise, what the AI will not write and the opening scene outside any fold, in that order', async () => {
       const wrapper = await open();

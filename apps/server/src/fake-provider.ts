@@ -5,9 +5,14 @@ import {
   type AiProvider, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
   type FieldGenerationRequest, type FieldGenerationResponse, type FieldGenerationCharacterContext,
   PictureDescriptionRequestSchema, type PictureDescriptionRequest,
+  LineAssistInputSchema, type LineAssistInput, type LineAssistResponse, type VoiceChoice, hasAudioTags, stripAudioTags,
 } from '@rpg/contracts';
 
 export const FAKE_PICTURE_DESCRIPTION = 'Everyone in the beat gathers at the center of the scene under warm lamplight, caught in the middle of the moment.';
+
+export function fakeLineSuggestion(idea: string): string {
+  return `[warmly] ${idea.replace(/\s+/g, ' ').trim()} That is what I mean.`.slice(0, 4000);
+}
 
 function characterInspiration(context: FieldGenerationCharacterContext, field: string): string {
   const publicField = ['npc.displayName', 'npc.role', 'npc.appearance', 'character.displayName', 'character.appearance'].includes(field);
@@ -33,6 +38,11 @@ export class FakeAiProvider implements AiProvider {
     const request = PictureDescriptionRequestSchema.parse(input);
     this.pictureRequests.push(request);
     return FAKE_PICTURE_DESCRIPTION;
+  }
+
+  async suggestLine(input: LineAssistInput): Promise<LineAssistResponse> {
+    const parsed = LineAssistInputSchema.parse(input);
+    return { text: fakeLineSuggestion(parsed.idea) };
   }
 
   async generateField(input: FieldGenerationRequest): Promise<FieldGenerationResponse> {
@@ -85,8 +95,9 @@ export class FakeAiProvider implements AiProvider {
     };
   }
 
-  async generateScenario(input: ScenarioGenerationRequest, _options?: { deadlineAt?: number }): Promise<ScenarioDraft> {
+  async generateScenario(input: ScenarioGenerationRequest, options?: { deadlineAt?: number; voices?: VoiceChoice[] }): Promise<ScenarioDraft> {
     const { prompt } = ScenarioGenerationRequestSchema.parse(input);
+    const voices = options?.voices ?? [];
     const write = async (field: FieldGenerationField) => (await this.generateField({ field, seed: prompt })).text;
     return {
       title: await write('scenario.title'), premise: await write('scenario.premise'),
@@ -103,13 +114,13 @@ export class FakeAiProvider implements AiProvider {
       npcs: [
         {
           name: 'Ines Park', role: 'Local guide', appearance: 'A tall guide in a faded green coat.', locationKey: 'opening', presence: 'present',
-          communicationChannel: null, hiddenIdentity: null, aliases: [], personality: ['Calm and watchful'], limits: [], dialogueExamples: [],
+          communicationChannel: null, hiddenIdentity: null, aliases: [], ...(voices.length ? { voice: voices[0]!.id } : {}), personality: ['Calm and watchful'], limits: [], dialogueExamples: [],
           secrets: ['Ines saw who left the note.'], motivation: 'Keep the town safe.', goal: 'Guide the party to the truth.', mood: 'steady',
           knowledge: [{ statement: 'The note was left before dawn.', category: 'fact' }], partyStance: null, partyReason: '',
         },
         {
           name: 'Tomas Reed', role: 'Dock worker', appearance: 'A broad man with rope-burned hands.', locationKey: 'second', presence: 'offstage',
-          communicationChannel: 'radio', hiddenIdentity: null, aliases: [], personality: [], limits: [], dialogueExamples: [], secrets: [],
+          communicationChannel: 'radio', hiddenIdentity: null, aliases: [], ...(voices.length ? { voice: 'eleven:not-on-the-list' } : {}), personality: [], limits: [], dialogueExamples: [], secrets: [],
           motivation: 'Get paid and stay out of trouble.', goal: '', mood: 'nervous', knowledge: [], partyStance: null, partyReason: '',
         },
       ],
@@ -126,22 +137,26 @@ export class FakeAiProvider implements AiProvider {
   }
 
   async plan(context: ProviderContext): Promise<PlanResult> {
-    const { beat, submissions, state } = context;
+    const { submissions, state } = context;
     const progress = state.tracks.find((track) => track.kind === 'progress' && track.visibility === 'public' && track.enabled);
     const danger = state.tracks.find((track) => track.kind === 'danger' && track.visibility === 'public' && track.enabled);
     const progressEffects: Effect[] = progress ? [{ kind: 'track_delta', trackId: progress.id, delta: 2 }] : [];
     const cost = (characterId: string, delta: number): Effect => danger ? { kind: 'track_delta', trackId: danger.id, delta } : { kind: 'strain_delta', characterId, delta };
-    const contracts: ActionContract[] = submissions.filter((submission) => submission.kind !== 'ooc').map((submission) => ({
+    const contracts: ActionContract[] = submissions.filter((submission) => submission.kind !== 'ooc').map((submission) => {
+      const words = hasAudioTags(submission.text) ? stripAudioTags(submission.text) : submission.text;
+      const ruling = submission.kind === 'act' && (state.characters.find((character) => character.id === submission.characterId)?.strain ?? 0) >= 4 ? 'blocked' as const : 'check' as const;
+      return {
       id: randomUUID(), version: 1, actorCharacterId: submission.characterId, helperCharacterIds: [], submissionIds: [submission.id],
-      intent: submission.intent || submission.text, approach: submission.approach || 'Ask the addressed NPC for a consequential concession',
-      ruling: submission.kind === 'act' && (state.characters.find((character) => character.id === submission.characterId)?.strain ?? 0) >= 4 ? 'blocked' : 'check', trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
+      intent: submission.intent || words, approach: submission.approach || 'Ask the addressed NPC for a consequential concession',
+      ruling, trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
       outcomes: {
         clean: { publicText: 'The agreed objective succeeds quietly.', effects: [...progressEffects] },
         costly: { publicText: danger ? 'The agreed objective succeeds, drawing attention.' : 'The agreed objective succeeds at the cost of 1 strain.', effects: [...progressEffects, cost(submission.characterId, 1)] },
         setback: { publicText: danger ? 'The objective remains out of reach and danger increases.' : 'The objective remains out of reach; the effort causes 2 strain.', effects: [cost(submission.characterId, 2)] },
-        critical: { publicText: danger ? 'It goes as badly as it could, and the danger jumps.' : 'It goes as badly as it could; the effort causes 3 strain.', effects: [cost(submission.characterId, 3)] },
+        ...(ruling === 'check' ? { critical: { publicText: danger ? 'It goes as badly as it could, and the danger jumps.' : 'It goes as badly as it could; the effort causes 3 strain.', effects: [cost(submission.characterId, 3)] } } : {}),
       },
-    }));
+      };
+    });
     return { classification: 'action', contracts, directorSummary: 'Review these fixture stakes before accepting. They are deterministic rehearsal proposals.' };
   }
   async render(context: ProviderContext): Promise<AiDraft> {

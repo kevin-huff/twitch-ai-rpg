@@ -375,10 +375,58 @@ describe('ClewdR native adapter', () => {
       const ctx = twoLines();
       actLine(ctx);
       ctx.state.characters[0].strain = 4;
-      const result = rolledPlan([{ ...rolledContract(ctx, 'other', 1, [0], 'extra'), submissionIds: ['extra', 'submission'] }]);
+      const result = rolledPlan([{ ...rolledContract(ctx, 'other', 1, [0], 'extra'), submissionIds: ['extra', 'submission'], edge: 1, edgeReason: 'They work together.' }]);
       const fetchMock = replying(result);
       expect(await ai(fetchMock).plan(ctx)).toEqual(result);
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses two selected lines of one character in one contract and accepts the corrected plan', async () => {
+      const ctx = twoLines();
+      const second = SubmissionSchema.parse({
+        id: 'again', sessionId: ctx.state.session.id, characterId: ctx.state.characters[0].id,
+        contextBeatId: 'beat', inputEpoch: 1, revision: 1, kind: 'say', text: 'Answer me.', recipientNpcIds: [ctx.state.npcs[0].id], status: 'locked',
+      });
+      ctx.submissions = [...ctx.submissions, second];
+      ctx.beat = { ...ctx.beat, selectedSubmissionIds: ctx.submissions.map((submission) => submission.id), lockedSubmissions: ctx.submissions };
+      const refused = rolledPlan([
+        { ...rolledContract(ctx, 'ask', 0, [], 'submission'), submissionIds: ['submission', 'again'] },
+        rolledContract(ctx, 'other', 1, [], 'extra'),
+      ]);
+      const corrected = rolledPlan([
+        rolledContract(ctx, 'ask', 0, [], 'submission'), rolledContract(ctx, 'again', 0, [], 'again'), rolledContract(ctx, 'other', 1, [], 'extra'),
+      ]);
+      const fetchMock = replying(refused, corrected);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const reply = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content;
+      expect(reply).toContain('more than one selected line from the same character');
+      expect(reply).toContain('leads its own contract');
+    });
+
+    it('counts a check whose critical outcome is blank as missing', async () => {
+      const ctx = twoLines();
+      const blank = { ...rolledContract(ctx, 'ask', 0, [], 'submission').outcomes, critical: { publicText: '   ', effects: [] } };
+      const corrected = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission'), rolledContract(ctx, 'other', 1, [], 'extra')]);
+      const fetchMock = replying(rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', { outcomes: blank }), rolledContract(ctx, 'other', 1, [], 'extra')]), corrected);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
+      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content).toContain('without outcomes.critical');
+    });
+
+    it('sends back a rules refusal such as removing an item the character lacks, once, and uses the corrected plan', async () => {
+      const ctx = twoLines();
+      ctx.state.characters[0].possessions = [];
+      const removal = { kind: 'inventory_remove', characterId: ctx.state.characters[0].id, item: 'Brass key' };
+      const refused = rolledPlan([
+        rolledContract(ctx, 'ask', 0, [], 'submission', { outcomes: { ...rolledContract(ctx, 'ask', 0, [], 'submission').outcomes, clean: { publicText: 'The key is spent.', effects: [removal] } } }),
+        rolledContract(ctx, 'other', 1, [], 'extra'),
+      ]);
+      const corrected = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission'), rolledContract(ctx, 'other', 1, [], 'extra')]);
+      const fetchMock = replying(refused, corrected);
+      expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content)
+        .toContain('The rules refused this plan: Cannot consume an item the character does not possess.');
     });
 
     it('fails after a second refusal without a third request and keeps the reason out of the message', async () => {
@@ -434,7 +482,7 @@ describe('ClewdR native adapter', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('accepts seven valid contracts on seven lines', async () => {
+    it('does not refuse seven contracts itself, leaving the refusal to the director', async () => {
       const ctx = lines(0, 0, 0, 1, 1, 2, 3);
       const owners = [0, 0, 0, 1, 1, 2, 3];
       const result = plan(owners.map((owner, index) => contract(ctx, `c${index}`, owner, [], `line-${index}`)));
@@ -468,6 +516,67 @@ describe('ClewdR native adapter', () => {
     const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(second.messages).toHaveLength(3);
     expect(second.messages[2].content).toContain('use "claim" or "belief"');
+  });
+
+  it('states the audio tag rules in the render prompt and the no-copy rule in the plan prompt', async () => {
+    const ctx = context();
+    const renderFetch = replying(draft(ctx));
+    await ai(renderFetch).render(ctx);
+    const render = JSON.parse(String(renderFetch.mock.calls[0][1]?.body)).system as string;
+    expect(render).toContain('optional "voiceText"');
+    expect(render).toContain('exactly the words of "text"');
+    expect(render).toContain('Never put square brackets in "text"');
+    expect(render).toContain('usually one to three tags a line, one per clause');
+    expect(render).toContain('[whispers]');
+    expect(render).toContain('Sound effects ([door creaking], [thunder rumbling]) belong only in narration, and sparingly');
+    expect(render).toContain('Never use accent tags');
+    expect(render).toContain('SSML such as <break>');
+    expect(render).toContain('a critical failure should sound like one');
+    const planFetch = replying(singleLinePlan(ctx));
+    await ai(planFetch).plan(ctx);
+    const plan = JSON.parse(String(planFetch.mock.calls[0][1]?.body)).system as string;
+    expect(plan).toContain('Never copy square-bracket tags from player lines into contract intents or outcomes.');
+    expect(plan).not.toContain('Audio tag rules');
+  });
+
+  it('keeps a voiceText whose words match its text once the tags are removed', async () => {
+    const ctx = context();
+    const tagged = draft(ctx);
+    tagged.segments[0] = { ...tagged.segments[0], voiceText: '[quietly] Mara sets the glass [pause] down.' };
+    const fetchMock = replying(tagged);
+    expect(await ai(fetchMock).render(ctx)).toEqual(tagged);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['an unspaced em dash with a spaced tag', 'Wait\u2014you think he ran?', '[shocked] Wait\u2014[incredulous] you think he ran?'],
+    ['an unspaced em dash with an unspaced tag', 'Wait\u2014you think he ran?', 'Wait\u2014[incredulous]you think he ran?'],
+    ['a tag after an opening quotation mark', 'Mara leans in. "Run."', 'Mara leans in. "[whispers] Run."'],
+    ['a tag after an unspaced ellipsis', 'I...I saw nothing.', 'I...[gulps] I saw nothing.'],
+  ])('keeps a voiceText with %s', async (_name, text, voiceText) => {
+    const ctx = context();
+    const tagged = draft(ctx);
+    tagged.segments[0] = { ...tagged.segments[0], text, voiceText };
+    const fetchMock = replying(tagged);
+    expect(await ai(fetchMock).render(ctx)).toEqual(tagged);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['words that differ from the text', '[quietly] Mara drops the glass.', 'differ from its text'],
+    ['an angle-bracket tag', '[quietly] Mara sets the glass <break time="1s"/> down.', 'angle-bracket tag'],
+  ])('sends back a voiceText with %s once and uses the corrected draft', async (_name, voiceText, reason) => {
+    const ctx = context();
+    const refused = draft(ctx);
+    refused.segments[0] = { ...refused.segments[0], voiceText };
+    const corrected = draft(ctx);
+    corrected.segments[0] = { ...corrected.segments[0], voiceText: '[quietly] Mara sets the glass down.' };
+    const fetchMock = replying(refused, corrected);
+    expect(await ai(fetchMock).render(ctx)).toEqual(corrected);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const content = JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).messages[2].content;
+    expect(content).toContain('Segment 1');
+    expect(content).toContain(reason);
   });
 
   it.each(['plan', 'render'] as const)('accepts final %s text and discards thinking and redacted-thinking metadata', async (task) => {

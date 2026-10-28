@@ -21,13 +21,11 @@ export function speakerRole(segment: Pick<ScriptSegment, 'kind'>): 'Narrator' | 
 }
 
 export function bandLabel(band: OutcomeBand): string {
-  const name: string = band;
-  return name === 'clean' ? 'Clean success' : name === 'costly' ? 'Success with a cost' : name === 'critical' ? 'Critical failure' : 'Setback';
+  return band === 'clean' ? 'Clean success' : band === 'costly' ? 'Success with a cost' : band === 'critical' ? 'Critical failure' : 'Setback';
 }
 
 export function bandSymbol(band: OutcomeBand): string {
-  const name: string = band;
-  return name === 'clean' ? '+' : name === 'costly' ? '~' : name === 'critical' ? '!' : 'x';
+  return band === 'clean' ? '+' : band === 'costly' ? '~' : band === 'critical' ? '!' : 'x';
 }
 
 export function traitName(trait: Trait): string {
@@ -49,7 +47,7 @@ export function wagerOutcomes(stake: Pick<PublicActionContract, 'ruling' | 'outc
     { label: '7-9 Success with a cost', text: stake.outcomes.costly },
     { label: '6 or less Setback', text: stake.outcomes.setback },
   ];
-  const critical = (stake.outcomes as { critical?: string }).critical;
+  const critical = stake.outcomes.critical;
   if (typeof critical === 'string' && critical.trim()) rows.push({ label: 'Double 1s Critical failure', text: critical });
   return rows;
 }

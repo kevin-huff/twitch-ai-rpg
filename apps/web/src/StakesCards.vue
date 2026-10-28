@@ -43,7 +43,9 @@ function rollWords(contract: ActionContract) {
   return `Roll: two dice + ${trait}${traitValue(contract)}${contract.edge === 1 ? ' + 1 edge' : ''}`;
 }
 function setCritical(contract: ActionContract, text: string) {
-  if (contract.outcomes.critical) contract.outcomes.critical.publicText = text;
+  const branch = contract.outcomes.critical;
+  if (!text.trim() && (!branch || branch.effects.length === 0)) delete contract.outcomes.critical;
+  else if (branch) branch.publicText = text;
   else contract.outcomes.critical = { publicText: text, effects: [] };
 }
 function onCriticalInput(contract: ActionContract, event: Event) {
@@ -93,7 +95,7 @@ function loadJson() {
           <p class="roll-words">{{ rollWords(contract) }}</p>
           <ul class="outcomes">
             <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
-            <li v-if="contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
+            <li v-if="contract.ruling === 'check' && contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
           </ul>
         </template>
         <template v-else>
@@ -117,7 +119,7 @@ function loadJson() {
             <p v-if="overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS)" class="stage-length over" :data-testid="`stage-length-${band}`">{{ overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS) }}</p>
             <small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small>
           </div>
-          <div class="branch">
+          <div v-if="contract.ruling === 'check'" class="branch">
             <label>{{ CRITICAL_LABEL }}<textarea :value="contract.outcomes.critical?.publicText ?? ''" data-testid="outcome-critical" rows="2" placeholder="Write what happens on double 1s" @input="onCriticalInput(contract, $event)" /></label>
             <p v-if="overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS)" class="stage-length over" data-testid="stage-length-critical">{{ overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS) }}</p>
             <small v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" style="display: block">{{ effectLabel(effect) }}</small>

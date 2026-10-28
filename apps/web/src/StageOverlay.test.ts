@@ -839,4 +839,26 @@ describe('StageOverlay', () => {
       expect(mount(StageOverlay, { props: { snapshot: stale, connected: true } }).find('.scene-corner').exists()).toBe(false);
     });
   });
+
+  it('shows a voice copy segment as its plain words, never its audio tags', () => {
+    const base = snapshot();
+    const tagged = (id: string, kind: string, speaker: { entityId: string; displayName: string } | null) => ({
+      id, kind, text: 'Keep your voice down.', speaker, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: true,
+      voiceText: '[whispers] Keep your voice down.',
+    });
+    const history = [{
+      ...base.history[0]!,
+      segments: [
+        tagged('vn', 'narration', null),
+        tagged('vx', 'npc_dialogue', { entityId: 'n1', displayName: 'Old Brann' }),
+        tagged('vp', 'player_dialogue', { entityId: 'c1', displayName: 'Mara Vale' })
+      ]
+    }];
+    const wrapper = mount(StageOverlay, { props: { snapshot: snapshot({ history }), connected: true } });
+    const story = wrapper.get('.stage-story');
+    expect(story.text()).toContain('Keep your voice down.');
+    expect(wrapper.findAll('.said').map(said => said.text())).toEqual(Array(3).fill('Keep your voice down.'));
+    expect(wrapper.html()).not.toContain('[whispers]');
+    expect(story.text()).not.toContain('[whispers]');
+  });
 });

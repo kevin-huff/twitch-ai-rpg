@@ -5,6 +5,9 @@ export * from './gallery';
 export * from './images';
 export * from './operations';
 export * from './playback';
+export * from './voices';
+import type { VoiceChoice } from './voices';
+import { VoiceRefSchema, elevenVoiceId, voicedWords } from './voices';
 import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
 import { GalleryStatusSchema } from './gallery';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
@@ -117,7 +120,7 @@ export const CharacterSchema = z.strictObject({
   templateRef: TemplateRefSchema.nullable().default(null), cardRevision: RevisionSchema.default(0),
   draft: CharacterCardDefinitionSchema.nullable().default(null), ready: z.boolean().default(false),
   acceptedBoundariesRevision: RevisionSchema.nullable().default(null), portraitId: authoredCharacter.portraitId,
-  cardSource: z.enum(['host', 'player']).optional(),
+  cardSource: z.enum(['host', 'player']).optional(), voiceProfileId: IdSchema.nullable().default(null),
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
@@ -330,7 +333,7 @@ export const ResolutionSchema = z.strictObject({
 export type Resolution = z.infer<typeof ResolutionSchema>;
 
 const authored = {
-  text: TextSchema, recipientCharacterIds: z.array(IdSchema).max(6), delivery: DeliverySchema,
+  text: TextSchema, recipientCharacterIds: z.array(IdSchema).max(6), delivery: DeliverySchema, voiceText: TextSchema.optional(),
 };
 export const AiSegmentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('narration'), speakerNpcId: z.null().optional(), ...authored }),
@@ -341,7 +344,7 @@ export const ScriptSegmentSchema = z.strictObject({
   id: IdSchema, kind: z.enum(['narration', 'npc_dialogue', 'player_dialogue', 'player_action', 'system']), text: TextSchema,
   speaker: z.strictObject({ entityId: IdSchema, displayName: z.string().min(1).max(80) }).nullable(),
   recipientCharacterIds: z.array(IdSchema), delivery: DeliverySchema, sourceSubmissionIds: z.array(IdSchema),
-  voiceProfileId: IdSchema.nullable(), ttsEnabled: z.boolean(),
+  voiceProfileId: IdSchema.nullable(), ttsEnabled: z.boolean(), voiceText: TextSchema.optional(),
 });
 export type ScriptSegment = z.infer<typeof ScriptSegmentSchema>;
 export type PlayerSegmentKind = 'player_dialogue' | 'player_action';
@@ -359,13 +362,22 @@ export function playerWords(line: Pick<Submission, 'kind' | 'text' | 'intent' | 
   if (parts.length === 2 && parts[0]!.trim() === parts[1]!.trim()) return parts[0]!;
   return parts.join('\n');
 }
-export function spokenText(line: { kind: string; speaker: string; text: string }): string {
-  const text = line.text
-    .replace(/<\/?[a-z][^>]*>/gi, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/ ?\n ?/g, '\n')
-    .trim();
-  return (isPlayerSegmentKind(line.kind) ? `${line.speaker}: ${text}` : text).trim();
+const tidySpoken = (value: string) => value
+  .replace(/<\/?[a-z][^>]*>/gi, ' ')
+  .replace(/[ \t]+/g, ' ')
+  .replace(/ ?\n ?/g, '\n')
+  .trim();
+export function spokenText(line: {
+  kind: string; speaker: string; text: string; voiceText?: string;
+  delivery?: 'neutral' | 'quiet' | 'urgent' | 'amused'; voiceProfileId?: string | null;
+}): string {
+  const words = tidySpoken(voicedWords({ text: line.text, voiceText: line.voiceText, delivery: line.delivery ?? 'neutral' }));
+  if (!isPlayerSegmentKind(line.kind)) return words;
+  if (line.kind === 'player_dialogue' && elevenVoiceId(line.voiceProfileId) && words) return words;
+  const name = line.speaker.replace(/<\/?[a-z][^>]*>/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (!words) return name;
+  if (!name) return words;
+  return `${name}: ${words}`;
 }
 export const ContinuityUpdateSchema = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -481,6 +493,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('publish_beat'), ...beatCommand, expectedStateRevision: RevisionSchema, draftRevision: RevisionSchema, textOnly: z.boolean(), audioPreparationId: z.uuid().optional() })
     .refine(value => value.textOnly ? value.audioPreparationId === undefined : value.audioPreparationId !== undefined, 'Choose text-only publication or a prepared recording.'),
   z.strictObject({ type: z.literal('abort_beat'), ...beatCommand, reason: TextSchema }),
+  z.strictObject({ type: z.literal('set_voice'), ...commandBase, voiceProfileId: VoiceRefSchema.nullable() }),
   z.strictObject({ type: z.literal('set_status'), ...commandBase, status: z.enum(['live', 'paused', 'ended']), expectedStateRevision: RevisionSchema }),
 ]);
 export type Command = z.infer<typeof CommandSchema>;
@@ -524,10 +537,42 @@ export const PictureDescriptionRequestSchema = z.strictObject({
 });
 export type PictureDescriptionRequest = z.infer<typeof PictureDescriptionRequestSchema>;
 
+export const LINE_ASSIST_ROUNDS = 3;
+export const LineAssistRequestSchema = z.strictObject({
+  idea: z.string().trim().min(1).max(4000), recipientNpcIds: z.array(IdSchema).max(2).default([]),
+});
+export type LineAssistRequest = z.infer<typeof LineAssistRequestSchema>;
+export const LineAssistResponseSchema = z.strictObject({ text: z.string().trim().min(1).max(4000) });
+export type LineAssistResponse = z.infer<typeof LineAssistResponseSchema>;
+export const LineAssistInputSchema = z.strictObject({
+  idea: z.string(),
+  character: z.strictObject({
+    displayName: z.string(), pronouns: z.string(), appearance: z.string(), personality: z.string(), backstory: z.string(),
+    specialty: z.string(), flaw: z.string(), connection: z.string(), secret: z.string(), possessions: z.array(z.string()),
+  }),
+  talkingTo: z.array(z.strictObject({
+    displayName: z.string(), role: z.string(), appearance: z.string(), mood: z.string(), personality: z.array(z.string()),
+  })),
+  present: z.strictObject({
+    npcs: z.array(z.strictObject({ displayName: z.string(), role: z.string() })),
+    characters: z.array(z.strictObject({ displayName: z.string(), appearance: z.string() })),
+  }),
+  scene: z.strictObject({ title: z.string(), description: z.string() }),
+  story: z.strictObject({ premise: z.string(), genre: z.string(), tone: z.string() }).nullable(),
+  facts: z.array(z.string()),
+  recentRounds: z.array(z.strictObject({
+    beatNumber: z.number().int(),
+    lines: z.array(z.strictObject({ speaker: z.string().nullable(), text: z.string() })),
+  })),
+  boundaries: z.array(z.string()),
+});
+export type LineAssistInput = z.infer<typeof LineAssistInputSchema>;
+
 export interface AiProvider {
   generateField?(input: FieldGenerationRequest): Promise<FieldGenerationResponse>;
   generateCard?(input: CardGenerationInput): Promise<CardDraft>;
-  generateScenario?(input: ScenarioGenerationRequest, options?: { deadlineAt?: number }): Promise<ScenarioDraft>;
+  generateScenario?(input: ScenarioGenerationRequest, options?: { deadlineAt?: number; voices?: VoiceChoice[] }): Promise<ScenarioDraft>;
+  suggestLine?(input: LineAssistInput): Promise<LineAssistResponse>;
   describePicture?(input: PictureDescriptionRequest): Promise<string>;   // one paragraph; callers clean it
   plan(context: ProviderContext): Promise<PlanResult>;
   render(context: ProviderContext): Promise<AiDraft>;
@@ -593,7 +638,7 @@ export const ScenarioDraftNpcSchema = z.object({
   motivation: cardText(1000), goal: cardText(1000), mood: cardText(160),
   knowledge: z.array(z.object({ statement: cardText(6000), category: z.enum(['fact', 'belief', 'claim']).default('fact') })).max(30).default([]),
   partyStance: z.enum(['hostile', 'wary', 'neutral', 'friendly', 'trusting']).nullable().default(null),
-  partyReason: cardText(6000),
+  partyReason: cardText(6000), voice: z.string().max(128).optional(),
 });
 export type ScenarioDraftNpc = z.infer<typeof ScenarioDraftNpcSchema>;
 export const ScenarioDraftSchema = z.object({

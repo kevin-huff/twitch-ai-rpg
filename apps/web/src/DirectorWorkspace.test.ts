@@ -332,7 +332,7 @@ describe('hiding the picture while a chain runs', () => {
   it('keeps Hide picture working during Answer these lines, and the chain still finishes', async () => {
     const branch = (publicText: string) => ({ publicText, effects: [] });
     const contract = {
-      id: '33333333-3333-4333-8333-333333333333', version: 1, actorCharacterId: 'pc-1', helperCharacterIds: [], submissionIds: ['a'], ruling: 'check', intent: 'Open the door.', approach: 'Shoulder it.', trait: 'might', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
+      id: '33333333-3333-4333-8333-333333333333', version: 1, actorCharacterId: 'pc-1', helperCharacterIds: [], submissionIds: ['a'], ruling: 'check', intent: 'Open the door.', approach: 'Shoulder it.', trait: 'force', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
       outcomes: { clean: branch('It opens.'), costly: branch('It opens, loudly.'), setback: branch('It holds.'), critical: branch('The frame splinters on top of you.') },
     };
     const states: Record<string, Record<string, unknown>> = {

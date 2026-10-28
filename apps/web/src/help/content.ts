@@ -36,7 +36,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What The Story Table does',
         paragraphs: [
-          'The Story Table runs a live tabletop roleplay on Twitch. Players send their lines from their own seats. The AI voices everyone else at the table, such as the narrator and the non-player characters.',
+          'The Story Table runs a live tabletop roleplay on Twitch. Players send their lines from their own seats. The AI voices the narrator and the non-player characters. Your Say lines play in the voice you pick, or in the narrator\'s.',
           'You are the director. You read every line before the audience sees it. Nothing is public until you publish it.',
         ],
       },
@@ -145,13 +145,20 @@ export const topics: HelpTopic[] = [
           'More holds the steps you need less often. Open conversation starts a plain conversation when you have no lines to answer. Approve stakes only approves the stakes. Roll the dice locks the lines and rolls once, and it is on only when the stakes are approved and unchanged. Plan again goes back and plans the lines afresh. Regenerate script writes the script again, and the box Tell the AI what to change lets you steer it. Save edits keeps the changes you made to the script. When the beat already has a Note for the AI, the box shows it as Current note, and what you type there replaces it. Regenerate script asks Replace the current draft? first; press Yes, regenerate, or Keep draft. With text in Tell the AI what to change, it asks only when the script has unsaved edits. Abandon this beat opens a short form where you give a reason, then press Abandon beat. Published history stays as it was.',
           'Players write a Do line as one plain description, so the queue shows a single line for it. The What\'s at risk cards turn each line into a goal and results.',
           'Every line a player sends can lead its own roll or help someone else\'s. A character can help only one roll in a round, and never their own. A character at 4 strain can still speak and roll on a Say line, but a Do line from them is blocked or helps someone else.',
-          'A round shows at most six rolls, because the stream layouts have room for six. When a plan needs more, the bar says how many it needs. Untick the extra lines, plan again, and plan the rest in the next round.',
+          'A round shows at most six rolls, because the stream layouts have room for six. When more than six lines are ticked, the bar warns you before planning: it says how many rolls the lines need and asks you to untick some and plan the rest next round.',
+        ],
+      },
+      {
+        heading: 'Character voices',
+        paragraphs: [
+          'Each non-player character can have its own voice. In the live controls and the story editor, open Voice on a character and pick one, or leave it on Narrator. Press Play sample to hear a voice first. When the AI creates a story, it picks fitting voices for the cast, and you can change any of them.',
+          'In the script review, a Read as line shows the exact words a voice will speak. In a manual script, the Delivery choice (Neutral, Quiet, Urgent or Amused) sets the tone of a line. The storyteller adds its own audio tags to the voice copy of each line, and the words never change.',
         ],
       },
       {
         heading: 'Publishing and narration',
         paragraphs: [
-          'Player lines and actions go on stream word for word, before the script, and the narrator reads each one aloud after the character\'s name. The director page lists them under Read aloud first, word for word. You cannot change them there. Only the script below them is yours to edit.',
+          'Player lines and actions go on stream before the script, in the player\'s own words with any audio tags left out. A Say line is read in the voice its player picked, or by the narrator when they picked none. A Do line is always read by the narrator, after the character\'s name. The director page lists them under Read aloud first, word for word. You cannot change them there. Only the script below them is yours to edit.',
           'Narration prepares by itself as soon as the script is ready. While it works the gold button reads Preparing voice…, and when it is done the page says Voice ready. If you press Publish while the voice is still preparing, the page says it is waiting for the voice and publishes the moment it is ready. You do not have to press anything twice.',
           'If you edit the script, save the edits under More before you publish. Until you do, Publish is off, because a publish would drop your edits.',
           'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
@@ -387,7 +394,7 @@ export const topics: HelpTopic[] = [
         heading: 'Nothing to accept',
         paragraphs: [
           'You never mark yourself ready, and you never accept any rules. The host can tell the AI what not to write, and those limits stay between the host and the AI. You do not see them, and nothing about them holds you back.',
-          'The AI never writes your character\'s words or choices. What you send with Say something and Do something goes into the story exactly as you typed it.',
+          'The AI never writes your character\'s words or choices. What you send with Say something and Do something goes into the story in your words. Viewers never see audio tags such as [whispers].',
         ],
       },
       {
@@ -437,8 +444,8 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Say something or Do something',
         paragraphs: [
-          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, exactly as you typed them, and hear the narrator read them aloud, once the director puts them in the story. Your words can be rolled too, so the dice may decide how they land.',
-          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, exactly as you typed them, tagged Action, and hear the narrator read them aloud. The storyteller then tells what happens, and the dice decide how it goes.',
+          'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, without any audio tags, and hear them in your voice (or the narrator\'s if you picked none), once the director puts them in the story. Your words can be rolled too, so the dice may decide how they land.',
+          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, tagged Action, and the narrator reads them aloud. The storyteller then tells what happens, and the dice decide how it goes.',
           'When other characters are in the scene, Say something also shows who you are talking to, such as Talking to Mara or Talking to your group. Press Change to pick someone else. Your group means the other players\' characters.',
           'Every line you send can be rolled, whether you say it or do it. Most rolls end well or with a cost. A double 1 is a critical failure, whatever the total, and the story shows it as Critical failure.',
           'You can write at any time. If the story isn\'t taking new lines yet, yours waits for the next turn.',
@@ -509,9 +516,17 @@ export const topics: HelpTopic[] = [
         ],
       },
       {
+        heading: 'Your voice and Help me say it',
+        paragraphs: [
+          'Open Your voice on your seat to pick a voice for your character. Press Play sample to hear a voice before you choose it. Voices marked Tuned for v4 suit the voice model best. Once you pick one, your Say lines play in it. The narrator keeps reading what you do. Choose The narrator reads my lines to go back.',
+          'A line can carry a few audio tags in square brackets, such as [whispers], [laughs] or [sighs], to set how it is read. They only change the voice. Viewers never see them, and a line needs real words as well as tags.',
+          'Help me say it turns a rough idea into a fuller line in your character\'s voice. Type the idea in the line box, press Help me say it, and read the suggestion. Choose Use this to put it in the box, Try again for another, or Keep mine to leave your words alone. Nothing is sent until you press Send. It only knows what your own seat shows.',
+        ],
+      },
+      {
         heading: 'Who sees what I write?',
         paragraphs: [
-          'The director sees every line first. Viewers see your Say something and Do something words, exactly as you typed them, only after the director puts them in the story, and the narrator reads them aloud. The storyteller then describes what happens in its own words. Private notes stay with the director.',
+          'The director sees every line first. Viewers see your Say something and Do something words, without audio tags, only after the director puts them in the story. Say lines are read in your chosen voice or the narrator\'s, and Do lines by the narrator. The storyteller then describes what happens in its own words. Private notes stay with the director.',
         ],
       },
       {
@@ -888,7 +903,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'A player needs only two things before they can send: the show has started, and their seat has a card. There is no ready step and no rules to accept. If a player cannot send, check these in order.',
           'Before the show starts, the player sees their seat page with "The show will start soon." and cannot send yet. Start the show from Cast & lobby with Start show. If the button is off, a seat still has no card. Open Cast & lobby, find the seat that says Waiting for this player\'s card, and press Write this card for them, or ask the player to type a name under Your character and press Save my card. If the page says "Give your character a name. Nothing has been saved.", no name was typed yet.',
-          'The banner at the top of the seat says what is happening. \'The show is paused\' shows when the show is paused. \'Waiting for the next turn\' shows between beats. \'Getting the dice ready\' shows while you review the stakes of an action round, and \'The director is checking the lines\' while you review a conversation. In both, the player can still change their line. \'Lines locked in. The story is being written\' shows once a beat is locked with no roll. \'Dice rolled. The story is being written\' shows once a locked round has a roll.',
+          'The banner at the top of the seat says what is happening. \'The show is paused\' shows when the show is paused. \'Waiting for the next turn\' shows between beats. \'Getting the dice ready\' shows while the director reviews the stakes, and \'The director is checking the lines\' shows only when the approved stakes need no roll. In both, the player can still change their line. \'Lines locked in. The story is being written\' shows once a beat is locked with no roll. \'Dice rolled. The story is being written\' shows once a locked round has a roll.',
           'After the director ends the show, the seat says The show is over and sends nothing. If the page still looks wrong, ask the player to reload it.',
         ],
       },

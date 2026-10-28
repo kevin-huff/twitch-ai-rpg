@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import BeatPanel from './BeatPanel.vue';
 import { createTable, provideTable, type Table } from './table';
+import StakesCards from './StakesCards.vue';
 
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), login: vi.fn(), redeem: vi.fn(), create: vi.fn(), testSeat: vi.fn(), sessions: vi.fn(), library: vi.fn(), generateField: vi.fn() }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
@@ -307,14 +308,14 @@ describe('beat panel chains', () => {
     wrapper.unmount();
   });
 
-  it('plans at most 12 lines, the oldest first, and leaves the rest ticked', async () => {
+  it('sends nothing for more than six ticked lines, however many are ticked', async () => {
     const many = { submissions: Array.from({ length: 14 }, (_, index) => line(`say-${index + 1}`)) };
     const ticked = many.submissions.map(item => item.id).reverse();
     const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', many), ticked);
-    queue(snapshot(planned({ classification: 'needs_action' }), 'live', many));
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-testid="too-many-lines"]').text()).toContain('14 lines need 14 rolls');
     await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
-    expect(sentTypes()).toEqual(['plan_beat']);
-    expect(transport.command.mock.calls[0][1].submissionIds).toEqual(many.submissions.slice(0, 12).map(item => item.id));
+    expect(sentTypes()).toEqual([]);
     wrapper.unmount();
   });
 
@@ -356,14 +357,64 @@ describe('beat panel chains', () => {
     await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
     expect(transport.command).toHaveBeenLastCalledWith('show', expect.objectContaining({ type: 'plan_beat', submissionIds: ['say-1', 'say-2'] }));
     transport.command.mockClear();
-    await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
-    await wrapper.get('[data-testid="outcome-costly"]').setValue('It works, and it costs you.');
-    await wrapper.get('[data-testid="outcome-setback"]').setValue('It fails.');
+    for (const contract of wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>) {
+      contract.outcomes.clean.publicText = 'It works.'; contract.outcomes.costly.publicText = 'It works, and it costs you.'; contract.outcomes.setback.publicText = 'It fails.';
+    }
+    await flushPromises();
     await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
     const first = transport.command.mock.calls[0]?.[1];
     expect(first).toMatchObject({ type: 'approve_stakes', classification: 'action' });
-    expect(first.contracts.length).toBeGreaterThan(0);
+    expect(first.contracts).toHaveLength(2);
     wrapper.unmount();
+  });
+
+  describe('six-line limit and the manual fallback', () => {
+    const many = (count: number) => ({ submissions: Array.from({ length: count }, (_, index) => line(`say-${index + 1}`)) });
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `say-${index + 1}`);
+    const warning = (count: number) => `${count} lines need ${count} rolls, and a round shows at most six. Untick some lines, then plan the rest next round.`;
+
+    it('warns and disables the gold button above six ticked lines, sending nothing', async () => {
+      const wrapper = await mountPanel(snapshot(null, 'live', many(7)), ids(7));
+      const gold = wrapper.get('[data-testid="answer-lines"]');
+      expect(gold.attributes('disabled')).toBeDefined();
+      expect(wrapper.get('[data-testid="too-many-lines"]').text()).toBe(warning(7));
+      await gold.trigger('click'); await flushPromises();
+      expect(transport.command).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
+    it('does not warn at six lines', async () => {
+      const wrapper = await mountPanel(snapshot(null, 'live', many(6)), ids(6));
+      expect(wrapper.find('[data-testid="too-many-lines"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="answer-lines"]').attributes('disabled')).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it('does not count out-of-character lines', async () => {
+      const extra = { submissions: [...many(6).submissions, line('ooc-1', 'ooc')] };
+      const wrapper = await mountPanel(snapshot(null, 'live', extra), [...ids(6), 'ooc-1']);
+      expect(wrapper.find('[data-testid="too-many-lines"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it('builds one check contract per line with four blank outcomes and no tags in the intent', async () => {
+      const state = { submissions: [{ ...line('say-1'), text: '[laughs] Fine.' }, line('act-1', 'act'), line('say-2', 'say', 'pc-2')] };
+      const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1', 'act-1', 'say-2'], lastError: 'The planner timed out.' });
+      const wrapper = await mountPanel(snapshot(failed, 'live', state), ['say-1', 'act-1', 'say-2']);
+      const list = wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>;
+      expect(list).toHaveLength(3);
+      expect(list.map(contract => contract.submissionIds)).toEqual([['say-1'], ['act-1'], ['say-2']]);
+      expect(list.map(contract => contract.actorCharacterId)).toEqual(['pc-1', 'pc-1', 'pc-2']);
+      expect(list.map(contract => contract.trait)).toEqual(['presence', 'wits', 'presence']);
+      expect(list[0]!.intent).toBe('Resolve the requested concession: Fine.');
+      expect(list[0]!.intent).not.toContain('[laughs]');
+      for (const contract of list) {
+        expect(contract.ruling).toBe('check');
+        expect(Object.keys(contract.outcomes).sort()).toEqual(['clean', 'costly', 'critical', 'setback']);
+        for (const branch of Object.values(contract.outcomes) as Array<{ publicText: string; effects: unknown[] }>) expect(branch).toEqual({ publicText: '', effects: [] });
+      }
+      wrapper.unmount();
+    });
   });
 
   it('stops a chain at a refused step with its error in the bar, not the page notice', async () => {
@@ -976,7 +1027,7 @@ describe('beat panel stakes cards', () => {
   });
 
   it('builds the contracts when the classification switches to action, then sends the edited ones with Approve and roll', async () => {
-    const withLine = { submissions: [line('act-1', 'act')] };
+    const withLine = { submissions: [{ ...line('act-1', 'act'), intent: 'Pick the lock.', approach: 'Quietly.' }] };
     const stakes = beat({ phase: 'stakes_review', selectedSubmissionIds: ['act-1'] });
     const wrapper = await mountPanel(snapshot(stakes, 'live', withLine), ['act-1']);
     await wrapper.get('[data-testid="stakes-ordinary-edit"]').trigger('click');
@@ -987,6 +1038,7 @@ describe('beat panel stakes cards', () => {
     expect(buttonNamed(wrapper, 'Lock and draft')).toBeUndefined();
     expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
     await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
+    await wrapper.get('[data-testid="outcome-clean"]').setValue('It works.');
     await wrapper.get('[data-testid="outcome-costly"]').setValue('It opens, and a guard looks up.');
     await wrapper.get('[data-testid="outcome-setback"]').setValue('It jams.');
     const queued = [

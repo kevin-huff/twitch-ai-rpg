@@ -7,7 +7,9 @@ import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { playerStatus } from './player-status';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
 import AudioPanel from './AudioPanel.vue';
+import LineAssist from './LineAssist.vue';
 import SeatStory from './SeatStory.vue';
+import SeatVoice from './SeatVoice.vue';
 import SubmissionList from './SubmissionList.vue';
 
 type LineKind = 'say' | 'act' | 'ooc';
@@ -246,6 +248,7 @@ async function askPrivately() {
         <template v-if="player.ownCharacter">
           <p class="playing">You are playing</p><h2>{{ player.ownCharacter.displayName }}</h2>
           <details v-if="card.length || showable(ownPortraitSrc)" class="card"><summary>Who is {{ player.ownCharacter.displayName }}?</summary><img v-if="showable(ownPortraitSrc)" class="own-portrait" :src="ownPortraitSrc!" :alt="portraitAlt(name)" @error="pictureFailed(ownPortraitSrc)"><dl><template v-for="row in card" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl></details>
+          <SeatVoice :snapshot="player" :busy="busy" @command="command => work(() => send(command))" />
         </template>
         <template v-else><h2>Unassigned seat</h2><p class="notice">This seat has no character yet. Ask the director.</p></template>
       </section>
@@ -259,11 +262,11 @@ async function askPrivately() {
             <button type="button" class="secondary" :aria-pressed="kind === 'act'" :disabled="Boolean(editing)" @click="kind = 'act'">Do something</button>
           </div>
           <template v-if="kind === 'say'">
-            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><p :id="helpId('say')" class="field-help">Viewers see these words on stream exactly as you type them, and hear them read aloud, once the director puts them in the story.</p></div>
+            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
             <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
             <div v-else-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
           </template>
-          <div v-else-if="kind === 'act'"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream exactly as you type them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
+          <div v-else-if="kind === 'act'"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream as you write them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
           <div v-else><label>Private note for the director<textarea :aria-describedby="helpId('note')" v-model="noteText" data-testid="note-input" rows="3" maxlength="4000" required @input="beginInput" /></label><p :id="helpId('note')" class="field-help">Only the director sees this. It never appears on stream.</p></div>
           <div class="actions"><button class="send" :disabled="busy || !player.ownCharacter || (kind !== 'ooc' && !playerReady)">{{ submitLabel }}</button><button v-if="editing || kind === 'ooc'" type="button" class="quiet" @click="cancel">Cancel</button></div>
           <p v-if="receipt" class="notice" role="status">{{ receipt }}</p>

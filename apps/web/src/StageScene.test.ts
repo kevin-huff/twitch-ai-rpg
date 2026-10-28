@@ -1225,4 +1225,22 @@ describe('StageScene', () => {
       expect(wrapper.get('.page-marker').text()).toBe('Part 1 of 5');
     });
   });
+
+  it('shows a voice copy segment as its plain words, never its audio tags', () => {
+    const tagged = (id: string, kind: string, speaker: { entityId: string; displayName: string } | null) => ({
+      id, kind, text: 'Keep your voice down.', speaker, recipientCharacterIds: [], delivery: 'neutral', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: true,
+      voiceText: '[whispers] Keep your voice down.',
+    });
+    const segments = [
+      tagged('vn', 'narration', null),
+      tagged('vx', 'npc_dialogue', { entityId: 'mara', displayName: 'Mara Vale' }),
+      tagged('vp', 'player_dialogue', { entityId: 'c1', displayName: 'Skooty Vale' }),
+    ];
+    const wrapper = mountScene(snapshot({ history: [beat('b1', 1, { segments })] }));
+    const story = wrapper.get('.stage-story');
+    expect(story.text()).toContain('Keep your voice down.');
+    expect(story.findAll('.line')).toHaveLength(3);
+    expect(wrapper.html()).not.toContain('[whispers]');
+    expect(story.text()).not.toContain('[whispers]');
+  });
 });
