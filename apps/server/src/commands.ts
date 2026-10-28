@@ -4,6 +4,7 @@ import {
   AiDraftSchema, ActionContractSchema, ImageIdSchema, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
   type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type ScriptSegment, type SessionState, type Submission,
 } from '@rpg/contracts';
+import { ProviderError } from '@rpg/providers';
 import { applyResolution, resolveContracts, validateContracts } from '@rpg/rules';
 import { transaction } from './database';
 import { attachPreparedAudio } from './draft-audio';
@@ -576,7 +577,10 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       generation.task === 'plan' ? deps.provider.plan(generation.context) : deps.provider.render(generation.context),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Generation timed out. Retry or write a manual script.')), deps.providerTimeoutMs ?? 30_000); }),
     ]);
-  } catch { failure = 'Generation failed. Your accepted inputs and dice are safe. Retry or write a manual script.'; }
+  } catch (error) {
+    failure = 'Generation failed. Your accepted inputs and dice are safe. Retry or write a manual script.';
+    console.warn(`The ${generation.task} request for session ${sessionId} failed: ${error instanceof Error ? error.message : 'unknown error'}${error instanceof ProviderError && error.detail ? ` ${error.detail}` : ''}`);
+  }
   finally { clearTimeout(timer); }
   await finishUsageAttempt(deps.pool, { attemptId, status: failure ? 'failed' : 'succeeded' });
   const completed = await transaction(deps.pool, async (client) => {

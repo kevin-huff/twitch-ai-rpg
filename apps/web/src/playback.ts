@@ -10,6 +10,10 @@ type Context = { sessionId: string; beatId?: string; director: boolean; stage?: 
 type AudioStatus = 'missing' | 'preparing' | 'ready' | 'unavailable';
 type SharedCommand = PlaybackCommand['type'];
 type Lease = { id: string; deadline: number; generation: number };
+// A reply's clock reading can be off by half its round trip, so the fastest reply of the last ten seconds sets the clock.
+const CLOCK_SAMPLE_WINDOW_MS = 10_000;
+// A listener jumps only after staying out of step this long, so one late reading cannot make the audio skip back and forth.
+const LISTENER_DRIFT_PERSIST_MS = 1_500;
 
 export function createPlaybackController(initial: Context) {
   let context = { ...initial };
@@ -38,7 +42,9 @@ export function createPlaybackController(initial: Context) {
   let audioKey = '';
   let blockedKey = '';
   let started = false;
-  let sampleClock = { server: 0, local: 0 };
+  let clockSamples: { offset: number; roundTrip: number; at: number }[] = [];
+  let clockOffset = 0;
+  let driftSince: number | null = null;
   let scheduleTimer: ReturnType<typeof setTimeout> | undefined;
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let renewTimer: ReturnType<typeof setInterval> | undefined;
@@ -53,7 +59,7 @@ export function createPlaybackController(initial: Context) {
       audio.onended = null; audio.onerror = null; audio.onloadedmetadata = null;
       audio.pause(); audio.src = ''; audio.load(); audio = null;
     }
-    audioKey = ''; started = false;
+    audioKey = ''; started = false; driftSince = null;
   }
 
   function dropLease(message = '') {
@@ -129,7 +135,9 @@ export function createPlaybackController(initial: Context) {
     if (current && (snapshot.sampleRevision < current.sampleRevision ||
       (snapshot.sampleRevision === current.sampleRevision && snapshot.serverTimeMs < current.serverTimeMs))) return false;
     state.snapshot = snapshot;
-    sampleClock = { server: snapshot.serverTimeMs, local: start + (end - start) / 2 };
+    const roundTrip = end - start;
+    clockSamples = [...clockSamples.filter(sample => end - sample.at <= CLOCK_SAMPLE_WINDOW_MS), { offset: snapshot.serverTimeMs - (start + roundTrip / 2), roundTrip, at: end }];
+    clockOffset = clockSamples.reduce((best, sample) => sample.roundTrip <= best.roundTrip ? sample : best).offset;
     synchronize();
     return true;
   }
@@ -146,7 +154,7 @@ export function createPlaybackController(initial: Context) {
 
   function currentKey(snapshot: PlaybackSnapshot) { return `${snapshot.playbackId}/${snapshot.revision}/${snapshot.segmentIndex}`; }
   function position(snapshot: PlaybackSnapshot) {
-    const serverNow = sampleClock.server + Math.max(0, now() - sampleClock.local);
+    const serverNow = now() + clockOffset;
     const untilAnchor = snapshot.anchorTimeMs === null ? 0 : snapshot.anchorTimeMs - serverNow;
     return { delay: Math.max(0, untilAnchor), seconds: (snapshot.positionMs + Math.max(0, -untilAnchor)) / 1000 };
   }
@@ -161,7 +169,11 @@ export function createPlaybackController(initial: Context) {
     if (key === blockedKey) return;
     const timing = position(snapshot);
     if (key === audioKey && audio) {
-      if (started && !state.presenting && Math.abs(audio.currentTime - timing.seconds) * 1000 > PLAYBACK_SEEK_THRESHOLD_MS) seek(audio, timing.seconds);
+      if (started && !state.presenting) {
+        if (Math.abs(audio.currentTime - timing.seconds) * 1000 <= PLAYBACK_SEEK_THRESHOLD_MS) driftSince = null;
+        else if (driftSince === null) driftSince = now();
+        else if (now() - driftSince >= LISTENER_DRIFT_PERSIST_MS) { driftSince = null; seek(audio, timing.seconds); }
+      }
       return;
     }
     halt();

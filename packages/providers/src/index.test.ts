@@ -39,6 +39,11 @@ function nativeResponse(value: unknown, stopReason = 'end_turn') {
   return Response.json({ type: 'message', role: 'assistant', content: [{ type: 'text', text: JSON.stringify(value) }], stop_reason: stopReason });
 }
 
+function replying(...values: unknown[]) {
+  let call = 0;
+  return vi.fn<typeof fetch>().mockImplementation(async () => nativeResponse(values[Math.min(call++, values.length - 1)]));
+}
+
 function ai(fetchMock: typeof fetch, timeoutMs = 1000) {
   return new ClewdrAiProvider({ baseUrl: 'http://clewdr.test:8484/code/v1', apiKey: 'private-api-key', model: 'configured-model', fetch: fetchMock, timeoutMs });
 }
@@ -68,11 +73,13 @@ describe('ClewdR native adapter', () => {
     const planBody = JSON.parse(String(planMock.mock.calls[0][1]?.body));
     expect(planBody.system).toContain('at most 90 characters');
     expect(planBody.system).toContain('at most 110 characters');
+    expect(planBody.system).toContain('Every selected act submission must be cited by a contract, even a safe one: use ruling "no_check"');
     const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
     await ai(renderMock).render(ctx);
     const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
     expect(renderBody.system).not.toContain('at most 90 characters');
     expect(renderBody.system).not.toContain('at most 110 characters');
+    expect(renderBody.system).not.toContain('Every selected act submission');
   });
 
   it('qualifies historical dialogue without teaching correction text to an uninformed NPC', async () => {
@@ -240,7 +247,56 @@ describe('ClewdR native adapter', () => {
     const ctx = context();
     const result = { classification: 'ordinary', contracts: [], directorSummary: 'A question needs no check.' };
     expect(await ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(result))).plan(ctx)).toEqual(result);
-    await expect(ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ ...result, contracts: [{ id: 'bad' }] }))).plan(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(ai(replying({ ...result, contracts: [{ id: 'bad' }] })).plan(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('sends a refused plan back once with the reason and accepts the corrected plan', async () => {
+    const ctx = context();
+    ctx.submissions[0] = { ...ctx.submissions[0], kind: 'act', text: '', intent: 'I check the clock.', approach: 'I walk over and look.' };
+    const refused = { classification: 'ordinary', contracts: [], directorSummary: 'A plain look needs no check.' };
+    const outcome = { publicText: 'The clock shows half the time is gone.', effects: [] };
+    const corrected = { classification: 'action', directorSummary: 'A safe look.', contracts: [{
+      id: 'look', version: 1, actorCharacterId: ctx.state.characters[0].id, helperCharacterIds: [], submissionIds: ['submission'],
+      intent: 'Check the clock.', approach: 'Walk over and look.', ruling: 'no_check', trait: 'wits', edge: 0, edgeReason: null, risk: 'low',
+      prerequisites: [], fallback: { kind: 'hold' }, outcomes: { clean: outcome, costly: outcome, setback: outcome },
+    }] };
+    const fetchMock = replying(refused, corrected);
+    expect(await ai(fetchMock).plan(ctx)).toEqual(corrected);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(second.system).toBe(first.system);
+    expect(second.messages.slice(0, 2)).toEqual([first.messages[0], { role: 'assistant', content: JSON.stringify(refused) }]);
+    expect(second.messages[2].role).toBe('user');
+    expect(second.messages[2].content).toContain('the classification cannot be ordinary');
+    expect(second.messages[2].content).toContain('"no_check"');
+  });
+
+  it('fails after a second refusal without a third request and keeps the reason out of the message', async () => {
+    const ctx = context();
+    ctx.submissions[0] = { ...ctx.submissions[0], kind: 'act', text: '', intent: 'I check the clock.' };
+    const fetchMock = replying({ classification: 'ordinary', contracts: [], directorSummary: 'A plain look needs no check.' });
+    const error = await ai(fetchMock).plan(ctx).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error).toMatchObject({ code: 'invalid_response' });
+    expect(error.detail).toContain('the classification cannot be ordinary');
+    expect(error.message).not.toContain('ordinary');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends a refused draft back once with the reason and accepts the corrected draft', async () => {
+    const ctx = context();
+    const update = {
+      kind: 'npc_knowledge', npcId: ctx.state.npcs[0].id, statement: 'The party asked about the owner.',
+      category: 'fact', acquisition: 'told', sourceSubmissionIds: ['submission'], sourceEntityId: ctx.state.characters[0].id,
+    };
+    const corrected = { ...draft(ctx), continuity: [{ ...update, category: 'claim' }] };
+    const fetchMock = replying({ ...draft(ctx), continuity: [update] }, corrected);
+    expect(await ai(fetchMock).render(ctx)).toEqual(corrected);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(second.messages).toHaveLength(3);
+    expect(second.messages[2].content).toContain('use "claim" or "belief"');
   });
 
   it.each(['plan', 'render'] as const)('accepts final %s text and discards thinking and redacted-thinking metadata', async (task) => {
@@ -279,7 +335,7 @@ describe('ClewdR native adapter', () => {
     const thinking = { type: 'thinking', thinking: 'PRIVATE-THOUGHT', signature: 'PRIVATE-SIGNATURE' };
     const redacted = { type: 'redacted_thinking', data: 'PRIVATE-ENCRYPTED-THOUGHT' };
     for (const content of [[thinking], [redacted], [thinking, redacted], [thinking, { type: 'text', text: '{incomplete' }]]) {
-      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ type: 'message', role: 'assistant', stop_reason: 'end_turn', content }));
+      const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ type: 'message', role: 'assistant', stop_reason: 'end_turn', content }));
       const error = await ai(fetchMock).render(context()).catch((caught) => caught);
       expect(error).toBeInstanceOf(ProviderError);
       expect(error).toMatchObject({ code: 'invalid_response' });
@@ -316,7 +372,7 @@ describe('ClewdR native adapter', () => {
     if (variant === 'unknown') result.segments[1] = { ...result.segments[1], kind: 'npc_dialogue', speakerNpcId: 'invented-npc' };
     if (variant === 'offstage') ctx.state.npcs[0].status = 'offstage';
     const value = variant === 'player' ? { ...result, segments: [{ kind: 'player_dialogue', text: 'I agree.' }] } : result;
-    await expect(ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(value))).render(ctx)).rejects.toBeInstanceOf(ProviderError);
+    await expect(ai(replying(value)).render(ctx)).rejects.toBeInstanceOf(ProviderError);
   });
 
   it('rejects invented continuity sources and promotion of a heard claim into fact', async () => {
@@ -326,8 +382,7 @@ describe('ClewdR native adapter', () => {
       category: 'claim', acquisition: 'told', sourceSubmissionIds: ['invented-source'], sourceEntityId: ctx.state.characters[0].id,
     };
     for (const continuity of [[update], [{ ...update, sourceSubmissionIds: ['submission'], category: 'fact' }]]) {
-      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ ...draft(ctx), continuity }));
-      await expect(ai(fetchMock).render(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
+      await expect(ai(replying({ ...draft(ctx), continuity })).render(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
     }
   });
 
@@ -344,7 +399,7 @@ describe('ClewdR native adapter', () => {
     const ctx = context();
     ctx.beat.resolution!.effects.push({ kind: 'fact_add', factId: 'new-fact', text: 'The archive door is open.', visibility: 'public' });
     const continuity = [{ kind: 'world_fact', factId: 'new-fact', text: 'The archive door is open.', visibility: 'public', sourceSubmissionIds: ['submission'] }];
-    await expect(ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ ...draft(ctx), continuity }))).render(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(ai(replying({ ...draft(ctx), continuity })).render(ctx)).rejects.toMatchObject({ code: 'invalid_response' });
   });
 
   it('redacts provider response bodies and transport errors without automatic retry', async () => {

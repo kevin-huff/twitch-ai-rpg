@@ -321,6 +321,43 @@ describe('coordinated browser playback', () => {
     expect(instances[0].currentTime).toBeCloseTo(.4);
   });
 
+  describe('listener drift', () => {
+    // The clip plays in step with fake time; any assignment to currentTime is a seek.
+    function track(clip: FakeAudio) {
+      const seeks: number[] = [];
+      let time = clip.currentTime;
+      Object.defineProperty(clip, 'currentTime', { get: () => time, set: (value: number) => { seeks.push(value); time = value; } });
+      return { seeks, play: (seconds: number) => { time += seconds; } };
+    }
+    async function run(clip: ReturnType<typeof track>, ms: number, playing = true) {
+      for (let elapsed = 0; elapsed < ms; elapsed += 250) { if (playing) clip.play(.25); await vi.advanceTimersByTimeAsync(250); }
+    }
+
+    it('keeps playing through one slow reply instead of jumping back', async () => {
+      const value = controller(); await settle(); value.listen(); await settle();
+      const clip = track(instances[0]);
+      await run(clip, 2000);
+      vi.mocked(fetch).mockImplementationOnce(async () => {
+        const data = snapshot(); data.serverTimeMs += performance.now();
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return response(data);
+      });
+      await run(clip, 5000);
+      expect(clip.seeks).toEqual([]);
+      expect(instances).toHaveLength(1);
+    });
+
+    it('still catches up once the clip stays out of step', async () => {
+      const value = controller(); await settle(); value.listen(); await settle();
+      const clip = track(instances[0]);
+      await run(clip, 2250, false);
+      expect(clip.seeks).toEqual([]);
+      await run(clip, 250, false);
+      expect(clip.seeks).toHaveLength(1);
+      expect(clip.seeks[0]).toBeCloseTo(6.5);
+    });
+  });
+
   it('reports presenter preload failure before the anchor without position telemetry', async () => {
     routeFetch(() => snapshot({ anchorTimeMs: 100_500, positionMs: 0 }));
     const value = controller({ stage: true }); await settle(); await value.claim(); await settle();

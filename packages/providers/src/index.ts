@@ -13,12 +13,13 @@ import {
 
 type Fetch = typeof globalThis.fetch;
 type Service = 'ClewdR' | 'ElevenLabs' | 'Sogni';
+type NativeMessage = { role: 'user' | 'assistant'; content: string };
 export type ProviderErrorCode = 'configuration' | 'invalid_input' | 'invalid_context' | 'invalid_response' | 'http_error' | 'network_error' | 'timeout';
 
 export type ProviderErrorReason = 'safety' | 'credit';
 
 export class ProviderError extends Error {
-  constructor(readonly code: ProviderErrorCode, service: Service, readonly status?: number, readonly reason?: ProviderErrorReason) {
+  constructor(readonly code: ProviderErrorCode, service: Service, readonly status?: number, readonly reason?: ProviderErrorReason, readonly detail?: string) {
     const descriptions: Record<ProviderErrorCode, string> = {
       configuration: 'configuration is incomplete or invalid.',
       invalid_input: 'input is invalid.',
@@ -229,49 +230,70 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
   };
 }
 
-function validatePlan(result: PlanResult, context: ProviderContext): void {
+// Validators return the refusal in words, because the reply goes back to the model once with that reason.
+function validatePlan(result: PlanResult, context: ProviderContext): string | null {
   const { submissions } = selectedContext(context, 'plan');
   const submissionIds = new Set(submissions.map((submission) => submission.id));
   const characterIds = new Set(context.state.characters.map((character) => character.id));
   const contractIds = new Set(result.contracts.map((contract) => contract.id));
-  const invalid = () => { throw new ProviderError('invalid_response', 'ClewdR'); };
-  if (contractIds.size !== result.contracts.length || (result.classification === 'ordinary'
-    && (result.contracts.length || submissions.some((submission) => submission.kind === 'act')))) invalid();
+  if (contractIds.size !== result.contracts.length) return 'Two contracts share an id.';
+  if (result.classification === 'ordinary' && result.contracts.length) return 'An ordinary classification cannot carry contracts.';
+  if (result.classification === 'ordinary' && submissions.some((submission) => submission.kind === 'act')) {
+    return 'Act submissions are selected, so the classification cannot be ordinary. Cite every act submission in a contract, and use ruling "no_check" for an action that simply works without a roll.';
+  }
   for (const contract of result.contracts) {
-    if (!characterIds.has(contract.actorCharacterId) || contract.helperCharacterIds.some((id) => !characterIds.has(id))
-      || contract.submissionIds.some((id) => !submissionIds.has(id))
-      || !submissions.some((submission) => contract.submissionIds.includes(submission.id) && submission.characterId === contract.actorCharacterId)
-      || contract.prerequisites.some((prerequisite) => !contractIds.has(prerequisite.contractId))) invalid();
+    const name = `Contract ${contract.id}`;
+    if (!characterIds.has(contract.actorCharacterId)) return `${name} has an actorCharacterId that is not a supplied character.`;
+    if (contract.helperCharacterIds.some((id) => !characterIds.has(id))) return `${name} names a helper who is not a supplied character.`;
+    if (contract.submissionIds.some((id) => !submissionIds.has(id))) return `${name} cites a submission id that was not supplied.`;
+    if (!submissions.some((submission) => contract.submissionIds.includes(submission.id) && submission.characterId === contract.actorCharacterId)) {
+      return `${name} cites no submission written by its actor.`;
+    }
+    if (contract.prerequisites.some((prerequisite) => !contractIds.has(prerequisite.contractId))) return `${name} has a prerequisite that is not a contract in this plan.`;
     for (const branch of Object.values(contract.outcomes)) for (const effect of branch.effects) {
-      if (effect.kind === 'track_delta' && !context.state.tracks.some((track) => track.id === effect.trackId && track.visibility === 'public')) invalid();
-      if ('characterId' in effect && !characterIds.has(effect.characterId)) invalid();
+      if (effect.kind === 'track_delta' && !context.state.tracks.some((track) => track.id === effect.trackId && track.visibility === 'public')) return `${name} changes a track that was not supplied.`;
+      if ('characterId' in effect && !characterIds.has(effect.characterId)) return `${name} has a ${effect.kind} effect on someone who is not a supplied player character.`;
     }
   }
+  return null;
 }
 
-function validateDraft(result: AiDraft, context: ProviderContext): void {
+function validateDraft(result: AiDraft, context: ProviderContext): string | null {
   const { submissions, npcs } = selectedContext(context, 'render');
   const npcIds = new Set(npcs.map((npc) => npc.id));
   const characterIds = new Set(context.state.characters.map((character) => character.id));
   const sources = new Map(submissions.map((submission) => [submission.id, submission]));
   const establishedFacts = new Set(context.state.facts.filter((fact) => fact.visibility === 'public').map((fact) => fact.text));
   for (const effect of context.beat.resolution!.effects) if (effect.kind === 'fact_add' && effect.visibility === 'public') establishedFacts.add(effect.text);
-  const invalid = () => { throw new ProviderError('invalid_response', 'ClewdR'); };
-  for (const segment of result.segments) {
-    if ((segment.kind === 'npc_dialogue' && !npcIds.has(segment.speakerNpcId))
-      || segment.recipientCharacterIds.some((id) => !characterIds.has(id))) invalid();
+  for (const [index, segment] of result.segments.entries()) {
+    if (segment.kind === 'npc_dialogue' && !npcIds.has(segment.speakerNpcId)) return `Segment ${index + 1} gives a line to an NPC who is not a supplied participating NPC.`;
+    if (segment.recipientCharacterIds.some((id) => !characterIds.has(id))) return `Segment ${index + 1} lists a recipient who is not a supplied player character.`;
   }
-  for (const update of result.continuity) {
-    if (new Set(update.sourceSubmissionIds).size !== update.sourceSubmissionIds.length || update.sourceSubmissionIds.some((id) => !sources.has(id))) invalid();
-    if (update.kind === 'world_fact') {
-      throw new ProviderError('invalid_response', 'ClewdR');
+  for (const [index, update] of result.continuity.entries()) {
+    const name = `Continuity update ${index + 1}`;
+    if (new Set(update.sourceSubmissionIds).size !== update.sourceSubmissionIds.length || update.sourceSubmissionIds.some((id) => !sources.has(id))) {
+      return `${name} must cite supplied submission ids only, each at most once.`;
     }
-    if (!npcIds.has(update.npcId)) invalid();
+    if (update.kind === 'world_fact') return `${name} is a world_fact; only npc_knowledge updates are supported.`;
+    if (!npcIds.has(update.npcId)) return `${name} is for an NPC who is not a supplied participating NPC.`;
     const referenced = update.sourceSubmissionIds.map((id) => sources.get(id)!);
-    if (update.sourceEntityId && !referenced.some((submission) => submission.characterId === update.sourceEntityId)) invalid();
-    if (update.acquisition === 'told' && referenced.some((submission) => !submission.recipientNpcIds.includes(update.npcId))) invalid();
-    if (update.category === 'fact' && !establishedFacts.has(update.statement)) invalid();
+    if (update.sourceEntityId && !referenced.some((submission) => submission.characterId === update.sourceEntityId)) return `${name} has a sourceEntityId who wrote none of its cited submissions.`;
+    if (update.acquisition === 'told' && referenced.some((submission) => !submission.recipientNpcIds.includes(update.npcId))) {
+      return `${name} says the NPC was told, but a cited submission was not addressed to that NPC; use "overheard" or "witnessed".`;
+    }
+    if (update.category === 'fact' && !establishedFacts.has(update.statement)) return `${name} uses category "fact" for a statement that is not an exact supplied fact; use "claim" or "belief".`;
   }
+  return null;
+}
+
+function checkReply<T>(text: string, schema: z.ZodType<T>, refusal: (result: T) => string | null): { value: T } | string {
+  let reply: unknown;
+  try { reply = JSON.parse(text); } catch { return 'The reply was not one bare JSON object.'; }
+  const parsed = schema.safeParse(reply);
+  if (!parsed.success) {
+    return `The reply did not match the required schema: ${parsed.error.issues.slice(0, 3).map((issue) => `${issue.path.join('.') || 'top level'}: ${issue.message}`).join('; ')}.`;
+  }
+  return refusal(parsed.data) ?? { value: parsed.data };
 }
 
 export interface ClewdrOptions {
@@ -303,15 +325,11 @@ export class ClewdrAiProvider implements AiProvider {
   }
 
   async plan(context: ProviderContext): Promise<PlanResult> {
-    const result = await this.request('plan', context, planSchema);
-    validatePlan(result, context);
-    return result;
+    return this.request('plan', context, planSchema, validatePlan);
   }
 
   async render(context: ProviderContext): Promise<AiDraft> {
-    const result = await this.request('render', context, AiDraftSchema);
-    validateDraft(result, context);
-    return result;
+    return this.request('render', context, AiDraftSchema, validateDraft);
   }
 
   async describePicture(input: PictureDescriptionRequest): Promise<string> {
@@ -453,7 +471,7 @@ export class ClewdrAiProvider implements AiProvider {
     return ScenarioDraftSchema.parse({ ...rest, npcs });
   }
 
-  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>): Promise<T> {
+  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>, refusal: (result: T, context: ProviderContext) => string | null): Promise<T> {
     const selected = promptContext(context, task);
     const schemaJson = z.toJSONSchema(schema);
     const system = [
@@ -467,30 +485,44 @@ export class ClewdrAiProvider implements AiProvider {
       'Current state and each NPC\'s current sourced knowledge take precedence over recentNpcDialogue, which preserves historical speech and may have been corrected. A retained belief is not a fact; an NPC may still hold it without making it true. Correction notices identify amended historical beats and confer no knowledge. Neither correction notices nor directorSteering are evidence for continuity.',
       'An ordinary question or refusal needs no check. A risky concession, resource transfer, contested secret, or consequential action needs action stakes before publication.',
       task === 'plan' ? 'Viewers read every action contract on stream before the roll. Write each contract intent as one plain sentence of at most 90 characters, and each outcome publicText as one short sentence of at most 110 characters that tells the audience what happens. Save detail for the narration.' : '',
+      task === 'plan' ? 'Every selected act submission must be cited by a contract, even a safe one: use ruling "no_check" for an action that simply works without a roll, and "blocked" for one that cannot happen. Classification "ordinary" is only for beats with no act submission and nothing that needs stakes.' : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
       'Honor fixed results and declared outcomes. Costly success achieves its goal. Do not add effects, dice, inventory, facts, or consequences beyond approved results.',
       'Continuity updates must cite supplied submission IDs. Heard assertions are claims or beliefs, never newly proven facts. Only npc_knowledge continuity is supported. Do not propose world_fact updates; the server applies approved mechanical facts itself.',
       'For npc_knowledge, use category "fact" only when statement exactly matches a supplied facts[].text or an approved public fact_add text in fixedResults.effects. All other new statements, including questions or requests heard in this beat, must use category "claim" or "belief".',
       `Required JSON schema: ${JSON.stringify(schemaJson)}`,
     ].filter(line => line !== '').join('\n');
-    return this.post(system, selected, schema);
+    const messages: NativeMessage[] = [{ role: 'user', content: JSON.stringify(selected) }];
+    // A reply the application has to refuse goes back once with the reason, so one slip does not fail the director's beat.
+    for (let attempt = 1; ; attempt++) {
+      const text = await this.complete(system, messages);
+      const checked = checkReply(text, schema, (result) => refusal(result, context));
+      if (typeof checked !== 'string') return checked.value;
+      if (attempt === 2) throw new ProviderError('invalid_response', 'ClewdR', undefined, undefined, checked);
+      messages.push({ role: 'assistant', content: text }, { role: 'user', content: `The application refused that reply. ${checked} Reply again with only the corrected JSON object.` });
+    }
   }
 
   private async post<T>(system: string, input: unknown, schema: z.ZodType<T>, options: { timeoutMs?: number; maxTokens?: number; fit?: boolean } = {}): Promise<T> {
+    const text = await this.complete(system, [{ role: 'user', content: JSON.stringify(input) }], options);
+    try {
+      const reply: unknown = JSON.parse(text);
+      return schema.parse(options.fit ? fitToJsonSchema(reply, z.toJSONSchema(schema)) : reply);
+    } catch { throw new ProviderError('invalid_response', 'ClewdR'); }
+  }
+
+  private async complete(system: string, messages: NativeMessage[], options: { timeoutMs?: number; maxTokens?: number } = {}): Promise<string> {
     const timeoutMs = options.timeoutMs === undefined ? this.timeoutMs : configuration(timeoutSchema, options.timeoutMs, 'ClewdR');
     return boundedRequest('ClewdR', timeoutMs, async (signal) => {
       const response = await this.fetch(this.endpoint, {
         method: 'POST', redirect: 'error', signal,
         headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: this.model, max_tokens: options.maxTokens ?? 8192, stream: false, system, messages: [{ role: 'user', content: JSON.stringify(input) }] }),
+        body: JSON.stringify({ model: this.model, max_tokens: options.maxTokens ?? 8192, stream: false, system, messages }),
       });
       if (!response.ok) throw new ProviderError('http_error', 'ClewdR', response.status);
       const bytes = await responseBytes(response, 512_000, 'ClewdR');
-      try {
-        const envelope = nativeResponseSchema.parse(JSON.parse(new TextDecoder().decode(bytes)));
-        const reply: unknown = JSON.parse(envelope.content);
-        return schema.parse(options.fit ? fitToJsonSchema(reply, z.toJSONSchema(schema)) : reply);
-      } catch { throw new ProviderError('invalid_response', 'ClewdR'); }
+      try { return nativeResponseSchema.parse(JSON.parse(new TextDecoder().decode(bytes))).content; }
+      catch { throw new ProviderError('invalid_response', 'ClewdR'); }
     });
   }
 }
