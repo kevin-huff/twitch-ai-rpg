@@ -493,10 +493,78 @@ describe('coordinated browser playback', () => {
 
   it('fails closed on network loss and does not auto-reclaim', async () => {
     const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
-    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline')); await value.refresh();
+    vi.mocked(fetch).mockImplementation(async () => { throw new Error('offline'); });
+    await vi.advanceTimersByTimeAsync(10_001);
     expect(value.state.presenting).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
-    await value.refresh(); await settle(); expect(instances).toHaveLength(1);
     expect(value.state.error).toMatch(/reclaim/i);
+    routeFetch(); await value.refresh(); await settle(); expect(instances).toHaveLength(1);
+    expect(value.state.presenting).toBe(false);
+  });
+
+  describe('presenter network blips', () => {
+    const lost = 'Audio connection lost. Reclaim audio and ask the director to resume.';
+    const failure = (status: number) => Object.assign(response({ message: 'The server said no.' }, false), { status }) as Response;
+
+    it('keeps presenting and playing through one failed poll, then recovers on the next', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('offline')); await value.refresh(); await settle();
+      expect(value.state.presenting).toBe(true); expect(value.state.listening).toBe(true);
+      expect(instances).toHaveLength(1); expect(instances[0].pause).not.toHaveBeenCalled();
+      expect(value.state.error).toBe('');
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(value.state.presenting).toBe(true); expect(instances[0].pause).not.toHaveBeenCalled();
+    });
+
+    it('keeps presenting through a failed renewal and failed position reports', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockImplementation(async () => { throw new Error('offline'); });
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(value.state.presenting).toBe(true); expect(instances[0].pause).not.toHaveBeenCalled();
+      expect(value.state.error).toBe('');
+    });
+
+    it('keeps presenting through a proxy 502 reply', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockResolvedValueOnce(failure(502)); await value.refresh(); await settle();
+      expect(value.state.presenting).toBe(true); expect(instances[0].pause).not.toHaveBeenCalled();
+    });
+
+    it('drops the lease once the deadline passes with no renewal', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockImplementation(async () => { throw new Error('offline'); });
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(value.state.presenting).toBe(true); expect(instances[0].pause).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(value.state.presenting).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
+      // The lease's own expiry timer fires at the deadline, before any failed poll can report the lost connection.
+      expect(value.state.error).toMatch(/Presenter lease expired|Audio connection lost/);
+    });
+
+    it('drops the lease at once when the server refuses ownership', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockResolvedValueOnce(failure(409)); await value.refresh();
+      expect(value.state.presenting).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
+      expect(value.state.error).toBe(lost);
+    });
+
+    it('drops the lease at once when a renewal names a different lease', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockImplementation(async url => {
+        const current = snapshot({ sampleRevision: 2, serverTimeMs: 102_000 });
+        if (String(url).endsWith('/presenter')) return response({ snapshot: current, leaseId: '44444444-4444-4444-8444-444444444444' });
+        return response(String(url).endsWith('/telemetry') ? { snapshot: current } : current);
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(value.state.presenting).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
+      expect(value.state.error).toBe(lost);
+    });
+
+    it('still fails a non-presenting listener on the first failed poll', async () => {
+      const value = controller(); await settle(); value.listen(); await settle();
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('offline')); await value.refresh();
+      expect(value.state.listening).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
+      expect(value.state.error).toBe('offline');
+    });
   });
 
   it('cleans identity changes and unmounts without a delayed claim reviving audio', async () => {

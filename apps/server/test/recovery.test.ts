@@ -53,7 +53,7 @@ suite('adversarial generation and stale input recovery', () => {
     await prepareAction(); await act('lock_beat'); const fixed = state.activeBeat!.resolution!.rolls;
     render = async () => new Promise<AiDraft>(() => {});
     await act('render_beat');
-    expect(state.activeBeat!.lastError).toContain('failed'); expect(state.activeBeat!.phase).toBe('locked');
+    expect(state.activeBeat!.lastError).toContain('took too long to answer'); expect(state.activeBeat!.phase).toBe('locked');
     await act('edit_script', { segments: [{ kind: 'narration', text: 'The approved outcome unfolds.', recipientCharacterIds: [], delivery: 'neutral' }] });
     await act('publish_beat', { expectedStateRevision: state.session.stateRevision, draftRevision: state.activeBeat!.draftRevision, textOnly: true });
     expect(state.history[0]!.rolls).toEqual(fixed); expect(rolls).toBe(2);
@@ -129,7 +129,7 @@ suite('adversarial generation and stale input recovery', () => {
     plan = () => new Promise<PlanResult>(() => {});
     await act('plan_beat', { submissionIds: [submission.id] });
     expect(state.activeBeat!.phase).toBe('collecting');
-    expect(state.activeBeat!.lastError).toContain('failed');
+    expect(state.activeBeat!.lastError).toContain('took too long to answer');
     const contract: ActionContract = {
       id: crypto.randomUUID(), version: 1, actorCharacterId: submission.characterId, helperCharacterIds: [], submissionIds: [submission.id],
       intent: submission.intent, approach: submission.approach, ruling: 'check', trait: 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },

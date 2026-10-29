@@ -139,6 +139,8 @@ suite('live director controls', () => {
     await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
     await ok({ type: 'plan_beat', beatId: snapshot.activeBeat!.id, expectedBeatRevision: snapshot.activeBeat!.revision, submissionIds: snapshot.submissions.filter(item => item.status === 'queued').map(item => item.id) });
     expect(context).toBeTruthy(); expect(context!.state.locations).toEqual([]);
+    const here = snapshot.locations.find(location => location.id === snapshot.session.scene.locationId)!;
+    expect(context!.place).toBe(here.title);
     expect(JSON.stringify(context)).not.toContain('Private catalog detail');
     for (const npc of context!.state.npcs) { expect(npc.secrets).toEqual([]); expect(npc.hiddenIdentity).toBeNull(); }
   });

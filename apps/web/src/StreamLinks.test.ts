@@ -54,19 +54,34 @@ describe('Stream this show (director)', () => {
     for (const fn of Object.values(transport)) expect(fn).not.toHaveBeenCalled();
   });
 
-  it('reveals every active token and creates missing cast links on first open, but not the main show link', async () => {
+  it('reveals every active token on first open but makes no cast link and no main show link', async () => {
     transport.streamLinks.mockResolvedValue({ links: [playerLink(1)] });
     mountPanel(); await openPanel();
     expect(transport.me).toHaveBeenCalled();
     expect(transport.producers).toHaveBeenCalled();
     expect(transport.streamLink).toHaveBeenCalledWith('show', 'link-pc-1');
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
+    expect(tid('stream-row-player-pc-1').text()).toContain('Aster');
+    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').attributes('data-url')).toContain('token-of-link-pc-1');
+    expect(tid('stream-row-player-pc-2').text()).toContain('Briar');
+    expect(tid('stream-row-player-pc-2').find('[data-testid="copy-overlay"]').exists()).toBe(false);
+  });
+
+  it('makes exactly one link for one press of a row Make a link', async () => {
+    mountPanel(); await openPanel();
+    expect(transport.createStreamLink).not.toHaveBeenCalled();
+    await tid('stream-row-player-pc-2').get('button').trigger('click'); await flushPromises();
     expect(transport.createStreamLink).toHaveBeenCalledTimes(1);
     expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'player', characterId: 'pc-2' });
-    expect(transport.createStreamLink).not.toHaveBeenCalledWith('show', { subject: 'show' });
-    expect(tid('stream-row-player-pc-1').text()).toContain('Aster');
-    expect(tid('stream-row-player-pc-2').text()).toContain('Briar');
-    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').attributes('data-url')).toContain('token-of-link-pc-1');
-    expect(tid('stream-row-player-pc-2').find('[data-testid="copy-overlay"]').attributes('data-url')).toContain('token-pc-2');
+    expect(tid('stream-row-player-pc-2').find('[data-testid="copy-overlay"]').exists()).toBe(true);
+    expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').exists()).toBe(false);
+  });
+
+  it('shows the new group wording and the one-OBS note', async () => {
+    mountPanel(); await openPanel();
+    const text = wrapper!.text();
+    expect(text).toContain("Every link shows the same picture. A cast member's link only listens to the show audio.");
+    expect(text).toContain('Only one OBS should load the Main show link: it carries the show audio.');
   });
 
   it('loads only the first time it opens', async () => {
@@ -81,7 +96,7 @@ describe('Stream this show (director)', () => {
   it('shows the group headings and offers the main show link when none is active', async () => {
     mountPanel(); await openPanel();
     const headings = wrapper!.findAll('h4').map(item => item.text());
-    expect(headings).toEqual(['For your stream', "For a cast member's own stream"]);
+    expect(headings).toEqual(['For your stream', 'For a cast member who streams too']);
     expect(tid('stream-row-show').exists()).toBe(false);
     await tid('make-show-link').trigger('click'); await flushPromises();
     expect(transport.createStreamLink).toHaveBeenCalledWith('show', { subject: 'show' });
@@ -195,7 +210,8 @@ describe('Stream this show (director)', () => {
     transport.createStreamLink.mockRejectedValueOnce(new Error('no'));
     transport.streamLinks.mockResolvedValue({ links: [playerLink(2)] });
     mountPanel(); await openPanel();
-    expect(tid('stream-row-player-pc-1').text()).toContain('This link could not be created.');
+    await tid('stream-row-player-pc-1').get('button').trigger('click'); await flushPromises();
+    expect(wrapper!.get('[role="alert"]').text()).toContain('The link could not be created. Try again.');
     await tid('stream-row-player-pc-1').get('button').trigger('click'); await flushPromises();
     expect(tid('stream-row-player-pc-1').find('[data-testid="copy-overlay"]').exists()).toBe(true);
   });

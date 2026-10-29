@@ -66,7 +66,7 @@ const SCENE_FAILED = PICTURE_MESSAGES.sceneFailed;
 const ROUND_SAFETY = 'The picture service would not draw this round. You can still publish it.';
 const NPC_FAILED = 'The portrait could not be made. Press Create portrait to try again.';
 
-// Held action pictures never count for the audience or for the state. Released pictures rank by the moment they show: when it was asked for if it has no round, when its round was published if it has one. A picture that finishes late never outranks a newer moment, and older pictures still being made are cancelled when a round is published. The newest ready one is what the audience sees, unless hidden; the director's state is making while any released picture is being made, otherwise the newest released one decides. The hidden flag comes from the newest row by the same order, held or not.
+// Held action pictures never count for the audience or for the state. Released pictures rank by the moment they show: when it was asked for if it has no round, when its round was published if it has one. A picture that finishes late never outranks a newer moment, and older pictures still being made are cancelled when a round is published. The newest ready one is what the audience sees, unless hidden; the director's state is making only while a released picture newer than the newest ready one is being made (older pictures still drawing no longer hold the status; publishing still cancels them), otherwise the newest released one decides. The hidden flag comes from the newest row by the same order, held or not.
 export async function scenePictureView(client: PoolClient, sessionId: string, sceneId: string): Promise<{ shown: ScenePicture | null; status: ScenePictureStatus }> {
   const result = await client.query<Pick<ImageRow, 'id' | 'status' | 'message' | 'beat_id' | 'released_at'> & { newest_hidden: boolean; has_moment: boolean }>(
     `SELECT id, status, message, beat_id, released_at, moment IS NOT NULL AS has_moment,
@@ -78,7 +78,8 @@ export async function scenePictureView(client: PoolClient, sessionId: string, sc
   const latest = released[0];
   const latestReady = released.find(row => row.status === 'ready');
   const hidden = result.rows[0]?.newest_hidden ?? false;
-  const making = released.find(row => row.status === 'making');
+  const readyAt = latestReady ? released.indexOf(latestReady) : released.length;
+  const making = released.slice(0, readyAt).find(row => row.status === 'making');
   const state = !latest ? 'none' : making ? 'making' : latest.status === 'failed' ? 'failed' : 'ready';
   return {
     shown: latestReady && !hidden ? { imageId: latestReady.id, sceneId } : null,

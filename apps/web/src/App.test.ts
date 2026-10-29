@@ -31,7 +31,7 @@ function draftBeat() {
 }
 
 function scriptSnapshot() {
-  return { ...snapshot('director'), npcs: [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present' }], activeBeat: {
+  return { ...snapshot('director'), npcs: [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present' }], npcDetails: [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present', locationId: 'bar', communicationChannel: null }], activeBeat: {
     id: 'beat-2', kind: 'conversation', phase: 'draft_review', revision: 3, selectedSubmissionIds: [],
     contracts: [], classification: 'ordinary', stakesApproved: true, resolution: { rolls: [], outcomes: [], effects: [] },
     draft: { segments: [
@@ -684,7 +684,7 @@ describe('public performance and player authority', () => {
     wrapper.unmount();
   });
 
-  it('keeps the input window captured when typing instead of silently moving stale text to a new round', async () => {
+  it('keeps the input window captured when typing and sends stale text to a new round only through Send it anyway', async () => {
     window.history.replaceState({}, '', '/sessions/show/play');
     const current = snapshot('player');
     transport.snapshot.mockResolvedValue(current);
@@ -694,9 +694,10 @@ describe('public performance and player authority', () => {
     transport.snapshot.mockResolvedValue({ ...current, session: { ...current.session, inputEpoch: 2 } });
     await transport.subscribe.mock.calls[0][1]();
     await flushPromises();
+    expect(wrapper.get('button.send').text()).toBe('Send it anyway');
     await wrapper.get('[data-testid="submission-form"]').trigger('submit');
     await flushPromises();
-    expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ expectedInputEpoch: 0, text: 'Wait for my signal.' }));
+    expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ expectedInputEpoch: 2, text: 'Wait for my signal.' }));
     wrapper.unmount();
   });
 

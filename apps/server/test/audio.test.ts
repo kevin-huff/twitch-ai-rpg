@@ -96,6 +96,39 @@ suite('SHOW-02/04 reviewed speech cache and authorization', () => {
     expect(current.session.actionRoundNumber).toBe(0);
   });
 
+  it('serves clips with byte ranges and long-lived caching, while everything else stays no-store', async () => {
+    const manifest = await request(`/api/sessions/${sessionId}/audio/${beatId}`, stage);
+    const assetUrl = manifest.json().manifest.segments[0].url;
+    const bytes = Uint8Array.from({ length: 26 }, (_, i) => 65 + i);
+    await writeFile(join(directory, `${assetUrl.split('/').pop()}.mp3`), bytes);
+    const whole = await request(assetUrl, stage);
+    expect(whole.statusCode).toBe(200);
+    expect(whole.headers['accept-ranges']).toBe('bytes');
+    expect(whole.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+    expect(whole.rawPayload.length).toBe(26);
+    const ranged = (range: string) => app.inject({ method: 'GET', url: assetUrl, headers: { cookie: stage, origin, range } });
+    const first = await ranged('bytes=0-9');
+    expect(first.statusCode).toBe(206);
+    expect(first.headers['content-range']).toBe('bytes 0-9/26');
+    expect(first.headers['accept-ranges']).toBe('bytes');
+    expect(first.headers['content-length']).toBe('10');
+    expect(first.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+    expect(first.body).toBe('ABCDEFGHIJ');
+    const last = await ranged('bytes=-5');
+    expect(last.statusCode).toBe(206);
+    expect(last.headers['content-range']).toBe('bytes 21-25/26');
+    expect(last.body).toBe('VWXYZ');
+    const beyond = await ranged('bytes=26-');
+    expect(beyond.statusCode).toBe(416);
+    expect(beyond.headers['content-range']).toBe('bytes */26');
+    expect(beyond.headers['accept-ranges']).toBe('bytes');
+    expect(beyond.headers['cache-control']).toBe('no-store');
+    expect((await request(assetUrl, '')).headers['cache-control']).toBe('no-store');
+    expect((await request(`/api/sessions/${sessionId}/audio/${beatId}`, stage)).headers['cache-control']).toBe('no-store');
+    expect((await request(`/api/sessions/${sessionId}/audio/assets/${'d'.repeat(64)}`, stage)).headers['cache-control']).toBe('no-store');
+    expect((await request(`/api/sessions/${sessionId}/beats/${draftId}/draft-audio`, host)).headers['cache-control']).toBe('no-store');
+  });
+
   it('denies cached audio with no ready published reference even when the asset hash is known', async () => {
     const pool = createPool(process.env.TEST_DATABASE_URL!);
     const assetId = 'b'.repeat(64);

@@ -346,7 +346,7 @@ describe('ClewdR two-pass scenario writer', () => {
       expect(call.system).not.toContain('PROMPT-MARKER');
       expect(call.system).not.toContain('BOUNDARY-MARKER');
       expect(call.system).not.toContain('CONCEPT-');
-      expect(call.maxTokens).toBe(call === sent[0] ? 16_000 : 8192);
+      expect(call.maxTokens).toBe(16_000);
     }
     expect(JSON.stringify(sent[0].user)).toContain('PROMPT-MARKER');
     expect(JSON.stringify(sent[0].user)).toContain('BOUNDARY-MARKER');

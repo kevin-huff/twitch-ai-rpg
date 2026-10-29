@@ -344,6 +344,28 @@ suite('command hooks for pictures', () => {
     expect(pictures.runs).toHaveLength(1);
   });
 
+  it('reserves an opening picture when the lobby picture failed before the show started', async () => {
+    await useLobbySetup();
+    const before = await readDirector();
+    await pool.query(
+      `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, attach, status, prompt, width, height, provider, model, requested_by)
+       VALUES($1,$2,$3,'scene',$4,$5,false,'failed','A quiet harbor.',768,768,'fake','fake-image',$2)`,
+      [randomUUID(), ownerId, sessionId, before.session.scene.id, `scene:${sessionId}`]);
+    await run({ type: 'start_session', expectedStateRevision: before.session.stateRevision, overrideUnreadyReason: 'Testing the start.' });
+    expect(pictures.calls).toEqual([{ kind: 'scene', sceneId: before.session.scene.id }]);
+  });
+
+  it('keeps a ready lobby picture from being drawn a second time when the show starts', async () => {
+    await useLobbySetup();
+    const before = await readDirector();
+    await pool.query(
+      `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, attach, status, prompt, width, height, provider, model, requested_by, file_hash, content_type, byte_length)
+       VALUES($1,$2,$3,'scene',$4,$5,false,'ready','A quiet harbor.',768,768,'fake','fake-image',$2,$6,'image/jpeg',1000)`,
+      [randomUUID(), ownerId, sessionId, before.session.scene.id, `scene:${sessionId}`, 'd'.repeat(64)]);
+    await run({ type: 'start_session', expectedStateRevision: before.session.stateRevision, overrideUnreadyReason: 'Testing the start.' });
+    expect(pictures.calls).toEqual([]);
+  });
+
   it('makes no calls and keeps picture fields empty without a pictures dependency', async () => {
     const before = await readDirector();
     const opened = directorView(await run({ type: 'set_status', status: 'live', expectedStateRevision: before.session.stateRevision }, director(), false));

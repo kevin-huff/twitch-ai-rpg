@@ -14,7 +14,6 @@ import { PICTURE_MESSAGES } from '../src/images';
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 const origin = 'http://localhost:3000';
-const NOT_STARTED = 'Start the show before you make a new picture.';
 const NO_PICTURE = 'There is no picture for this scene yet.';
 const SCENE_ONLY = 'Only the director can change scene pictures.';
 const HOURLY = /^The picture limit for this hour is used up\. Try again in (1 minute|\d+ minutes)\.$/;
@@ -259,7 +258,7 @@ suite('scene pictures through commands and routes', () => {
   });
 
   describe('New picture', () => {
-    it('is for the director of the show only and only once the show has started', async () => {
+    it('is for the director of the show only, and works before the show starts', async () => {
       await boot();
       const { show } = await liveWithPicture();
       for (const credential of [show.player, show.stage]) {
@@ -277,16 +276,24 @@ suite('scene pictures through commands and routes', () => {
       expect((await picturePost(foreign, '/hide')).statusCode).toBe(404);
       expect((await picturePost(foreign, '/show')).statusCode).toBe(404);
 
-      // A rehearsal that has not opened, and a lobby show that has not started, are both turned away.
+      // Draw the place works before the show starts, so a lobby show and an unopened rehearsal are not turned away.
       for (const waiting of [await rehearsal(), await customShow()]) {
         const early = await picturePost(waiting, '');
-        expect(early.statusCode, early.body).toBe(409);
-        expect(early.json()).toMatchObject({ code: 'conflict', message: NOT_STARTED });
-        expect(await rows(waiting)).toEqual([]);
+        expect(early.statusCode, early.body).toBe(202);
+        await waitForStatus(waiting, early.json().imageId, 'ready');
       }
+
+      // A show that has ended is turned away.
+      const { show: finished } = await liveWithPicture();
+      await pool.query("UPDATE sessions SET status='ended' WHERE id=$1", [finished.sessionId]);
+      const before = await rows(finished);
+      const ended = await picturePost(finished, '');
+      expect(ended.statusCode, ended.body).toBe(409);
+      expect(ended.json()).toMatchObject({ code: 'conflict', message: 'This session has ended.' });
+      expect(await rows(finished)).toEqual(before);
     });
 
-    it('starts over when a second press comes while a picture is being made', async () => {
+    it('lets a second press run beside the first, and neither is cancelled', async () => {
       await boot();
       const { show } = await liveWithPicture();
       hold();
@@ -298,11 +305,28 @@ suite('scene pictures through commands and routes', () => {
       const second = again.json().imageId as string;
       expect(second).not.toBe(first);
       expect(await rows(show)).toHaveLength(3);
-      expect((await rows(show)).find(row => row.id === first)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
+      expect((await rows(show)).filter(row => [first, second].includes(row.id))).toEqual([
+        expect.objectContaining({ status: 'making', message: null }), expect.objectContaining({ status: 'making', message: null })]);
       release();
+      await waitForStatus(show, first, 'ready');
       await waitForStatus(show, second, 'ready');
-      expect((await rows(show)).find(row => row.id === first)!.status).toBe('cancelled');
+      expect((await rows(show)).filter(row => row.status === 'cancelled')).toEqual([]);
       expect((await picturePost(show, '')).statusCode).toBe(202);
+    });
+
+    it('draws the place in the lobby, and starting the show then makes no second opening picture', async () => {
+      await boot();
+      const show = await customShow();
+      await expectCardsApproved(show);
+      const pressed = await picturePost(show, '');
+      expect(pressed.statusCode, pressed.body).toBe(202);
+      const imageId = pressed.json().imageId as string;
+      await waitForStatus(show, imageId, 'ready');
+      const started = await start(show);
+      expect(started.statusCode, started.body).toBe(200);
+      expect((started.json().snapshot as DirectorSnapshot).session.status).toBe('live');
+      expect((await rows(show)).map(row => row.id)).toEqual([imageId]);
+      expect((await stageView(show)).scenePicture?.imageId).toBe(imageId);
     });
 
     it('replaces the shown picture when the new one is ready', async () => {

@@ -258,7 +258,7 @@ suite('the Draw the last beat route', () => {
     await waitForStatus(show, place.json().imageId, 'ready');
   });
 
-  it('starts over when a place picture is being made', async () => {
+  it('keeps a place picture that is being made when a beat picture is asked for', async () => {
     await boot();
     const show = await liveWithPicture();
     await publishConversation(show);
@@ -270,26 +270,29 @@ suite('the Draw the last beat route', () => {
     const first = place.json().imageId as string;
     const second = beat.json().imageId as string;
     expect(second).not.toBe(first);
-    expect((await rows(show)).find(row => row.id === first)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
+    expect((await rows(show)).filter(row => [first, second].includes(row.id))).toEqual([
+      expect.objectContaining({ status: 'making', message: null }), expect.objectContaining({ status: 'making', message: null })]);
     release();
+    await waitForStatus(show, first, 'ready');
     await waitForStatus(show, second, 'ready');
-    expect((await rows(show)).find(row => row.id === first)!.status).toBe('cancelled');
+    expect((await rows(show)).filter(row => row.status === 'cancelled')).toEqual([]);
     expect((await rows(show)).find(row => row.id === second)!.moment).not.toBeNull();
   });
 
-  it('starts over when another beat picture is being made, and the newest one is the one shown', async () => {
+  it('keeps a beat picture that is being made when another is asked for, and the newest one is the one shown', async () => {
     await boot();
     const show = await liveWithPicture();
     await publishConversation(show);
     hold();
     const first = (await post(show, 'beat-picture')).json().imageId as string;
     const second = (await post(show, 'beat-picture')).json().imageId as string;
-    expect((await rows(show)).find(row => row.id === first)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
+    expect((await rows(show)).find(row => row.id === first)).toMatchObject({ status: 'making', message: null });
     release();
+    await waitForStatus(show, first, 'ready');
     await waitForStatus(show, second, 'ready');
     const view = await director(show);
     expect(view.scenePictureStatus).toMatchObject({ state: 'ready', imageId: second });
-    expect((await rows(show)).find(row => row.id === first)!.status).toBe('cancelled');
+    expect((await rows(show)).filter(row => row.status === 'cancelled')).toEqual([]);
   });
 
   it('keeps a held action-round picture through both buttons', async () => {
@@ -310,7 +313,7 @@ suite('the Draw the last beat route', () => {
     expect(place.statusCode, place.body).toBe(202);
     const all = await rows(show);
     expect(all.find(row => row.id === held.id)).toMatchObject({ status: 'making', message: null });
-    expect(all.find(row => row.id === beat.json().imageId)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
+    expect(all.find(row => row.id === beat.json().imageId)).toMatchObject({ status: 'making', message: null });
 
     release();
     await waitForStatus(show, held.id, 'ready');

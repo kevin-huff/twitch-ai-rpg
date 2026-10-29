@@ -228,11 +228,20 @@ export function createPlaybackController(initial: Context) {
     void report;
   }
 
+  // The server answering with a 4xx means it refused this page's claim on the lease; anything else (no reply, a timeout, a proxy 5xx, an unreadable body) is a blip.
+  function refused(cause: unknown) {
+    const status = (cause as { status?: unknown } | null)?.status;
+    return typeof status === 'number' && status >= 400 && status < 500;
+  }
+
   function failed(cause: unknown, generation: number) {
     if (!checkIdentity() || generation !== contextGeneration) return;
+    // A presenting page rides out a blip: the clip keeps playing and the next poll or renewal retries until the lease runs out.
+    if (lease && !refused(cause) && now() < lease.deadline) return;
     halt(); state.listening = false; state.muted = true;
     if (lease) dropLease('Audio connection lost. Reclaim audio and ask the director to resume.');
-    else state.error = cause instanceof Error ? cause.message : 'Reviewed audio is unavailable. Try Listen again.';
+    // A stage page that just lost its lease keeps the reclaim instruction instead of having it overwritten by every later failed poll.
+    else if (!(context.stage && state.error)) state.error = cause instanceof Error ? cause.message : 'Reviewed audio is unavailable. Try Listen again.';
   }
 
   async function refresh() {
@@ -355,7 +364,7 @@ export function createPlaybackController(initial: Context) {
       if (!checkIdentity() || generation !== contextGeneration || lease !== owner || owner.generation !== leaseGeneration) return;
       if (!liveLease()) return;
       const data = PlaybackResponseSchema.parse(result.data);
-      if (data.leaseId && data.leaseId !== owner.id) throw new Error('Presenter lease was lost. Reclaim audio and ask the director to resume.');
+      if (data.leaseId && data.leaseId !== owner.id) throw Object.assign(new Error('Presenter lease was lost. Reclaim audio and ask the director to resume.'), { status: 409 });
       accept(data.snapshot, result.start, result.end);
       setLease(owner.id, data.snapshot, result.start, owner.generation);
     } catch (cause) { if (lease === owner) failed(cause, generation); }

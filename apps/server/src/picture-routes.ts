@@ -55,9 +55,7 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
       const actor = await locked(client, request, sessionId, original, SCENE_ONLY);
       const state = await readState(client, sessionId);
       if (state.session.status === 'ended') conflict('This session has ended.');
-      if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the show before you make a new picture.');
       const sceneId = state.session.scene.id;
-      await images.startOver(client, sessionId, sceneId);
       const id = await images.reserveScene(client, state, actor, 'request');
       if (!id) throw new AppError(502, 'picture_failed', PICTURE_MESSAGES.sceneFailed);
       await recordEvent(client, sessionId, actor, randomUUID(), 'picture.making', state.session.stateRevision, { imageId: id, purpose: 'scene', subjectId: sceneId });
@@ -79,7 +77,6 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
       const beatId = await lastBeatInScene(client, sessionId);
       if (!beatId) return conflict('No beat has been published in this scene yet.');
       const sceneId = state.session.scene.id;
-      await images.startOver(client, sessionId, sceneId);
       const id = await images.reserveBeatPicture(client, state, beatId, actor);
       if (!id) throw new AppError(502, 'picture_failed', PICTURE_MESSAGES.beatFailed);
       await recordEvent(client, sessionId, actor, randomUUID(), 'picture.making', state.session.stateRevision, { imageId: id, purpose: 'scene', subjectId: sceneId });

@@ -17,6 +17,9 @@ import { makeScript, speechLines, voicedLines, type SpeechLine } from './script'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const conflict = (message: string): never => { throw new AppError(409, 'conflict', message); };
+// A conflict that means the saved draft changed under a running preparation (a re-draft, an edit, an abort), which is no speech failure.
+export class DraftChangedError extends AppError { constructor(message: string) { super(409, 'conflict', message); } }
+const changed = (message: string): never => { throw new DraftChangedError(message); };
 type Delivery = ScriptSegment['delivery'];
 export interface SpeechCacheOptions {
   pool: Pool;
@@ -109,24 +112,24 @@ export async function saveSpeechProgress(client: PoolClient, sessionId: string, 
 }
 
 function speechSegments(beat: Beat, state: SessionState): ScriptSegment[] {
-  if (beat.phase !== 'draft_review' || !beat.draft || !beat.resolution || beat.sourceStateRevision !== state.session.stateRevision || state.session.status === 'ended') return conflict('Review a current saved script before preparing or publishing narration.');
+  if (beat.phase !== 'draft_review' || !beat.draft || !beat.resolution || beat.sourceStateRevision !== state.session.stateRevision || state.session.status === 'ended') return changed('Review a current saved script before preparing or publishing narration.');
   for (const segment of beat.draft.segments) {
-    if (segment.kind === 'npc_dialogue' && !state.npcs.find(npc => npc.id === segment.speakerNpcId)) return conflict('The saved speaker is unavailable.');
+    if (segment.kind === 'npc_dialogue' && !state.npcs.find(npc => npc.id === segment.speakerNpcId)) return changed('The saved speaker is unavailable.');
   }
   return makeScript(beat, state);
 }
 async function noCurrentRender(client: PoolClient, beat: Beat) {
-  if ((await client.query("SELECT 1 FROM generation_jobs WHERE beat_id=$1 AND generation=$2 AND task='render' AND status IN ('queued','running')", [beat.id, beat.generation])).rowCount) conflict('Wait for the current narration draft to finish before preparing or publishing it.');
+  if ((await client.query("SELECT 1 FROM generation_jobs WHERE beat_id=$1 AND generation=$2 AND task='render' AND status IN ('queued','running')", [beat.id, beat.generation])).rowCount) changed('Wait for the current narration draft to finish before preparing or publishing it.');
 }
 async function context(client: PoolClient, sessionId: string, beatId: string): Promise<Context> {
   const candidate = await currentBeat(client, sessionId);
   const parsed = BeatSchema.safeParse(candidate);
-  if (!parsed.success || parsed.data.id !== beatId) return conflict('This saved draft is no longer current.');
+  if (!parsed.success || parsed.data.id !== beatId) return changed('This saved draft is no longer current.');
   const beat = parsed.data, state = await readState(client, sessionId);
   await noCurrentRender(client, beat);
   const segments = speechSegments(beat, state);
   const lines = speechLines(segments);
-  if (!lines.length || lines.length > MAX_SPOKEN_SEGMENTS) return conflict('Save narration before preparing speech.');
+  if (!lines.length || lines.length > MAX_SPOKEN_SEGMENTS) return changed('Save narration before preparing speech.');
   return { beat, state, lines, voiced: voicedLines(segments), sourceHash: hash(lines) };
 }
 function matches(preparation: Preparation, current: Context) {
@@ -212,7 +215,8 @@ export function registerDraftAudio(app: FastifyInstance, options: DraftAudioOpti
     const preparation = acquired.preparation;
     const checkCurrent = (completed?: number) => locked(request, async (client, current) => {
       const saved: Preparation = (await client.query('SELECT * FROM draft_audio_preparations WHERE id=$1', [preparation.id])).rows[0];
-      if (!matches(saved, current) || saved.status !== 'preparing' || (await response(client, saved)).status !== 'preparing') return conflict('This speech preparation was superseded or expired.');
+      if (!matches(saved, current)) return changed('This speech preparation was superseded or expired.');
+      if (saved.status !== 'preparing' || (await response(client, saved)).status !== 'preparing') return conflict('This speech preparation was superseded or expired.');
       if (completed !== undefined) await saveSpeechProgress(client, request.params.sessionId, { kind: 'draft', id: saved.id, completed, total: preparation.segments.length });
       return saved;
     });
@@ -226,13 +230,24 @@ export function registerDraftAudio(app: FastifyInstance, options: DraftAudioOpti
       }
       return await locked(request, async (client, current) => {
         const saved: Preparation = (await client.query('SELECT * FROM draft_audio_preparations WHERE id=$1', [preparation.id])).rows[0];
-        if (!matches(saved, current) || saved.status !== 'preparing' || (await response(client, saved)).status !== 'preparing') return conflict('This speech preparation was superseded or expired.');
+        if (!matches(saved, current)) return changed('This speech preparation was superseded or expired.');
+        if (saved.status !== 'preparing' || (await response(client, saved)).status !== 'preparing') return conflict('This speech preparation was superseded or expired.');
         const manifest: DraftAudioManifest = { preparationId: saved.id, beatId: saved.beat_id, draftRevision: saved.draft_revision, generation: saved.generation, segments: lines.map((line, index) => ({ index, text: line.text, speaker: line.speaker, voiceProfileId: line.voiceProfileId, url: `/api/sessions/${encodeURIComponent(request.params.sessionId)}/beats/${encodeURIComponent(saved.beat_id)}/draft-audio/${saved.id}/segments/${index}` })) };
         await client.query("UPDATE draft_audio_preparations SET status='ready',segments=$2,manifest=$3,updated_at=clock_timestamp() WHERE id=$1", [saved.id, JSON.stringify(lines), manifest]);
         await saveSpeechProgress(client, request.params.sessionId, { kind: 'draft', id: saved.id, completed: lines.length, total: lines.length, finished: true });
         return { status: 'ready' as const, manifest };
       });
     } catch (error) {
+      if (error instanceof DraftChangedError) {
+        // The receipts point at the row, so they go first. A row that already ended some other way stays as it is.
+        await transaction(pool, async client => {
+          const gone = await client.query("SELECT id FROM draft_audio_preparations WHERE id=$1 AND status='preparing' FOR UPDATE", [preparation.id]);
+          if (!gone.rowCount) return;
+          await client.query('DELETE FROM draft_audio_receipts WHERE preparation_id=$1', [preparation.id]);
+          await client.query('DELETE FROM draft_audio_preparations WHERE id=$1', [preparation.id]);
+        });
+        throw error;
+      }
       await pool.query("UPDATE draft_audio_preparations SET status='failed',updated_at=clock_timestamp() WHERE id=$1 AND status='preparing'", [preparation.id]);
       if (error instanceof AppError && [401, 403, 404, 409].includes(error.status)) throw error;
       return { status: 'failed' as const, preparationId: preparation.id };

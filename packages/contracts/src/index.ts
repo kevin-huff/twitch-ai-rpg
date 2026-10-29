@@ -530,6 +530,7 @@ export interface ProviderContext {
   submissions: Submission[];
   history: PublishedBeat[];
   corrections?: PublicCorrection[];
+  place?: string;
 }
 
 export const PictureDescriptionRequestSchema = z.strictObject({

@@ -166,6 +166,69 @@ describe('player seat', () => {
     expect(w.find('[data-testid="review-current-input"]').exists()).toBe(true);
   });
 
+  it('labels a stale box Send it anyway and one press sends the current epoch and beat', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    expect(w.get('button.send').text()).toBe('Send');
+    await refreshTo(snapshot({ activeBeat: beat('beat-b', 'conversation', { inputEpoch: 3 }) }, {}, { inputEpoch: 3 }));
+    expect(w.get('button.send').text()).toBe('Send it anyway');
+    expect(w.find('[data-testid="review-current-input"]').exists()).toBe(true);
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(1);
+    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', text: 'Hello Mara', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
+    expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('');
+    expect(w.get('button.send').text()).toBe('Send');
+  });
+
+  it('still lets Yes, they still fit re-stamp the box without sending', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    await refreshTo(snapshot({ activeBeat: beat('beat-b', 'conversation', { inputEpoch: 1 }) }, {}, { inputEpoch: 1 }));
+    await click(w, 'Yes, they still fit');
+    expect(transport.command).not.toHaveBeenCalled();
+    expect(w.get('button.send').text()).toBe('Send');
+    await submit(w);
+    expect(lastCommand()).toEqual(expect.objectContaining({ contextBeatId: 'beat-b', expectedInputEpoch: 1 }));
+  });
+
+  it('shows a refusal beside Send, keeps the words, and the next press succeeds with the refreshed epoch', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    transport.command.mockRejectedValueOnce(Object.assign(new Error('The input window changed. Review your input before submitting again.'), { status: 409 }));
+    transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'conversation', { inputEpoch: 4 }) }, {}, { inputEpoch: 4 }));
+    await submit(w);
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('The input window changed. Review your input before submitting again.');
+    expect(w.get('.actions').element.parentElement!.contains(w.get('[data-testid="send-refused"]').element)).toBe(true);
+    expect(w.find('.error').exists()).toBe(false);
+    expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('Hello Mara');
+    expect(w.get('button.send').text()).toBe('Send it anyway');
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(lastCommand()).toEqual(expect.objectContaining({ text: 'Hello Mara', contextBeatId: 'beat-a', expectedInputEpoch: 4 }));
+    expect(w.find('[data-testid="send-refused"]').exists()).toBe(false);
+    expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('sends a line stamped for a beat that has since locked with no beat and says it waits for the director', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    await refreshTo(snapshot({ activeBeat: beat('beat-a', 'conversation', { phase: 'locked', inputEpoch: 1, stakes: [] }) }, {}, { inputEpoch: 1 }));
+    expect(w.get('.form-panel .notice').text()).toContain('This turn is locked. Your line will wait for the director to pick it.');
+    expect(w.text()).not.toContain('The story moved on');
+    expect(w.get('button.send').text()).toBe('Send it anyway');
+    await submit(w);
+    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', text: 'One more thing', contextBeatId: null, expectedInputEpoch: 1 }));
+  });
+
+  it('shows Send it anyway for a restored draft with an old stamp', async () => {
+    saveDraft('show', 'pc-1', { kind: 'say', speech: 'Hello again', intent: '', approach: '', note: '', stageDirection: '', recipient: '', context: { epoch: 0, beatId: 'beat-old' } });
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-new', 'conversation', { inputEpoch: 2 }) }, {}, { inputEpoch: 2 }));
+    expect(w.find('.draft-restored').exists()).toBe(true);
+    expect(w.get('button.send').text()).toBe('Send it anyway');
+    await submit(w);
+    expect(lastCommand()).toEqual(expect.objectContaining({ text: 'Hello again', contextBeatId: 'beat-new', expectedInputEpoch: 2 }));
+  });
+
   it('asks for a pause with the pause request text', async () => {
     const w = await mountSeat(snapshot());
     await click(w, 'Ask for a pause');

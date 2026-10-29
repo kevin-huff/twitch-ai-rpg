@@ -52,7 +52,7 @@ const actionLine = computed(() => {
 const line = computed(() => {
   if (!enabled.value) return 'Pictures are off on this server.';
   if (state.value === 'none' && props.snapshot.session.status === 'ended') return 'This scene has no picture.';
-  if (state.value === 'none') return notStarted.value ? 'The picture is made when the show starts.' : 'This scene has no picture yet. Press Draw the place to make one.';
+  if (state.value === 'none') return notStarted.value ? 'The picture is made when the show starts. Press Draw the place to make it now.' : 'This scene has no picture yet. Press Draw the place to make one.';
   if (state.value === 'making') {
     const base = status.value?.drawing === 'beat' ? 'Drawing the last beat…' : 'Making the picture...';
     return hidden.value ? base + MAKING_HIDDEN_SUFFIX : base;
@@ -65,9 +65,9 @@ const line = computed(() => {
     ? 'This picture is hidden. Viewers and players do not see it. Press Show picture to put it back.'
     : 'This picture is on the stream and the player seats.';
 });
-const canMake = computed(() => !props.busy && live.value && started.value);
+const canMake = computed(() => !props.busy && props.snapshot.session.status !== 'ended');
+const canDrawBeat = computed(() => canMake.value && live.value && started.value && hasBeat.value);
 const hasBeat = computed(() => (props.snapshot.lastSceneBeatId ?? null) !== null);
-const canDrawBeat = computed(() => canMake.value && hasBeat.value);
 const noBeatReason = computed(() => live.value && started.value && !hasBeat.value);
 const settingsDisabled = computed(() => props.busy || props.snapshot.session.status === 'ended');
 </script>
@@ -89,7 +89,7 @@ const settingsDisabled = computed(() => props.busy || props.snapshot.session.sta
         <button v-if="hidden" class="quiet" type="button" data-testid="scene-picture-show" :disabled="toggling" @click="$emit('show')">Show picture</button>
       </div>
       <p v-if="noBeatReason" class="muted scene-picture-reason" data-testid="scene-picture-beat-reason">{{ NO_BEAT }}</p>
-      <p class="muted scene-picture-help">Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pressing either one while a picture is on its way starts over. The new picture takes the old one's place when it is ready.</p>
+      <p class="muted scene-picture-help">Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one's place when it is ready.</p>
       <PictureSettings :settings="snapshot.pictureSettings ?? null" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" :disabled="settingsDisabled" @save="$emit('save-settings', $event)" />
     </template>
   </section>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue';
 import type { DirectorSnapshot, Submission } from '@rpg/contracts';
+import { ticksOutsidePlan } from './plan-coverage';
 
 const props = defineProps<{ snapshot: DirectorSnapshot; modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>();
@@ -29,6 +30,7 @@ const helpText = (item: Submission) => {
   if (item.kind === 'act') return `Action from ${nameOf(item.characterId)} · ${item.status}`;
   return `Exact dialogue to ${recipient(item)} · ${item.status}`;
 };
+const outsidePlan = computed(() => new Set(ticksOutsidePlan(props.snapshot, props.modelValue)));
 const leftover = (item: Submission) => Boolean(item.contextBeatId && item.contextBeatId !== activeBeatId.value);
 
 const selectAll = () => emit('update:modelValue', selectable.value.map(item => item.id));
@@ -54,6 +56,7 @@ const toggle = (id: string, checked: boolean) => {
       <label class="check"><input type="checkbox" :aria-describedby="helpId(item.id)" :checked="modelValue.includes(item.id)" :disabled="!canSelect(item)" @change="toggle(item.id, ($event.target as HTMLInputElement).checked)"><strong>{{ nameOf(item.characterId) }}</strong></label>
       <p :id="helpId(item.id)" class="field-help">{{ helpText(item) }}</p>
       <span v-if="leftover(item)" class="queue-tag">From an earlier exchange</span>
+      <span v-if="outsidePlan.has(item.id)" class="queue-tag">Not in this plan</span>
       <p>{{ item.kind === 'act' ? item.intent : item.text }}</p>
       <small v-if="item.kind === 'act' && item.approach?.trim() && item.approach.trim() !== item.intent?.trim()">{{ item.approach }}</small>
       <p v-if="item.stageDirection" class="stage-direction">{{ item.stageDirection }}</p>

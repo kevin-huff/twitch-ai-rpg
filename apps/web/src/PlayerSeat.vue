@@ -44,6 +44,9 @@ const draftContext = computed(() => {
   return used.reduce<InputContext | null>((lowest, ctx) => !lowest || ctx.epoch < lowest.epoch ? ctx : lowest, null);
 });
 const draftRestored = ref(false);
+// A send the server refused for a changed input window leaves the words in place and says why beside that box's Send button.
+const refusals = ref<Record<LineKind, string>>({ say: '', act: '', ooc: '' });
+const refusal = computed(() => refusals.value[kind.value]);
 
 const name = computed(() => player.value?.ownCharacter?.displayName ?? 'your character');
 const card = computed(() => {
@@ -119,7 +122,10 @@ const talkingTo = computed(() => {
   const npc = presentNpcs.value.find(candidate => candidate.id === recipient.value);
   return npc ? `Talking to ${npc.displayName}` : 'Talking to your group';
 });
-const submitLabel = computed(() => busy.value ? 'Sending…' : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
+// The box's stamp is stale once the input window or the open turn has changed since its first keystroke, or the server just refused it.
+const stale = computed(() => Boolean(activeContext.value) && (activeContext.value!.epoch !== snapshot.value?.session.inputEpoch || activeContext.value!.beatId !== context().beatId || Boolean(refusal.value)));
+const turnLocked = computed(() => Boolean(activeContext.value?.beatId) && !context().beatId);
+const submitLabel = computed(() => busy.value ? 'Sending…' : stale.value ? (editing.value ? 'Save changes anyway' : 'Send it anyway') : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
 
 function defaultRecipient(next: SessionSnapshot) {
   const present = next.npcs.filter(npc => npc.status === 'present');
@@ -146,10 +152,18 @@ function linePayload(lineKind: LineKind) {
 function saveSubmission() { return work(async () => {
   receipt.value = ''; receiptFor.value = null;
   const lineKind = kind.value;
-  const captured = contexts.value[lineKind] ?? context();
+  // Pressing Send it anyway is the player's say-so that the words still fit, so a stale box takes a fresh stamp, as Yes, they still fit does.
+  const captured = stale.value ? context() : contexts.value[lineKind] ?? context();
   const editedId = editing.value?.id ?? null;
   const before = ownIds();
-  await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
+  try {
+    await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
+  } catch (cause) {
+    if ((cause as { status?: number }).status !== 409) throw cause;
+    refusals.value[lineKind] = cause instanceof Error && cause.message ? cause.message : 'The story moved on. Press Send it anyway to send your words now.';
+    await table.refresh();
+    return;
+  }
   finishLine(lineKind);
   receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : 'Saved. The director has your line.';
   receiptFor.value = editedId ?? newOwnId(before);
@@ -182,6 +196,7 @@ function finishLine(lineKind: LineKind) {
     }
   }
   contexts.value[lineKind] = kept?.text.trim() ? kept.context : null;
+  refusals.value[lineKind] = '';
   editing.value = null; draftRestored.value = false;
   if (![sayText.value, actionText.value, noteText.value].some(text => text.trim()) && ownCharacterId.value) clearDraft(sessionId, ownCharacterId.value);
   if (kept && (kept.mode !== 'ooc' || noteText.value.trim())) kind.value = kept.mode;
@@ -270,11 +285,12 @@ async function askPrivately() {
           <div v-else-if="kind === 'act'"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream as you write them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
           <div v-else><label>Private note for the director<textarea :aria-describedby="helpId('note')" v-model="noteText" data-testid="note-input" rows="3" maxlength="4000" required @input="beginInput" /></label><p :id="helpId('note')" class="field-help">Only the director sees this. It never appears on stream.</p></div>
           <div class="actions"><button class="send" :disabled="busy || !player.ownCharacter || (kind !== 'ooc' && !playerReady)">{{ submitLabel }}</button><button v-if="editing || kind === 'ooc'" type="button" class="quiet" @click="cancel">Cancel</button></div>
+          <p v-if="refusal" class="notice" role="alert" data-testid="send-refused">{{ refusal }}</p>
           <p v-if="receipt" class="notice" role="status">{{ receipt }}</p>
           <small v-if="activeContext">Not sent yet</small>
           <small v-if="draftRestored" class="draft-restored">Your unsent words are back.</small>
           <small v-if="editing">You are changing a line you already sent.</small>
-          <div v-if="activeContext && (activeContext.epoch !== snapshot.session.inputEpoch || activeContext.beatId !== context().beatId)" class="notice">The story moved on while you were typing. Read your words again. Do they still fit?<button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = context()">Yes, they still fit</button></div>
+          <div v-if="activeContext && (activeContext.epoch !== snapshot.session.inputEpoch || activeContext.beatId !== context().beatId)" class="notice"><template v-if="turnLocked">This turn is locked. Your line will wait for the director to pick it.</template><template v-else>The story moved on while you were typing. Read your words again. Do they still fit?</template><button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = context(); refusals[kind] = ''">Yes, they still fit</button></div>
         </form>
       </section>
       <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" @edit="startEdit" @withdraw="withdraw" />

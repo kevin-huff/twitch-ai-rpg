@@ -55,6 +55,7 @@ export interface AppOptions {
   imageHourlyLimit?: number;
 }
 // Picture bytes never change under their id, so a picture response may be cached for good.
+const AUDIO_CLIP_PATH = /^\/api\/sessions\/[^/]+\/audio\/assets\/[a-f0-9]{64}$/;
 const IMAGE_PATH = /^\/api\/(?:sessions\/[^/]+|library|character-builder)\/images\/[0-9a-f-]{36}$/;
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -99,7 +100,10 @@ export async function buildApp(options: AppOptions) {
     reply.header('Referrer-Policy', 'no-referrer'); reply.header('X-Content-Type-Options', 'nosniff');
     const immutable = request.url.split('?')[0]!.startsWith('/assets/') && reply.statusCode === 200 && !String(reply.getHeader('content-type') ?? '').startsWith('text/html');
     const picture = reply.statusCode === 200 && IMAGE_PATH.test(request.url.split('?')[0]!);
-    reply.header('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : picture ? 'private, max-age=31536000, immutable' : 'no-store');
+    // Clip ids are content hashes, so a cached clip never goes stale; authorization still runs on every request,
+    // and a viewer whose link is later turned off keeps clips already cached.
+    const clip = request.method === 'GET' && (reply.statusCode === 200 || reply.statusCode === 206) && AUDIO_CLIP_PATH.test(request.url.split('?')[0]!);
+    reply.header('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : picture || clip ? 'private, max-age=31536000, immutable' : 'no-store');
   });
   const tokenBody = z.strictObject({ token: z.string().min(1).max(1024), tab: z.literal(true).optional() });
   const persistCredential = async (row: CredentialRow, client: Pick<PoolClient, 'query'> = pool, credentialOptions: { expiresAt?: Date; lifetimeHours?: number } = {}) => {

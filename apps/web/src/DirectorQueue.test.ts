@@ -83,4 +83,34 @@ describe('DirectorQueue', () => {
     const wrapper = mountQueue([sub('s', 'say')]);
     expect(wrapper.get('.queue-hint').text()).toBe('Lines arrive ticked. Untick any you want to leave for later. Questions and pause requests are never ticked.');
   });
+
+  describe('Not in this plan tag', () => {
+    const beat = (patch: Record<string, unknown> = {}) => ({ id: 'b1', generation: 1, phase: 'stakes_review', selectedSubmissionIds: ['in'], ...patch });
+    const mountWith = (activeBeat: unknown, jobs: unknown[], ticked: string[]) => mount(DirectorQueue, { props: { snapshot: { ...snap([sub('in', 'say'), sub('late', 'say')], activeBeat), jobs } as unknown as DirectorSnapshot, modelValue: ticked } });
+    const job = (patch: Record<string, unknown> = {}) => ({ id: 'j', beatId: 'b1', generation: 1, task: 'plan', status: 'running', ...patch });
+
+    it('shows for a ticked line missing from the plan in stakes review', () => {
+      const items = mountWith(beat(), [], ['in', 'late']).findAll('.queue-item');
+      expect(items[0].text()).not.toContain('Not in this plan');
+      expect(items[1].text()).toContain('Not in this plan');
+    });
+
+    it('shows while a plan job is running', () => {
+      const wrapper = mountWith(beat({ phase: 'collecting' }), [job()], ['late']);
+      expect(wrapper.text()).toContain('Not in this plan');
+    });
+
+    it('does not show while collecting with no plan job', () => {
+      expect(mountWith(beat({ phase: 'collecting' }), [], ['late']).text()).not.toContain('Not in this plan');
+      expect(mountWith(beat({ phase: 'collecting' }), [job({ status: 'succeeded' })], ['late']).text()).not.toContain('Not in this plan');
+    });
+
+    it('does not show for a line already in the plan', () => {
+      expect(mountWith(beat(), [], ['in']).text()).not.toContain('Not in this plan');
+    });
+
+    it('does not show for an unticked line', () => {
+      expect(mountWith(beat(), [], []).text()).not.toContain('Not in this plan');
+    });
+  });
 });

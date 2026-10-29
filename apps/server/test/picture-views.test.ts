@@ -217,6 +217,20 @@ suite('picture views and visibility', () => {
       expect((await scene()).status.drawing).toBe('beat');
     });
 
+    it('reads ready once the newest picture is ready, even while an older one is still being made', async () => {
+      await insert({ status: 'making' });
+      const newer = await insert({ status: 'ready' });
+      const view = (await scene()).status;
+      expect(view).toMatchObject({ state: 'ready', drawing: null });
+      expect(view.imageId).toBe(newer);
+    });
+
+    it('still reads making when a newer picture is being made above an older ready one', async () => {
+      await insert({ status: 'ready' });
+      await insert({ status: 'making', moment: true });
+      expect((await scene()).status).toMatchObject({ state: 'making', drawing: 'beat' });
+    });
+
     it('skips a held action picture when deciding what is being drawn', async () => {
       await insert({ status: 'making', moment: true });
       await insert({ status: 'making', beat_id: 'beat-1' });
@@ -279,7 +293,7 @@ suite('picture views and visibility', () => {
     it('keeps the action picture when a New picture asked for before the release finishes after it', async () => {
       const newPicture = await insert({ status: 'making' });
       const action = await insert({ beat_id: 'beat-1', released: 100 });
-      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'making', imageId: action, hidden: false, message: null, drawing: 'place' } });
+      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
       await finish(newPicture, 200);
       expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
     });

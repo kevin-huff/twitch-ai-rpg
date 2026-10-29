@@ -9,6 +9,7 @@ import { saveSpeechProgress, speakLine } from './draft-audio';
 import { transaction } from './database';
 import { AppError, authorize, type Actor } from './repository';
 import { digest } from './commands';
+import { parseByteRange } from './byte-range';
 
 export interface SpeechEngine {
   synthesize(input: { text: string; voiceProfileId: string }): Promise<{ bytes: Uint8Array; contentType: string }>;
@@ -110,7 +111,13 @@ export function registerAudio(app: FastifyInstance, options: AudioOptions) {
           AND (p.data->>'audioManifestKey' IS NULL OR p.data->>'audioManifestKey'=m.config_hash)
           AND EXISTS (SELECT 1 FROM jsonb_array_elements(m.manifest->'segments') s WHERE s->>'url'=$3))`, [sessionId, assetId, `/api/sessions/${encodeURIComponent(sessionId)}/audio/assets/${assetId}`]);
     if (!result.rowCount) throw new AppError(404, 'not_found', 'Audio was not found.');
-    try { return reply.header('Cache-Control', 'private, no-store').type(result.rows[0].content_type).send(await readFile(join(options.assetDir, `${assetId}.mp3`))); }
+    let file: Buffer;
+    try { file = await readFile(join(options.assetDir, `${assetId}.mp3`)); }
     catch { throw new AppError(404, 'audio_missing', 'The saved audio is unavailable. Continue with text.'); }
+    reply.header('Accept-Ranges', 'bytes').type(result.rows[0].content_type);
+    const range = parseByteRange(request.headers.range, file.length);
+    if (range === 'unsatisfiable') return reply.code(416).header('Content-Range', `bytes */${file.length}`).send();
+    if (range) return reply.code(206).header('Content-Range', `bytes ${range.start}-${range.end}/${file.length}`).header('Content-Length', range.end - range.start + 1).send(file.subarray(range.start, range.end + 1));
+    return reply.send(file);
   });
 }

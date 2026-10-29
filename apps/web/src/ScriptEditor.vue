@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
 import { voicedWords, voiceTextMatches } from '@rpg/contracts';
-import type { AiSegment, PublicNpc } from '@rpg/contracts';
+import type { AiSegment, Npc } from '@rpg/contracts';
 import FieldGenerator from './FieldGenerator.vue';
 
-const props = defineProps<{ segments: AiSegment[]; npcs: PublicNpc[]; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string }>();
+const props = defineProps<{ segments: AiSegment[]; npcs: Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel'>[]; locationId: string; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string }>();
 
 const rowKeys = new WeakMap<AiSegment, number>();
 let nextRowKey = 0;
@@ -14,7 +14,8 @@ function rowKey(segment: AiSegment): number {
   return key;
 }
 const openKeys = reactive(new Set<number>());
-const presentNpcs = computed(() => props.npcs.filter(npc => npc.status === 'present'));
+// Same rule as the server's draft check: at this scene's place, or reachable through a communication channel. Speakers the script already uses stay listed.
+const speakerChoices = computed(() => props.npcs.filter(npc => (npc.status === 'present' && npc.locationId === props.locationId) || npc.communicationChannel || props.segments.some(segment => segment.kind === 'npc_dialogue' && segment.speakerNpcId === npc.id)));
 
 function speakerName(segment: AiSegment): string {
   if (segment.kind === 'narration') return 'Narrator';
@@ -64,7 +65,7 @@ defineExpose({ addNarration });
       <div v-if="openKeys.has(rowKey(segment))" class="segment-editor">
         <label v-if="segment.kind === 'npc_dialogue'">Speaker
           <select v-model="segment.speakerNpcId" :data-testid="`script-speaker-${index}`">
-            <option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option>
+            <option v-for="npc in speakerChoices" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option>
           </select>
         </label>
         <label>{{ segment.kind === 'narration' ? 'Narrator' : 'NPC dialogue' }}
@@ -85,7 +86,7 @@ defineExpose({ addNarration });
     <select aria-label="Add a line" data-testid="script-add-line" :disabled="busy" @change="onAdd">
       <option value="">Add a line…</option>
       <option value="narration">Narrator</option>
-      <option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option>
+      <option v-for="npc in speakerChoices" :key="npc.id" :value="npc.id">{{ npc.displayName }}</option>
     </select>
     <p class="field-help">Only saved edits are published.</p>
   </div>

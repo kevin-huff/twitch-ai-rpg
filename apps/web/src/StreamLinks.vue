@@ -70,9 +70,6 @@ async function load() {
     }));
     tokens.value = { ...tokens.value, ...found };
     const missing: { key: string; body: ReturnType<typeof bodyFor> }[] = [];
-    for (const character of props.characters) {
-      if (!playerLink(character.id)) missing.push({ key: `player:${character.id}`, body: { subject: 'player', characterId: character.id } });
-    }
     if (viewerGrantId.value && !ownProducerLink.value) missing.push({ key: 'own-producer', body: { subject: 'producer', producerGrantId: viewerGrantId.value } });
     await Promise.all(missing.map(async item => {
       try { const created = await api.createStreamLink(props.sessionId, item.body); remember(created.link, created.token); }
@@ -180,9 +177,11 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <button v-else type="button" data-testid="make-show-link" :disabled="working" @click="makeShow">Make the main show link</button>
+        <p class="muted">Only one OBS should load the Main show link: it carries the show audio.</p>
       </section>
       <section aria-labelledby="stream-group-cast" class="group">
-        <h4 id="stream-group-cast">For a cast member's own stream</h4>
+        <h4 id="stream-group-cast">For a cast member who streams too</h4>
+        <p class="muted">Every link shows the same picture. A cast member's link only listens to the show audio.</p>
         <p v-if="!characters.length && !otherLinks.length" class="muted">No cast members yet.</p>
         <template v-for="character in characters" :key="character.id">
           <template v-if="playerLink(character.id)">

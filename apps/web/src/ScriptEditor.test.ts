@@ -2,14 +2,14 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { nextTick, reactive } from 'vue';
-import type { AiSegment, PublicNpc } from '@rpg/contracts';
+import type { AiSegment, Npc } from '@rpg/contracts';
 
 vi.mock('./api', () => ({ api: { generateField: vi.fn() } }));
 
 import ScriptEditor from './ScriptEditor.vue';
 import FieldGenerator from './FieldGenerator.vue';
 
-const npc = (id: string, displayName: string, status: 'present' | 'offstage' = 'present'): PublicNpc => ({ id, displayName, role: 'Guard', appearance: '', status, voiceProfileId: 'voice-' + id });
+const npc = (id: string, displayName: string, status: 'present' | 'offstage' = 'present', locationId = 'here', communicationChannel: string | null = null): Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel'> => ({ id, displayName, status, locationId, communicationChannel });
 const narration = (text: string): AiSegment => ({ kind: 'narration', speakerNpcId: null, recipientCharacterIds: [], text, delivery: 'neutral' });
 const dialogue = (speakerNpcId: string, text: string): AiSegment => ({ kind: 'npc_dialogue', speakerNpcId, recipientCharacterIds: [], text, delivery: 'neutral' });
 const npcs = [npc('ana', 'Ana'), npc('bo', 'Bo'), npc('gone', 'Gone', 'offstage')];
@@ -17,7 +17,7 @@ const id = (name: string) => `[data-testid="${name}"]`;
 
 function mountEditor(list: AiSegment[], extra: Record<string, unknown> = {}) {
   const segments = reactive(list) as AiSegment[];
-  const wrapper = mount(ScriptEditor, { props: { segments, npcs, busy: false, contextKey: 'ctx', ...extra } });
+  const wrapper = mount(ScriptEditor, { props: { segments, npcs, locationId: 'here', busy: false, contextKey: 'ctx', ...extra } });
   return { wrapper, segments };
 }
 
@@ -149,5 +149,25 @@ describe('script editor', () => {
     await wrapper.get(id('script-delivery-0')).setValue('amused');
     expect(segments[0]!.delivery).toBe('amused');
     expect(wrapper.get(id('script-read-as-0')).text()).toBe('Read as: [amused] Hello.');
+  });
+
+  it('lists speakers by the server rule: channel voices and people at the scene place', async () => {
+    const list = [
+      npc('ana', 'Ana'),
+      npc('radio', 'Radio', 'offstage', 'far', 'radio'),
+      npc('away', 'Away', 'offstage', 'far'),
+      npc('other', 'Other', 'present', 'far'),
+    ];
+    const { wrapper } = mountEditor([dialogue('ana', 'Halt!')], { npcs: list });
+    const add = wrapper.get(id('script-add-line')).findAll('option').map(o => o.text());
+    expect(add).toEqual(['Add a line…', 'Narrator', 'Ana', 'Radio']);
+    await wrapper.get(id('script-line-0')).trigger('click');
+    expect(wrapper.get(id('script-speaker-0')).findAll('option').map(o => o.text())).toEqual(['Ana', 'Radio']);
+  });
+
+  it('keeps a speaker the script already uses', () => {
+    const list = [npc('ana', 'Ana'), npc('away', 'Away', 'offstage', 'far')];
+    const { wrapper } = mountEditor([dialogue('away', 'Hello')], { npcs: list });
+    expect(wrapper.get(id('script-add-line')).findAll('option').map(o => o.text())).toContain('Away');
   });
 });

@@ -437,13 +437,15 @@ describe('help page', () => {
     expect(text).toContain('The picture service would not draw this round. You can still publish it.');
   });
 
-  it('explains the picture buttons, start-over, the settings fold-out, timing and the model choice', () => {
+  it('explains the picture buttons, drawing without cancelling, the settings fold-out, timing and the model choice', () => {
     const topic = topics.find(item => item.id === 'pictures-and-portraits')!;
     const text = topic.sections.flatMap(item => item.paragraphs ?? []).join(' ');
     expect(text).not.toContain('New picture');
     expect(text).not.toMatch(/greyed out while a picture/);
     expect(text).toContain('Draw the last beat is greyed out until a beat has been published in this scene.');
-    expect(text).toContain('Pressing either button while a picture is on its way starts over.');
+    expect(text).not.toContain('starts over');
+    expect(text).toContain('Pressing a draw button never cancels another picture.');
+    expect(text).toContain("Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one's place when it is ready.");
     expect(text).toContain('A round\'s picture waiting for you to publish is never touched by this.');
     expect(text).toContain('A change applies to pictures started after you save.');
     expect(text).toContain('using the first 10 portraits');
@@ -606,7 +608,7 @@ describe('help page', () => {
     const wrapper = mount(HelpPage);
     const obs = wrapper.get('#stage-and-obs').text();
     for (const label of [
-      'Stream this show', 'For your stream', 'For a cast member\'s own stream', 'For your own stream', 'Copy overlay link', 'Copy full-scene link',
+      'Stream this show', 'For your stream', 'For a cast member who streams too', 'For your own stream', 'Copy overlay link', 'Copy full-scene link',
       'Sound options', 'If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice.',
       'How to add this in OBS', 'Preview (silent)', 'Turn off', 'Keep link', 'Preview (not for OBS)', 'Preview only, not for OBS. For OBS, use a link from Stream this show.',
       'Back to the director page', 'Audio options', 'Present audio', 'Make a new link',

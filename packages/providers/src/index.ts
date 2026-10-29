@@ -16,6 +16,7 @@ import { MAX_ROLLS_PER_ROUND, validateContracts } from '@rpg/rules';
 type Fetch = typeof globalThis.fetch;
 type Service = 'ClewdR' | 'ElevenLabs' | 'Sogni';
 type NativeMessage = { role: 'user' | 'assistant'; content: string };
+export type AiCallLabel = 'plan' | 'render' | 'picture' | 'field' | 'card' | 'line' | 'scenario';
 export type ProviderErrorCode = 'configuration' | 'invalid_input' | 'invalid_context' | 'invalid_response' | 'http_error' | 'network_error' | 'timeout';
 
 export type ProviderErrorReason = 'safety' | 'credit' | 'voice_missing';
@@ -86,7 +87,8 @@ const scenarioMinimumCharacterMs = 15_000;
 const scenarioCharacterTimeoutMs = 60_000;
 const scenarioCharacterConcurrency = 2;
 const scenarioOutlineRetryMinimumMs = 45_000;
-const scenarioOutlineMaxTokens = 16_000;
+// The largest max_tokens ClewdR is known to accept (CODEX_START_HERE.md:204); every call asks for all of it so long plans and drafts are not cut short.
+export const CLEWDR_MAX_TOKENS = 16_000;
 // Live replies broke JSON with unescaped double quotes inside dialogue; single quotes keep the reply parseable.
 const jsonQuoteRule = 'Inside JSON string values, write every quotation and quoted speech with single quotes, like \'this\'. Never put a double quote character inside a string value.';
 const fieldInstruction = (field: keyof typeof FIELD_GENERATION_FIELDS) => `${FIELD_GENERATION_FIELDS[field].label}: ${FIELD_GENERATION_FIELDS[field].instruction}`;
@@ -147,6 +149,12 @@ function participating(npc: Npc, context: ProviderContext): boolean {
     || Boolean(npc.communicationChannel);
 }
 
+// Only two NPCs are sent, so characters in the room go before offstage channel voices.
+function roomFirst(npcs: Npc[], locationId: string | null | undefined): Npc[] {
+  const present = (npc: Npc) => npc.status === 'present' && npc.locationId === locationId;
+  return [...npcs.filter(present), ...npcs.filter((npc) => !present(npc))];
+}
+
 function selectedContext(context: ProviderContext, task: 'plan' | 'render') {
   const selectedIds = new Set(context.beat.selectedSubmissionIds);
   const available = task === 'render' ? context.beat.lockedSubmissions : context.submissions;
@@ -162,7 +170,7 @@ function selectedContext(context: ProviderContext, task: 'plan' | 'render') {
   const addressed = new Set(submissions.flatMap((submission) => submission.recipientNpcIds));
   const npcs = addressed.size
     ? context.state.npcs.filter((npc) => addressed.has(npc.id))
-    : context.state.npcs.filter((npc) => participating(npc, context)).slice(0, 2);
+    : roomFirst(context.state.npcs.filter((npc) => participating(npc, context)), context.state.session.scene.locationId).slice(0, 2);
   if ((addressed.size && npcs.length !== addressed.size) || npcs.some((npc) => !participating(npc, context))) {
     throw new ProviderError('invalid_context', 'ClewdR');
   }
@@ -179,14 +187,18 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
   const correctionIds = new Set((context.corrections ?? []).slice(-12).map(correction => correction.id));
   const selectedKnowledge = (npc: Npc) => {
     const eligible = npc.knowledge.filter(knowledge => knowledge.sourceEventId && knowledge.learnedBeatNumber <= context.state.session.beatNumber);
-    const corrected = eligible.filter(knowledge => correctionIds.has(knowledge.sourceEventId)).slice(-20);
-    const others = eligible.filter(knowledge => !correctionIds.has(knowledge.sourceEventId));
-    return [...(corrected.length < 20 ? others.slice(-(20 - corrected.length)) : []), ...corrected];
+    // Authored scenario items are always sent: they are the briefing, and dropping them leaves the NPC without its role.
+    const scenario = eligible.filter(knowledge => knowledge.acquisition === 'scenario');
+    const learned = eligible.filter(knowledge => knowledge.acquisition !== 'scenario');
+    // The 20 has no recorded functional reason yet; it is set from measurement in the ticket 'Set the NPC memory window from a measured prompt size'.
+    const corrected = learned.filter(knowledge => correctionIds.has(knowledge.sourceEventId)).slice(-20);
+    const others = learned.filter(knowledge => !correctionIds.has(knowledge.sourceEventId));
+    return [...scenario, ...(corrected.length < 20 ? others.slice(-(20 - corrected.length)) : []), ...corrected];
   };
   return {
     task, rulesVersion: context.state.rulesVersion,
     rules: '2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character\'s contract. A character helps at most one contract per round, and never one they lead. Strain 4 prevents another risky action, never speech.',
-    scene: { id: scene.id, title: scene.title, description: scene.description, locationId: scene.locationId },
+    scene: { id: scene.id, title: scene.title, ...(context.place ? { place: context.place } : {}), description: scene.description, locationId: scene.locationId },
     ...(brief ? { scenario: { premise: brief.premise, genre: brief.genre, tone: brief.tone,
       objectives: brief.objectives, playerHooks: brief.playerHooks,
       pacing: { conversationWords: brief.pacing.conversationWords, actionWords: brief.pacing.actionWords } } } : {}),
@@ -200,7 +212,9 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
     characters: context.state.characters.map((character) => ({
       id: character.id, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance,
       traits: character.traits, strain: character.strain,
-      ...(actors.has(character.id) ? { specialty: character.specialty, possessions: character.possessions } : {}),
+      ...(actors.has(character.id) ? { specialty: character.specialty } : {}),
+      // The planner writes item changes, so it needs every character's exact entries; the narrator only needs the actors'.
+      ...(task === 'plan' || actors.has(character.id) ? { possessions: character.possessions } : {}),
     })),
     npcs: npcs.map((npc) => ({
       id: npc.id, displayName: npc.displayName, role: npc.role, appearance: npc.appearance,
@@ -414,7 +428,7 @@ export class ClewdrAiProvider implements AiProvider {
       jsonQuoteRule,
       `Required JSON schema: ${JSON.stringify(z.toJSONSchema(schema))}`,
     ].join('\n');
-    return (await this.post(system, request, schema)).text;
+    return (await this.post(system, request, schema, { label: 'picture' })).text;
   }
 
   async generateField(input: FieldGenerationRequest): Promise<FieldGenerationResponse> {
@@ -456,7 +470,7 @@ export class ClewdrAiProvider implements AiProvider {
         : 'Return the field text without a heading or label.',
       `Required JSON schema: ${JSON.stringify(z.toJSONSchema(FieldGenerationResponseSchema))}`,
     ].join('\n');
-    const result = await this.post(system, request, FieldGenerationResponseSchema);
+    const result = await this.post(system, request, FieldGenerationResponseSchema, { label: 'field' });
     try { return { text: validateFieldGenerationText(request.field, result.text) }; }
     catch { throw new ProviderError('invalid_response', 'ClewdR'); }
   }
@@ -485,7 +499,7 @@ export class ClewdrAiProvider implements AiProvider {
       jsonQuoteRule,
       `Required JSON schema: ${JSON.stringify(z.toJSONSchema(CardDraftSchema))}`,
     ].join('\n');
-    return this.post(system, request, CardDraftSchema, { fit: true });
+    return this.post(system, request, CardDraftSchema, { fit: true, label: 'card' });
   }
 
   async suggestLine(input: LineAssistInput): Promise<LineAssistResponse> {
@@ -505,7 +519,7 @@ export class ClewdrAiProvider implements AiProvider {
       jsonQuoteRule,
       `Required JSON schema: ${JSON.stringify(z.toJSONSchema(LineAssistResponseSchema))}`,
     ].join('\n');
-    return this.post(system, request, LineAssistResponseSchema);
+    return this.post(system, request, LineAssistResponseSchema, { label: 'line' });
   }
 
   async generateScenario(input: ScenarioGenerationRequest, options: { deadlineAt?: number; voices?: VoiceChoice[] } = {}): Promise<ScenarioDraft> {
@@ -520,7 +534,7 @@ export class ClewdrAiProvider implements AiProvider {
     const outlineInput = voices.length > 0 ? { ...request, voices } : request;
     const outlineSchema = voices.length > 0 ? scenarioOutlineSchema : scenarioOutlineSchemaNoVoices;
     const writeOutline = (budget: number) => this.post(outlineSystem, outlineInput, outlineSchema, {
-      timeoutMs: Math.floor(Math.min(scenarioOutlineTimeoutMs[request.size], budget)), fit: true, maxTokens: scenarioOutlineMaxTokens,
+      timeoutMs: Math.floor(Math.min(scenarioOutlineTimeoutMs[request.size], budget)), fit: true, label: 'scenario',
     });
     let outline: ScenarioOutline;
     try { outline = await writeOutline(outlineBudget); }
@@ -534,7 +548,7 @@ export class ClewdrAiProvider implements AiProvider {
     const publicOutline = scenarioPublicOutline(outline);
     const system = scenarioCharacterSystem();
     const writeDetails = (entry: ScenarioCastEntry, budget: number) => this.post(system, { boundaries: request.boundaries, outline: publicOutline, character: scenarioCastForDetails(entry), concept: entry.concept }, scenarioCharacterSchema, {
-      timeoutMs: Math.floor(Math.min(scenarioCharacterTimeoutMs, budget)), fit: true,
+      timeoutMs: Math.floor(Math.min(scenarioCharacterTimeoutMs, budget)), fit: true, label: 'scenario',
     });
     let next = 0;
     const worker = async () => {
@@ -577,9 +591,11 @@ export class ClewdrAiProvider implements AiProvider {
       task === 'render' ? 'Write a "voiceText" for every narration and npc_dialogue line: exactly the words of "text" with Eleven v4 audio tags, in square brackets, placed right before the words they colour. The voiceText is only spoken, never shown, so its words must match text exactly: add tags and change nothing else. Never put square brackets in "text", and never tag, quote or rewrite player lines.' : '',
       task === 'render' ? 'Audio tag rules: a tag carries through the rest of the line until another tag changes it, so use usually one to three tags a line, one per clause. Tags can be emotions ([excited], [scared], [mad], [curious]), delivery and volume ([whispers], [shouts], [hushed], [booming]), pacing ([slowly], [rushed]), pauses ([pause], [long pause]), reactions ([laughs], [sighs], [gasps], [clears throat]) or short descriptive phrases ([out of breath, panicked]). Sound effects ([door creaking], [thunder rumbling]) belong only in narration, and sparingly. Never use accent tags: each character\'s voice carries its accent. Never use parentheses, braces or SSML such as <break>; a tag in parentheses or braces is read aloud. Match the moment and the dice: a critical failure should sound like one, and a confession can be [hushed].' : '',
       task === 'render' ? 'A "critical" band is narrated as the worst turn its outcome describes, in the tone its stakes set.' : '',
-      task === 'render' && !selected.submissions.length ? 'This beat has no player lines: it narrates the scene so the players know where they are. From scene.title and scene.description, the scenario premise, genre and tone, the player characters and any participating NPCs, write three to six narration segments, about 120 to 220 words in all: where the characters are, what they see, hear and feel, who else is here, and what is happening right now. Introduce each participating NPC by appearance; one of them may speak one short line. Never decide what a player character does, says, thinks or feels. End on a moment that invites the players to act. Leave continuity empty.' : '',
+      task === 'render' && !selected.submissions.length ? `This beat has no player lines: it narrates the scene so the players know where they are. From ${context.place ? 'scene.place, ' : ''}scene.title and scene.description, the scenario premise, genre and tone, the player characters and any participating NPCs, write three to six narration segments, about 120 to 220 words in all: where the characters are, what they see, hear and feel, who else is here, and what is happening right now. Introduce each participating NPC by appearance; one of them may speak one short line. Never decide what a player character does, says, thinks or feels. End on a moment that invites the players to act. Leave continuity empty.` : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
-      'Honor fixed results and declared outcomes. Costly success achieves its goal. Do not add effects, dice, inventory, facts, or consequences beyond approved results.',
+      context.place ? 'scene.place names where the party is now; when scene.description disagrees with it, scene.place wins.' : '',
+      `Honor fixed results and declared outcomes. Costly success achieves its goal.${task === 'render' ? ' Do not add effects, dice, inventory, facts, or consequences beyond approved results.' : ''}`,
+      task === 'plan' ? 'When an action gives away, throws, loses, breaks, uses up, picks up or takes off an item, the matching outcome branch carries inventory_remove or inventory_add with the item text copied exactly from that character\'s possessions. To change part of an entry, remove the whole entry and add the rewritten one. Only one contract per round may change a given item.' : '',
       'Continuity updates must cite supplied submission IDs. Heard assertions are claims or beliefs, never newly proven facts. Only npc_knowledge continuity is supported. Do not propose world_fact updates; the server applies approved mechanical facts itself.',
       'For npc_knowledge, use category "fact" only when statement exactly matches a supplied facts[].text or an approved public fact_add text in fixedResults.effects. All other new statements, including questions or requests heard in this beat, must use category "claim" or "belief".',
       `Required JSON schema: ${JSON.stringify(schemaJson)}`,
@@ -587,15 +603,17 @@ export class ClewdrAiProvider implements AiProvider {
     const messages: NativeMessage[] = [{ role: 'user', content: JSON.stringify(selected) }];
     // A reply the application has to refuse goes back once with the reason, so one slip does not fail the director's beat.
     for (let attempt = 1; ; attempt++) {
-      const text = await this.complete(system, messages);
+      const text = await this.complete(system, messages, { label: task });
       const checked = checkReply(text, schema, attempt === 2, (result, final) => refusal(result, context, final));
       if (typeof checked !== 'string') return checked.value;
+      // The refusal sentences can hold character names and reply text, so the log gets a fixed category instead.
+      if (attempt === 1) console.warn(`AI reply refused (${task}, first attempt): ${refusalCategory(checked)}`);
       if (attempt === 2) throw new ProviderError('invalid_response', 'ClewdR', undefined, undefined, checked);
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: `The application refused that reply. ${checked} Reply again with only the corrected JSON object.` });
     }
   }
 
-  private async post<T>(system: string, input: unknown, schema: z.ZodType<T>, options: { timeoutMs?: number; maxTokens?: number; fit?: boolean } = {}): Promise<T> {
+  private async post<T>(system: string, input: unknown, schema: z.ZodType<T>, options: { timeoutMs?: number; fit?: boolean; label?: AiCallLabel } = {}): Promise<T> {
     const text = await this.complete(system, [{ role: 'user', content: JSON.stringify(input) }], options);
     try {
       const reply: unknown = JSON.parse(text);
@@ -603,20 +621,54 @@ export class ClewdrAiProvider implements AiProvider {
     } catch { throw new ProviderError('invalid_response', 'ClewdR'); }
   }
 
-  private async complete(system: string, messages: NativeMessage[], options: { timeoutMs?: number; maxTokens?: number } = {}): Promise<string> {
+  private async complete(system: string, messages: NativeMessage[], options: { timeoutMs?: number; label?: AiCallLabel } = {}): Promise<string> {
     const timeoutMs = options.timeoutMs === undefined ? this.timeoutMs : configuration(timeoutSchema, options.timeoutMs, 'ClewdR');
-    return boundedRequest('ClewdR', timeoutMs, async (signal) => {
-      const response = await this.fetch(this.endpoint, {
-        method: 'POST', redirect: 'error', signal,
-        headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: this.model, max_tokens: options.maxTokens ?? 8192, stream: false, system, messages }),
+    const label = options.label ?? 'unlabelled';
+    const startedAt = Date.now();
+    let status: number | undefined;
+    // The log line holds only the label, timing, status, stop reason and token counts: never a prompt, a reply, a player's words, a key or a cookie.
+    try {
+      const { content, stopReason, usage } = await boundedRequest('ClewdR', timeoutMs, async (signal) => {
+        const response = await this.fetch(this.endpoint, {
+          method: 'POST', redirect: 'error', signal,
+          headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model: this.model, max_tokens: CLEWDR_MAX_TOKENS, stream: false, system, messages }),
+        });
+        status = response.status;
+        if (!response.ok) throw new ProviderError('http_error', 'ClewdR', response.status);
+        const bytes = await responseBytes(response, 512_000, 'ClewdR');
+        let body: unknown;
+        try { body = JSON.parse(new TextDecoder().decode(bytes)); }
+        catch { throw new ProviderError('invalid_response', 'ClewdR'); }
+        if (typeof body === 'object' && body !== null && (body as { stop_reason?: unknown }).stop_reason === 'max_tokens') {
+          throw new ProviderError('invalid_response', 'ClewdR', undefined, undefined, 'reply cut off at the length limit');
+        }
+        try { return { content: nativeResponseSchema.parse(body).content, stopReason: 'end_turn', usage: tokenUsage(body) }; }
+        catch { throw new ProviderError('invalid_response', 'ClewdR'); }
       });
-      if (!response.ok) throw new ProviderError('http_error', 'ClewdR', response.status);
-      const bytes = await responseBytes(response, 512_000, 'ClewdR');
-      try { return nativeResponseSchema.parse(JSON.parse(new TextDecoder().decode(bytes))).content; }
-      catch { throw new ProviderError('invalid_response', 'ClewdR'); }
-    });
+      console.info(`AI call ${label} ok ${Date.now() - startedAt}ms HTTP ${status ?? '-'} stop ${stopReason} tokens in ${usage.input} out ${usage.output}`);
+      return content;
+    } catch (error) {
+      const code = error instanceof ProviderError ? error.code : 'network_error';
+      console.warn(`AI call ${label} failed ${Date.now() - startedAt}ms ${code} HTTP ${status ?? '-'}`);
+      throw error;
+    }
   }
+}
+
+function tokenUsage(body: unknown): { input: number | string; output: number | string } {
+  const usage = typeof body === 'object' && body !== null ? (body as { usage?: unknown }).usage : undefined;
+  const count = (key: string) => {
+    const value = typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>)[key] : undefined;
+    return typeof value === 'number' && Number.isFinite(value) ? value : '-';
+  };
+  return { input: count('input_tokens'), output: count('output_tokens') };
+}
+
+function refusalCategory(reason: string): string {
+  if (reason.startsWith('The reply was not one bare JSON object')) return 'the reply was not one bare JSON object';
+  if (reason.startsWith('The reply did not match the required schema')) return 'the reply did not match the required schema';
+  return 'the reply broke the application rules';
 }
 
 function scenarioCastPublic(entry: ScenarioCastEntry) {

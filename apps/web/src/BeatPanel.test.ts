@@ -142,6 +142,29 @@ describe('beat panel action bar', () => {
     wrapper.unmount();
   });
 
+  it('counts ticked lines outside the plan and plans again from the visible button', async () => {
+    const planned = beat({ phase: 'stakes_review', selectedSubmissionIds: ['say-1'] });
+    const wrapper = await mountPanel(snapshot(planned, 'live', { submissions: [line('say-1'), line('say-2'), line('say-3')] }), ['say-1', 'say-2', 'say-3']);
+    expect(wrapper.get('[data-testid="outside-plan"]').text()).toBe('2 ticked lines are not in this plan.');
+    expect(outsideMore(wrapper).some(button => button.attributes('data-testid') === 'plan-again-bar' && button.text() === 'Plan again')).toBe(true);
+    expect(more(wrapper).find('[data-testid="plan-again"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="plan-again-bar"]').trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['plan_beat']);
+    expect(transport.command.mock.calls[0][1]).toMatchObject({ submissionIds: ['say-1', 'say-2', 'say-3'] });
+    wrapper.unmount();
+  });
+
+  it('says one ticked line is not in the plan, and shows nothing when all are planned', async () => {
+    const planned = beat({ phase: 'stakes_review', selectedSubmissionIds: ['say-1'] });
+    const one = await mountPanel(snapshot(planned, 'live', { submissions: [line('say-1'), line('say-2')] }), ['say-1', 'say-2']);
+    expect(one.get('[data-testid="outside-plan"]').text()).toBe('1 ticked line is not in this plan.');
+    one.unmount();
+    const none = await mountPanel(snapshot(planned, 'live', { submissions: [line('say-1')] }), ['say-1']);
+    expect(none.find('[data-testid="outside-plan"]').exists()).toBe(false);
+    expect(none.find('[data-testid="plan-again-bar"]').exists()).toBe(false);
+    none.unmount();
+  });
+
   it('plans again with the ticked lines and nothing more', async () => {
     const wrapper = await mountPanel(snapshot(ordinaryStakes, 'live', { submissions: [line('say-1')] }), ['say-1']);
     await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
@@ -1087,7 +1110,7 @@ describe('beat panel script editor', () => {
   });
 
   it('adds a narrator line and a present non-player character line from the Add a line box', async () => {
-    const wrapper = await mountPanel(snapshot(review()));
+    const wrapper = await mountPanel(snapshot(review(), 'live', { npcDetails: [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present', locationId: 'bar', communicationChannel: null }] }));
     await wrapper.get('[data-testid="script-add-line"]').setValue('mara');
     await flushPromises();
     expect(wrapper.get('[data-testid="script-line-1"]').text()).toContain('Mara:');

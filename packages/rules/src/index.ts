@@ -75,7 +75,7 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
         inventoryOperations.add(operation);
         if (effect.kind === 'inventory_remove') {
           const index = character.possessions.indexOf(effect.item);
-          if (index < 0) throw new Error('Cannot consume an item the character does not possess.');
+          if (index < 0) throw new Error(`Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ${JSON.stringify(character.possessions)}`);
           character.possessions.splice(index, 1);
         } else {
           if (character.possessions.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');
@@ -218,7 +218,7 @@ function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][])
           if (!items) possessions.set(effect.characterId, items = [...base]);
           if (effect.kind === 'inventory_remove') {
             const index = items.indexOf(effect.item);
-            if (index < 0) throw new Error('Cannot consume an item the character does not possess.');
+            if (index < 0) throw new Error(`Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ${JSON.stringify(items)}`);
             items.splice(index, 1);
           } else {
             if (items.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');

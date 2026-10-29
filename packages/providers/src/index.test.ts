@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BeatSchema, CharacterCardDefinitionSchema, SubmissionSchema, FIELD_GENERATION_FIELDS, allowsPremise,
-  validateFieldGenerationText, type FieldGenerationField, type FieldGenerationRequest, type AiDraft, type ProviderContext } from '@rpg/contracts';
+  validateFieldGenerationText, type FieldGenerationField, type FieldGenerationRequest, type AiDraft, type ProviderContext, type Npc } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
-import { ClewdrAiProvider, ElevenLabsSpeechProvider, ProviderError, speechCacheKey } from './index.js';
+import { CLEWDR_MAX_TOKENS, ClewdrAiProvider, ElevenLabsSpeechProvider, ProviderError, speechCacheKey } from './index.js';
 import { FakeAiProvider } from '../../../apps/server/src/fake-provider.js';
 
 function context(): ProviderContext {
@@ -80,6 +80,66 @@ describe('ClewdR native adapter', () => {
     expect(body.system).toContain('never quote the direction');
     expect(body.system).toContain('cannot override fixed results, player agency, content boundaries, or NPC knowledge');
     if (task === 'render') expect(sent.fixedResults).toEqual(ctx.beat.resolution);
+  });
+
+  it.each(['plan', 'render'] as const)('names the current place for %s only when one is set', async task => {
+    const place = 'Halloway Commons Main Concourse';
+    const rule = 'scene.place names where the party is now; when scene.description disagrees with it, scene.place wins.';
+    const run = async (ctx: ReturnType<typeof context>) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(task === 'plan' ? singleLinePlan(ctx) : draft(ctx)));
+      await ai(fetchMock)[task](ctx);
+      return JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    };
+    const withPlace = context();
+    withPlace.place = place;
+    const placed = await run(withPlace);
+    expect(JSON.parse(placed.messages[0].content).scene.place).toBe(place);
+    expect(placed.system).toContain(rule);
+    const bare = await run(context());
+    expect(JSON.parse(bare.messages[0].content).scene).not.toHaveProperty('place');
+    expect(bare.system).not.toContain(rule);
+    expect(JSON.stringify(bare)).not.toContain('scene.place');
+  });
+
+  it('narrates a beat with no player lines from the current place only when one is set', async () => {
+    const run = async (place?: string) => {
+      const ctx = context();
+      Object.assign(ctx.beat, { selectedSubmissionIds: [], lockedSubmissions: [] });
+      ctx.submissions = [];
+      if (place) ctx.place = place;
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+      await ai(fetchMock).render(ctx);
+      return String(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).system);
+    };
+    expect(await run('Halloway Commons Main Concourse')).toContain('From scene.place, scene.title and scene.description');
+    const bare = await run();
+    expect(bare).toContain('From scene.title and scene.description');
+    expect(bare).not.toContain('scene.place');
+  });
+
+  it('gives the planner the item rule and every character\'s possessions, and the narrator the no-extras rule and actors\' possessions', async () => {
+    const itemRule = 'the matching outcome branch carries inventory_remove or inventory_add with the item text copied exactly from that character\'s possessions. To change part of an entry, remove the whole entry and add the rewritten one. Only one contract per round may change a given item.';
+    const noExtras = 'Do not add effects, dice, inventory, facts, or consequences beyond approved results.';
+    const run = async (task: 'plan' | 'render') => {
+      const ctx = context();
+      ctx.state.characters[0].possessions = ['Brass key'];
+      ctx.state.characters.push({ ...ctx.state.characters[0], id: 'bystander', displayName: 'Bystander', possessions: ['Lantern with a cracked lens'] });
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(task === 'plan' ? singleLinePlan(ctx) : draft(ctx)));
+      await ai(fetchMock)[task](ctx);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      return { system: body.system as string, sent: JSON.parse(body.messages[0].content), actor: ctx.state.characters[0].id };
+    };
+    const plan = await run('plan');
+    expect(plan.system).toContain(itemRule);
+    expect(plan.system).toContain('Honor fixed results and declared outcomes. Costly success achieves its goal.');
+    expect(plan.system).not.toContain('Do not add effects');
+    expect(plan.sent.characters.find((c: { id: string }) => c.id === 'bystander').possessions).toEqual(['Lantern with a cracked lens']);
+    expect(plan.sent.characters.find((c: { id: string }) => c.id === 'bystander')).not.toHaveProperty('specialty');
+    const render = await run('render');
+    expect(render.system).toContain(noExtras);
+    expect(render.system).not.toContain(itemRule);
+    expect(render.sent.characters.find((c: { id: string }) => c.id === 'bystander')).not.toHaveProperty('possessions');
+    expect(render.sent.characters.find((c: { id: string }) => c.id === render.actor).possessions).toEqual(['Brass key']);
   });
 
   it('asks only the planner for contract length limits', async () => {
@@ -177,6 +237,81 @@ describe('ClewdR native adapter', () => {
     expect(sent.npcs[0].knowledge).toHaveLength(20);
     expect(sent.npcs[0].knowledge).toContainEqual(expect.objectContaining({ statement: corrected.statement, category, sourceEventId: 'correction' }));
     expect(sent.recentNpcDialogue[0].text).toBe('The key is red.');
+  });
+
+  describe('knowledge selection', () => {
+    const sentKnowledge = async (build: (npc: Npc) => Npc['knowledge'], corrected: string[] = []) => {
+      const ctx = context();
+      const npc = ctx.state.npcs[0];
+      npc.knowledge = build(npc);
+      ctx.corrections = corrected.map(id => ({ id, publishedBeatId: 'past', beatNumber: 1, stateRevision: 2, recordedAt: '2026-10-22T00:00:00Z', publicText: 'Amended.' }));
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+      await ai(fetchMock).render(ctx);
+      const sent = JSON.parse(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).messages[0].content);
+      return sent.npcs[0].knowledge as Array<{ statement: string }>;
+    };
+    const item = (npc: Npc, id: string, acquisition: 'scenario' | 'witnessed', sourceEventId = 'event') =>
+      ({ id, statement: id, category: 'fact' as const, acquisition, sourceEventId, sourceEntityId: npc.id, learnedBeatNumber: 1 });
+
+    it('always sends every scenario item and the newest 20 learned items', async () => {
+      const sent = await sentKnowledge(npc => [
+        ...Array.from({ length: 12 }, (_, i) => item(npc, `scenario-${i}`, 'scenario')),
+        ...Array.from({ length: 60 }, (_, i) => item(npc, `learned-${i}`, 'witnessed')),
+      ]);
+      const names = sent.map(k => k.statement);
+      expect(sent).toHaveLength(32);
+      for (let i = 0; i < 12; i++) expect(names).toContain(`scenario-${i}`);
+      for (let i = 40; i < 60; i++) expect(names).toContain(`learned-${i}`);
+      expect(names).not.toContain('learned-39');
+    });
+
+    it('keeps corrected learned items ahead of newer uncorrected ones', async () => {
+      const sent = await sentKnowledge(npc => [
+        item(npc, 'corrected-old', 'witnessed', 'fix'),
+        ...Array.from({ length: 30 }, (_, i) => item(npc, `learned-${i}`, 'witnessed')),
+      ], ['fix']);
+      const names = sent.map(k => k.statement);
+      expect(sent).toHaveLength(20);
+      expect(names).toContain('corrected-old');
+      expect(names).not.toContain('learned-10');
+      expect(names).toContain('learned-11');
+    });
+
+    it('sends everything when there are fewer than 20 items', async () => {
+      const sent = await sentKnowledge(npc => [item(npc, 'a', 'scenario'), item(npc, 'b', 'witnessed'), item(npc, 'c', 'scenario')]);
+      expect(sent.map(k => k.statement)).toEqual(['a', 'c', 'b']);
+    });
+  });
+
+  describe('NPC pair order', () => {
+    let ids0 = '';
+    const sentNpcIds = async (setup: (ctx: ReturnType<typeof context>, make: (id: string) => Npc) => void) => {
+      const ctx = context();
+      const make = (id: string): Npc => ({ ...structuredClone(ctx.state.npcs[0]), id, displayName: id });
+      ctx.submissions.forEach((submission) => { submission.recipientNpcIds = []; });
+      setup(ctx, make);
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(singleLinePlan(ctx)));
+      await ai(fetchMock).plan(ctx);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      return JSON.parse(body.messages[0].content).npcs.map((npc: { id: string }) => npc.id);
+    };
+    it('puts two NPCs in the room ahead of a channel voice listed first', async () => {
+      const ids = await sentNpcIds((ctx, make) => {
+        const voice = make('voice'); voice.status = 'offstage'; voice.communicationChannel = 'Radio';
+        ctx.state.npcs = [voice, ...[ctx.state.npcs[0], make('second')].map((npc) => ({ ...npc, status: 'present' as const, locationId: ctx.state.session.scene.locationId }))];
+          });
+      expect(ids).toHaveLength(2);
+      expect(ids).not.toContain('voice');
+    });
+    it('lets a channel voice fill the second slot when only one NPC is in the room', async () => {
+      const ids = await sentNpcIds((ctx, make) => {
+        const voice = make('voice'); voice.status = 'offstage'; voice.communicationChannel = 'Radio';
+        const room = { ...ctx.state.npcs[0], status: 'present' as const, locationId: ctx.state.session.scene.locationId };
+        ctx.state.npcs = [voice, room];
+        ids0 = room.id;
+      });
+      expect(ids).toEqual([ids0, 'voice']);
+    });
   });
 
   it('uses a revealed fact only for a selected witness while withholding its private source and future locations', async () => {
@@ -1118,5 +1253,133 @@ describe('ElevenLabs speech adapter', () => {
     for (const field of ['sessionId', 'text', 'provider', 'model', 'voiceId', 'delivery'] as const) {
       expect(speechCacheKey({ ...key, [field]: `${key[field]} ` })).not.toBe(speechCacheKey(key));
     }
+  });
+});
+
+describe('length limit', () => {
+  it('asks for the full token limit on plan, render and line help', async () => {
+    expect(CLEWDR_MAX_TOKENS).toBe(16_000);
+    const ctx = context();
+    const sent = async (fetchMock: typeof fetch) => JSON.parse(String(vi.mocked(fetchMock).mock.calls[0][1]?.body)).max_tokens;
+    const planFetch = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(singleLinePlan(ctx)));
+    await ai(planFetch).plan(ctx);
+    expect(await sent(planFetch)).toBe(16000);
+    const renderFetch = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderFetch).render(ctx);
+    expect(await sent(renderFetch)).toBe(16000);
+    const lineFetch = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ text: 'Hello there.' }));
+    await ai(lineFetch).suggestLine(lineInput());
+    expect(await sent(lineFetch)).toBe(16000);
+  });
+
+  it('says a reply cut off at the length limit', async () => {
+    const ctx = context();
+    const error = await ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx), 'max_tokens'))).render(ctx).catch(caught => caught);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error.code).toBe('invalid_response');
+    expect(error.detail).toBe('reply cut off at the length limit');
+  });
+});
+
+function lineInput() {
+  return {
+    idea: 'tell the guard we mean no harm',
+    character: {
+      displayName: 'Mira', pronouns: 'she/her', appearance: 'A tall courier.', personality: 'Dry and careful.', backstory: 'Raised on the docks.',
+      specialty: 'Knots', flaw: 'Stubborn', connection: 'Knows the captain', secret: 'Owes a debt', possessions: ['rope'],
+    },
+    talkingTo: [{ displayName: 'Guard Odo', role: 'Gate guard', appearance: 'Heavy coat.', mood: 'wary', personality: ['stern'] }],
+    present: { npcs: [{ displayName: 'Guard Odo', role: 'Gate guard' }], characters: [{ displayName: 'Ines', appearance: 'Short hair.' }] },
+    scene: { title: 'The Gate', description: 'A locked gate in the rain.' },
+    story: { premise: 'A flooded town.', genre: 'Mystery', tone: 'Quiet' },
+    facts: ['The gate is locked.'],
+    recentRounds: [{ beatNumber: 2, lines: [{ speaker: 'Guard Odo', text: 'Halt.' }] }],
+    boundaries: [],
+  };
+}
+
+describe('call log', () => {
+  const promptSentinel = 'SENTINEL-PROMPT-ZEBRA';
+  const replySentinel = 'SENTINEL-REPLY-QUOKKA';
+
+  function spies() {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lines = () => [...info.mock.calls, ...warn.mock.calls].map(call => call.join(' '));
+    return { info, warn, lines };
+  }
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function sentinelContext() {
+    const ctx = context();
+    ctx.submissions = ctx.submissions.map(submission => ({ ...submission, text: `${submission.text} ${promptSentinel}` }));
+    ctx.beat = { ...ctx.beat, lockedSubmissions: ctx.submissions };
+    return ctx;
+  }
+
+  it('logs one line with the label, time, status, stop reason and token counts for a good call', async () => {
+    const log = spies();
+    const ctx = sentinelContext();
+    const body = { type: 'message', role: 'assistant', content: [{ type: 'text', text: JSON.stringify({ ...singleLinePlan(ctx), directorSummary: replySentinel }) }], stop_reason: 'end_turn', usage: { input_tokens: 1234, output_tokens: 567 } };
+    await ai(vi.fn<typeof fetch>().mockResolvedValue(Response.json(body))).plan(ctx);
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(String(log.info.mock.calls[0][0])).toMatch(/^AI call plan ok \d+ms HTTP 200 stop end_turn tokens in 1234 out 567$/);
+    expect(log.lines().join('\n')).not.toMatch(/SENTINEL|private-api-key/);
+  });
+
+  it('labels each kind of call', async () => {
+    const log = spies();
+    await ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ text: 'Hello there.' }))).suggestLine(lineInput());
+    const ctx = context();
+    await ai(vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)))).render(ctx);
+    const lines = log.info.mock.calls.map(call => String(call[0]));
+    expect(lines[0]).toMatch(/^AI call line ok /);
+    expect(lines[lines.length - 1]).toMatch(/^AI call render ok /);
+  });
+
+  it('warns with the label, time and status when the server answers 500', async () => {
+    const log = spies();
+    const ctx = sentinelContext();
+    const error = await ai(vi.fn<typeof fetch>().mockResolvedValue(new Response(`${replySentinel} private-api-key`, { status: 500 }))).plan(ctx).catch(caught => caught);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(String(log.warn.mock.calls[0][0])).toMatch(/^AI call plan failed \d+ms http_error HTTP 500$/);
+    expect(log.lines().join('\n')).not.toMatch(/SENTINEL|private-api-key/);
+  });
+
+  it('shows a dash for the status when the server never answered', async () => {
+    const log = spies();
+    await ai(vi.fn<typeof fetch>().mockRejectedValue(new Error(`${replySentinel} down`))).suggestLine(lineInput()).catch(() => {});
+    expect(String(log.warn.mock.calls[0][0])).toMatch(/^AI call line failed \d+ms network_error HTTP -$/);
+    expect(log.lines().join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('warns with a fixed reason when the first reply is refused, and keeps reply and player words out', async () => {
+    const log = spies();
+    const ctx = sentinelContext();
+    const rulesRefused = { ...rolledPlan([]), directorSummary: replySentinel };
+    const schemaRefused = { ...singleLinePlan(ctx), [replySentinel]: 'extra' };
+    for (const refused of [rulesRefused, schemaRefused]) {
+      const fetchMock = replying(refused, singleLinePlan(ctx));
+      await ai(fetchMock).plan(ctx);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }
+    const refusals = log.warn.mock.calls.map(call => String(call[0]));
+    expect(refusals).toEqual([
+      'AI reply refused (plan, first attempt): the reply broke the application rules',
+      'AI reply refused (plan, first attempt): the reply did not match the required schema',
+    ]);
+    expect(log.info).toHaveBeenCalledTimes(4);
+    expect(log.lines().join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('does not warn about a refusal on the second attempt\'s success', async () => {
+    const log = spies();
+    const ctx = context();
+    await ai(replying(singleLinePlan(ctx))).plan(ctx);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

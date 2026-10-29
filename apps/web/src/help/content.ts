@@ -120,7 +120,7 @@ export const topics: HelpTopic[] = [
         ],
         steps: [
           'Before the first round, press Narrate the opening. The AI writes narration that sets the opening scene from your scenario, so the cast knows where they are. Read it, then press Publish: it plays in the narrator\'s voice on stream and shows on every seat. After a scene change, More has Narrate the scene.',
-          'Lines from players arrive already ticked. Untick any line you want to leave out of this beat.',
+          'Lines from players arrive already ticked. Untick any line you want to leave out of this beat. Lines that arrive while the AI is planning are also ticked, but they are left out of the current plan: the queue tags them Not in this plan, and the bar counts them and shows a Plan again button so you can plan again with them included.',
           'For a conversation, press Answer these lines. It opens the conversation, plans it and stops at What\'s at risk so you can look first. The gold button then reads Approve and roll.',
           'For something risky, press Open action round instead, then Plan. Plan plans the ticked lines in any round. The AI proposes what each line means for the story.',
           'Read the What\'s at risk cards. Each card shows the goal, the roll in words and four results: 10 or more is a clean success, 7 to 9 is a success with a cost, 6 or less is a setback, and a double 1 is a Critical failure whatever the total. Press Edit on a card to change it, then Done. The stage fits about 90 characters of a goal and 110 of each result. The character counts appear only inside a card\'s Edit, and only when a line runs over, so shorten anything over before you approve.',
@@ -135,7 +135,7 @@ export const topics: HelpTopic[] = [
           'Every line rolls, in conversations and in action rounds alike. Each ticked line gets a roll of its own, or it helps another line\'s roll.',
           'The AI sets how bad each result can get from the moment. A light or funny moment gets a small cost, and a dangerous one gets a heavy cost. Read the cards and edit anything that does not fit the scene.',
           'A double 1 is a Critical failure whatever the total, and the AI writes what happens in that case on its own line of the card. The stage shows it as Critical failure wherever results show. A card with no Critical failure line treats a double 1 as a setback.',
-          'You can still waive a roll. Set a card to No check, so the action simply works, or to Blocked, so it cannot happen yet. You can also untick a line to leave it out of the round.',
+          'You can still waive a roll. Set a card to No check, so the action simply works, or to Blocked, so it cannot happen yet. You can also untick a line to leave it out of the round. A ticked line that arrived after the AI began planning is not in the plan yet, so press Plan again to bring it in.',
           'Lock and draft appears only when you set a round to Ordinary conversation, which means no dice and nothing changes. Every other round goes through Approve and roll.',
           'Only action rounds tick countdowns. A conversation round rolls its dice without ticking them.',
         ],
@@ -202,6 +202,13 @@ export const topics: HelpTopic[] = [
         heading: 'Note for the AI',
         paragraphs: [
           'Note for the AI, in Show tools, lets you give the AI a private hint for the beat, such as a mood or a thing to steer toward. Type it in Note for this beat, press Save note, and press Clear note to remove it. Players never see it. Saving or clearing a note throws away the current draft (or, before the dice are rolled, the stakes under review), so the AI writes it again with the note. The dice and the lines players sent stay.',
+        ],
+      },
+      {
+        heading: 'Changing the scene',
+        paragraphs: [
+          'Press Change scene in the live controls to move the story to a new place. Pick the place first. The scene title fills in from the place until you type your own title. The title becomes public when you save. The page lists who is Moving with the party.',
+          'While the description still describes the old place, a warning says so. Update the description so the stream, players and AI see the new place. The AI is also told the place\'s name, and it goes by the place when the description disagrees. If players\' lines still describe the old place, the AI follows the players, so after a move, Narrate the scene before you take their lines.',
         ],
       },
       {
@@ -551,7 +558,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What does "The story moved on while you were typing" mean?',
         paragraphs: [
-          'The director moved the story along while you were writing, for example by locking the lines or starting a new turn. Read your words again. If they still fit, press Yes, they still fit, then press Send.',
+          'The director moved the story along while you were writing, for example by locking the lines or starting a new turn. Read your words again. If they still fit, press Yes, they still fit, then press Send. While that notice shows, the Send button reads Send it anyway. Pressing it confirms your words still fit and sends them in one go. If the director has locked the turn, the notice reads This turn is locked. Your line will wait for the director to pick it. A line the story refused keeps your words in the box and shows the reason beside Send, so you can fix it or send it again.',
         ],
       },
       {
@@ -616,7 +623,7 @@ export const topics: HelpTopic[] = [
         heading: 'Make the links',
         paragraphs: [
           'Press Stream this show in the header. It is on the seat, pre-show, director and Cast & lobby pages. A director goes to the Stream this show panel in Cast & lobby, and a player goes to their own panel. The panel opens by itself and loads the first time it opens.',
-          'Links come in groups. For your stream holds the Main show link. Every new show already has one, made with the show, and Make the main show link appears only when a show has none. For a cast member\'s own stream has one card for each cast member, with the name as its title, plus Host view and any producer\'s link. They are made the first time you open the panel. A producer also sees For your own stream.',
+          'Links come in groups. For your stream holds the Main show link. Every new show already has one, made with the show, and Make the main show link appears only when a show has none. For a cast member who streams too lists each cast member with a Make a link button, plus Host view and any producer\'s link. Cast links are not made when you open the panel: press Make a link for a cast member who streams, and one press makes one link. Every link shows the same picture, and a cast member\'s link only listens to the show audio. Only one OBS should load the Main show link, because it carries the show audio. A producer\'s own link is made the first time they open the panel. A producer also sees For your own stream.',
           'Each card has two copy buttons. Copy overlay link copies captions, cast and dice over your own camera, on a see-through background. Copy full-scene link copies the whole show as one 1920×1080 picture. The page says Copied, or Copy failed with the link selected for you to copy by hand. Treat a link like a password. Anyone who has it can watch that stream view.',
           'Press Turn off, then Turn off to confirm, to switch a link off. Press Keep link if you change your mind. OBS sources using a turned off link switch to a holding screen within seconds. The row then says Turned off. and offers Make a new link.',
           'A stream link lasts 90 days. The main show link made with a new show lasts 90 days too. The OBS source keeps working for that whole time without anyone signing in.',
@@ -737,10 +744,10 @@ export const topics: HelpTopic[] = [
         heading: 'Scene pictures for the director',
         paragraphs: [
           'The Scene picture panel is on the director page. While a place picture is on its way it says Making the picture... While a picture of a beat is on its way it says Drawing the last beat…',
-          'Press Draw the place to get a different picture of the current scene\'s place. Press Draw the last beat to draw the newest beat in this scene, with everyone who took part. Draw the last beat is greyed out until a beat has been published in this scene. Until then the panel says No beat has been published in this scene yet. It is also greyed out while the show has not started or is over.',
-          'Pressing either button while a picture is on its way starts over. The new picture takes the old one\'s place when it is ready, and the old one is dropped. A round\'s picture waiting for you to publish is never touched by this. It stays held until you publish the round.',
+          'Press Draw the place to get a different picture of the current scene\'s place. Press Draw the last beat to draw the newest beat in this scene, with everyone who took part. Draw the last beat is greyed out until a beat has been published in this scene. Until then the panel says No beat has been published in this scene yet. It is also greyed out while the show is over. Draw the place also works before you press Start show. Start show then keeps that picture instead of drawing another. If that picture failed, Start show draws a new one.',
+          'Pressing a draw button never cancels another picture. Pictures already on their way keep going, and the newest picture takes the old one\'s place when it is ready. A round\'s picture waiting for you to publish is never touched by this. It stays held until you publish the round.',
           'Press Hide picture to take the picture off the stream and the player seats. Hide picture and Show picture work at any time, even while the gold button is busy with a beat. Hide picture also works while a picture is being made, which keeps a new scene\'s picture off the stream before it appears. The panel then says Making the picture... It stays hidden until you press Show picture. Press Show picture to put it back. A hidden scene can always be shown again, and it stays hidden after Draw the place or Draw the last beat until you press Show picture.',
-          'Under the buttons the panel says: Draw the place makes a new picture of this scene\'s place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pressing either one while a picture is on its way starts over. The new picture takes the old one\'s place when it is ready.',
+          'Under the buttons the panel says: Draw the place makes a new picture of this scene\'s place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one\'s place when it is ready.',
           'During an action round the panel also tells you about the round\'s own picture. While it is being made it says Making the picture for this action round. Viewers and players see it when you publish the round. When it is ready it shows a small preview and says The picture for this action round is ready. Viewers and players see it when you publish the round. If it fails it says The picture for this action round could not be made. You can still publish the round, and the stream keeps the picture it has now. When the reason is the picture service account, the server\'s key or a refusal to draw the round, the panel says that instead. For a refusal it says The picture service would not draw this round. You can still publish it.',
           'Hide picture and Show picture work the same for action round pictures: while the scene is hidden, a published round\'s picture stays hidden too. Draw the place always draws the scene from its description.',
           'Pictures of a beat and of an action round take longer than a place picture, because the story AI writes the description first. Expect anywhere from 25 seconds to 2 minutes. The show never waits for a picture.',
@@ -917,7 +924,7 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Conversation', definition: 'A beat for talking. Players send Say something lines and private notes. The lines roll like an action round\'s, but a conversation round does not tick countdowns. Only a round you set to Ordinary conversation has no dice.' },
   { term: 'Action round', definition: 'A beat for something risky. Each line a player sends rolls: it leads its own roll or helps another character\'s. You set the stakes, and the server rolls dice once per roll. Only action rounds tick countdowns. A round shows at most 12 rolls.' },
   { term: 'What\'s at risk', definition: 'The cards that show what a success, a cost, a setback or a Critical failure would mean in the story. Conversation rounds and action rounds both stop here. You approve them with Approve and roll before the dice roll.' },
-  { term: 'Contract', definition: 'The agreement for one roll: the goal, the ruling, the trait, the risk and the outcomes, including the Critical failure. A character leads it, and others may help. A character helps only one contract in a round.' },
+  { term: 'Contract', definition: 'The agreement for one roll: the goal, the ruling, the trait, the risk and the outcomes, including the Critical failure. A character leads it, and others may help. A character helps only one contract in a round. An outcome can also add a possession to a character\'s card or take one away, for example when the character throws it away.' },
   { term: 'Ruling', definition: 'Your decision on whether an action needs dice. Check means roll. No check means it works. Blocked means it cannot happen yet, and you explain what is missing. For No check and Blocked, the stage shows only the outcome that will happen, marked No roll needed or Blocked.' },
   { term: 'Trait', definition: 'One of a character\'s strengths, such as Wits. The server adds its value to the dice.' },
   { term: 'Risk', definition: 'How dangerous an action is: low for light or funny stakes, normal for humiliating or costly ones, high for dangerous ones. The AI sets it from the moment. It is written in the contract and shown to viewers with the wager.' },

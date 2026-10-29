@@ -25,7 +25,7 @@ const helpLine = (w: ReturnType<typeof mountPanel>) => w.get('.scene-picture-hel
 
 const OFF = 'Pictures are off on this server.';
 const NONE = 'This scene has no picture yet. Press Draw the place to make one.';
-const HELP = "Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pressing either one while a picture is on its way starts over. The new picture takes the old one's place when it is ready.";
+const HELP = "Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one's place when it is ready.";
 const NO_BEAT = 'No beat has been published in this scene yet.';
 const SHOWN = 'This picture is on the stream and the player seats.';
 const HIDDEN = 'This picture is hidden. Viewers and players do not see it. Press Show picture to put it back.';
@@ -129,12 +129,17 @@ describe('ScenePicturePanel', () => {
     expect(shown.emitted('hide')).toBeUndefined();
   });
 
-  it('allows Draw the place only while the show is live or paused and has started', () => {
-    for (const status of ['live', 'paused']) expect(button(mountPanel(snapshot({}, {}, { status })), 'new').attributes('disabled')).toBeUndefined();
-    for (const status of ['lobby', 'ended']) expect(button(mountPanel(snapshot({}, {}, { status })), 'new').attributes('disabled')).toBeDefined();
+  it('allows Draw the place in every status except ended, and not while busy', () => {
+    for (const status of ['live', 'paused', 'lobby']) expect(button(mountPanel(snapshot({}, {}, { status })), 'new').attributes('disabled')).toBeUndefined();
+    expect(button(mountPanel(snapshot({}, {}, { status: 'ended' })), 'new').attributes('disabled')).toBeDefined();
+    expect(button(mountPanel(snapshot(), true), 'new').attributes('disabled')).toBeDefined();
     const setup = (started: boolean) => ({ setup: { started } });
-    expect(button(mountPanel(snapshot(setup(false))), 'new').attributes('disabled')).toBeDefined();
+    expect(button(mountPanel(snapshot(setup(false))), 'new').attributes('disabled')).toBeUndefined();
     expect(button(mountPanel(snapshot(setup(true))), 'new').attributes('disabled')).toBeUndefined();
+  });
+
+  it('explains both draw buttons', () => {
+    expect(mountPanel(snapshot()).get('.scene-picture-help').text()).toBe("Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one's place when it is ready.");
   });
 
   describe('Draw the last beat', () => {
@@ -253,10 +258,10 @@ describe('ScenePicturePanel', () => {
   });
 
   it('says the picture is made when the show starts, before the show has started', () => {
-    const NOT_YET = 'The picture is made when the show starts.';
+    const NOT_YET = 'The picture is made when the show starts. Press Draw the place to make it now.';
     const lobby = mountPanel(snapshot({}, {}, { status: 'lobby' }));
     expect(line(lobby)).toBe(NOT_YET);
-    expect(button(lobby, 'new').attributes('disabled')).toBeDefined();
+    expect(button(lobby, 'new').attributes('disabled')).toBeUndefined();
     const setup = { setup: { started: false } };
     expect(line(mountPanel(snapshot(setup)))).toBe(NOT_YET);
     expect(line(mountPanel(snapshot({ setup: { started: true } })))).toBe(NONE);

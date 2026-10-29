@@ -8,6 +8,7 @@ import StakesCards from './StakesCards.vue';
 import ScriptEditor from './ScriptEditor.vue';
 import BeatStepper from './BeatStepper.vue';
 import { bandLabel } from './stage-format';
+import { ticksOutsidePlan } from './plan-coverage';
 import type { VoiceState } from './voice-state';
 import { GOLD_LABELS, GOLD_TEST_IDS, beatStep, goldAction, stepPosition, usesActionSteps, type GoldAction } from './beat-step';
 
@@ -45,6 +46,8 @@ const tickedIds = computed(() => {
   const order = new Map((director.value?.submissions ?? []).map((item, index) => [item.id, index]));
   return [...selected.value].sort((a, b) => (order.get(a) ?? Infinity) - (order.get(b) ?? Infinity)).slice(0, MAX_PLANNED_LINES);
 });
+const outsidePlan = computed(() => director.value ? ticksOutsidePlan(director.value, selected.value).length : 0);
+const outsidePlanText = computed(() => outsidePlan.value === 1 ? '1 ticked line is not in this plan.' : `${outsidePlan.value} ticked lines are not in this plan.`);
 const stepInput = computed(() => ({ beat: beat.value, selectedCount: selected.value.length, contractsDirty: contractsDirty.value, scriptDirty: scriptDirty.value, rendering: rendering.value, paused: paused.value, continuityPending: continuityPending.value }));
 const ordinary = computed(() => reviewClassification.value === 'ordinary' && beat.value?.classification !== 'needs_action');
 const quickLock = computed(() => ['stakes', 'lock'].includes(beatStep(stepInput.value).step) && ordinary.value);
@@ -347,7 +350,7 @@ function runGold() {
         <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="busy" v-model:classification="reviewClassification" />
         <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ bandLabel(roll.band) }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
           <section v-if="playerLines.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in playerLines" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
-          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="snapshot.npcs" :busy="busy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
+          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="busy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
           <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
       </template>
@@ -362,6 +365,10 @@ function runGold() {
         <div v-if="confirmRegenerate === 'replace' && beat" class="beat-confirm"><p>Replace what you wrote? The AI writes a new script and the lines you typed are lost. The dice stay the same.</p><button class="secondary" :disabled="locked" data-testid="confirm-replace" @click="confirmRender">Yes, replace it</button><button class="secondary" :disabled="paused" data-testid="keep-written" @click="confirmRegenerate = null">Keep what I wrote</button></div>
         <div class="actions">
           <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
+          <template v-if="outsidePlan">
+            <p class="beat-status" data-testid="outside-plan">{{ outsidePlanText }}</p>
+            <button class="secondary" :disabled="locked || !tickedIds.length || Boolean(working)" data-testid="plan-again-bar" @click="plan">Plan again</button>
+          </template>
           <p v-if="tooManyLines" class="beat-status" data-testid="too-many-lines">{{ tooManyWarning }}</p>
           <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-action" @click="openBeat('action')">Open action round</button>
           <button v-if="step.step === 'open' && !snapshot.history.length" class="secondary" :disabled="locked" data-testid="narrate-scene" @click="narrateScene">Narrate the opening</button>

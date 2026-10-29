@@ -297,6 +297,31 @@ describe('RULE-04 dependent inventory preflight', () => {
     }
   });
 
+  it('refuses a paraphrased item and lists the exact possession lines', () => {
+    const current = state();
+    current.characters[0].possessions = ['Belled jester cap', 'Rope'];
+    const action = contract();
+    action.outcomes.clean.effects = [{ kind: 'inventory_remove', characterId: 'lead', item: 'a bell' }];
+    const message = answer(() => validateContracts([action], current));
+    expect(message).toContain('Cannot consume an item the character does not possess.');
+    expect(message).toContain('["Belled jester cap","Rope"]');
+  });
+
+  it('rewrites an entry when one outcome removes the old line and adds the new one', () => {
+    const current = state();
+    current.characters[0].possessions = ['Harness with a brass bell', 'Rope'];
+    const action = contract({ ruling: 'no_check' });
+    action.outcomes.clean.effects = [
+      { kind: 'inventory_remove', characterId: 'lead', item: 'Harness with a brass bell' },
+      { kind: 'inventory_add', characterId: 'lead', item: 'Harness, bell missing' },
+    ];
+    expect(() => validateContracts([action], current)).not.toThrow();
+    const result = resolveContracts([action], current, () => 6);
+    const lead = applyResolution(current, result).characters[0];
+    expect(lead.possessions).toContain('Harness, bell missing');
+    expect(lead.possessions).not.toContain('Harness with a brass bell');
+  });
+
   it('rejects combined inventory capacity overflow before any dice', () => {
     const current = state();
     current.characters[0].possessions = Array.from({ length: 19 }, (_, index) => `item-${index}`);
@@ -545,7 +570,8 @@ describe('fast possible-effects check', () => {
       const { plan, lines } = generatedPlan(random);
       const expected = answer(() => oldValidateContracts(structuredClone(plan), structuredClone(current), lines));
       expect(answer(() => validateContracts(plan, current, lines)), `generated plan ${run}`).toBe(expected);
-      answers.set(expected, (answers.get(expected) ?? 0) + 1);
+      const kind = expected.replace(/(does not possess\.) Copy one of.*$/, '$1');
+      answers.set(kind, (answers.get(kind) ?? 0) + 1);
     }
     expect(answers.get('pass') ?? 0).toBeGreaterThan(100);
     for (const message of [

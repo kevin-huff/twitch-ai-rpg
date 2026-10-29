@@ -10,7 +10,8 @@ import { transaction } from './database';
 import { attachPreparedAudio } from './draft-audio';
 import { makeScript } from './script';
 import { finishUsageAttempt, startUsageAttempt } from './operations';
-import { draftNarration } from './picture-prompts';
+import { draftNarration, sceneLocationTitle } from './picture-prompts';
+import { RequestBudgetError, failureSentence } from './generation-failure';
 import { RELEASED } from './picture-views';
 import { AppError, authorize, conflict, corrections, currentBeat, history, project, readState, saveBeat, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
@@ -92,6 +93,7 @@ function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
 }
 function safeContext(state: SessionState, beat: Beat, selected: Submission[], published: ProviderContext['history'], publicCorrections: PublicCorrection[]): ProviderContext {
   const safe = structuredClone(state);
+  const place = sceneLocationTitle(state);
   safe.directorNotes = '';
   safe.locations = [];
   safe.characters = safe.characters.map((character) => ({ ...character, secret: '', backstory: '', draft: null, templateRef: null }));
@@ -99,7 +101,7 @@ function safeContext(state: SessionState, beat: Beat, selected: Submission[], pu
   safe.npcs = safe.npcs.filter((npc) => ((npc.status === 'present' && npc.locationId === state.session.scene.locationId) || npc.communicationChannel) && (!addressed.size || addressed.has(npc.id))).map((npc) => ({ ...npc, secrets: [], hiddenIdentity: null }));
   safe.facts = safe.facts.filter((fact) => fact.visibility === 'public');
   safe.tracks = safe.tracks.filter((track) => track.visibility === 'public');
-  return { state: safe, beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12) };
+  return { state: safe, ...(place ? { place } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12) };
 }
 
 function validateCorrections(changes: CorrectionChange[], state: SessionState) {
@@ -560,9 +562,9 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     // Pictures are reserved inside this transaction and only start after it commits.
     const pictureIds: string[] = [];
     if (deps.pictures) {
-      // Going live reserves the opening picture unless this scene already has one, so lobby to paused to live still gets it once.
+      // Going live reserves the opening picture unless this scene already has a ready or still-drawing one, so lobby to paused to live still gets it once.
       const wentLive = !wasLive && state.session.status === 'live'
-        && !(await client.query(`SELECT 1 FROM images WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND ${RELEASED} LIMIT 1`, [sessionId, state.session.scene.id])).rowCount;
+        && !(await client.query(`SELECT 1 FROM images WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status IN ('making','ready') AND ${RELEASED} LIMIT 1`, [sessionId, state.session.scene.id])).rowCount;
       if (command.type === 'change_scene' || wentLive) {
         const id = await deps.pictures.reserveScene(client, state, actor);
         if (id) pictureIds.push(id);
@@ -590,13 +592,14 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   let failure: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const attemptId = await startUsageAttempt(deps.pool, { sessionId, beatId: generation.context.beat.id, operationId: generation.jobId, kind: generation.task, timeoutMs: deps.providerTimeoutMs ?? 30_000 });
+  const started = Date.now();
   try {
     output = await Promise.race([
       generation.task === 'plan' ? deps.provider.plan(generation.context) : deps.provider.render(generation.context),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Generation timed out. Retry or write a manual script.')), deps.providerTimeoutMs ?? 30_000); }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new RequestBudgetError()), deps.providerTimeoutMs ?? 30_000); }),
     ]);
   } catch (error) {
-    failure = 'Generation failed. Your accepted inputs and dice are safe. Retry or write a manual script.';
+    failure = failureSentence(error, Date.now() - started);
     console.warn(`The ${generation.task} request for session ${sessionId} failed: ${error instanceof Error ? error.message : 'unknown error'}${error instanceof ProviderError && error.detail ? ` ${error.detail}` : ''}`);
   }
   finally { clearTimeout(timer); }
@@ -625,7 +628,10 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       } else if (!failure) {
         beat.draft = validateDraft(output, state, beat); beat.draftRevision++; beat.approvedContinuity = []; beat.phase = 'draft_review';
       }
-    } catch { failure = 'The generated response failed validation. Retry or provide a manual script.'; }
+    } catch (error) {
+      console.warn(`The ${generation.task} reply for session ${sessionId} failed validation: ${error instanceof Error ? error.message : 'unknown error'}`);
+      failure = 'The generated response failed validation. Retry or provide a manual script.';
+    }
     beat.lastError = failure; beat.revision++;
     await saveBeat(client, beat);
     await client.query('UPDATE generation_jobs SET status=$2,error=$3,finished_at=now() WHERE id=$1', [generation.jobId, failure ? 'failed' : 'succeeded', failure]);

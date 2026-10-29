@@ -61,10 +61,11 @@ test('main show link and a personal link each draw the latest beat in both layou
   const characterId: string = (await api(page, `/sessions/${sessionId}`)).body.characters[0].id;
   await page.getByTestId('stream-this-show').click();
   await expect(page.getByTestId('stream-setup')).toHaveAttribute('open', '');
-  // Links are ready without any press.
+  // The main show link is ready without any press; a cast member's link waits for Make a link.
   const showRow = page.getByTestId('stream-row-show');
   const personalRow = page.getByTestId(`stream-row-player-${characterId}`);
   await expect(showRow.getByTestId('copy-scene')).toBeVisible();
+  await personalRow.getByRole('button', { name: 'Make a link' }).click();
   await expect(personalRow.getByTestId('copy-scene')).toBeVisible();
 
   const urls: Record<string, string> = {};

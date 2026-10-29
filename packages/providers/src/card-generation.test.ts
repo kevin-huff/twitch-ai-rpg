@@ -37,7 +37,7 @@ describe('ClewdR whole-card writer', () => {
     for (const marker of ['PROMPT-MARKER', 'CURRENT-MARKER', 'SECRET-MARKER', 'PREMISE-MARKER', 'INSTRUCTIONS-MARKER']) {
       expect(body.system).not.toContain(marker);
     }
-    expect(body.max_tokens).toBe(8192);
+    expect(body.max_tokens).toBe(16000);
     expect(body.stream).toBe(false);
     expect(fetchMock.mock.calls[0][1]?.redirect).toBe('error');
   });
@@ -164,17 +164,17 @@ describe('ClewdR whole-card writer', () => {
 });
 
 describe('ClewdR post options', () => {
-  type Post = (system: string, input: unknown, schema: z.ZodType<unknown>, options?: { timeoutMs?: number; maxTokens?: number; fit?: boolean }) => Promise<unknown>;
+  type Post = (system: string, input: unknown, schema: z.ZodType<unknown>, options?: { timeoutMs?: number; fit?: boolean }) => Promise<unknown>;
   const post = (provider: ClewdrAiProvider): Post => (provider as unknown as { post: Post }).post.bind(provider);
   const schema = z.object({ ok: z.boolean() });
 
-  it('uses maxTokens when given and 8192 otherwise', async () => {
+  it('always sends the full token limit', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => nativeResponse({ ok: true }));
     const provider = ai(fetchMock);
     await post(provider)('system', {}, schema);
-    await post(provider)('system', {}, schema, { maxTokens: 1234 });
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).max_tokens).toBe(8192);
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).max_tokens).toBe(1234);
+    await post(provider)('system', {}, schema);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).max_tokens).toBe(16000);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).max_tokens).toBe(16000);
   });
 
   it('fits the reply only when fit is true', async () => {

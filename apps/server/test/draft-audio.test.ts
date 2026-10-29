@@ -176,6 +176,27 @@ suite('private saved draft speech and publication attachment', () => {
     expect((await prepare()).segments[1]!.text).toBe('A fresh line that fails.');
   });
 
+  it('leaves no speech failure behind when the draft is replaced during preparation, and still lists real speech errors', async () => {
+    const operations = async () => (await request(`/api/sessions/${sessionId}/operations`)).json();
+    const speechFailures = async () => (await operations()).failures.filter((item: any) => item.kind === 'speech');
+    const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockImplementationOnce(() => gate.promise);
+    const path = draftPath(), body = prepareBody();
+    const pending = request(path, body).then(value => value);
+    await waitFor(async () => synthesize.mock.calls.length === 1);
+    const preparing = (await request(path)).json();
+    await beat('edit_script', { segments: [{ kind: 'narration', text: 'The director re-drafted this.', delivery: 'neutral', recipientCharacterIds: [] }] });
+    gate.resolve(audio());
+    expect((await pending).statusCode).toBe(409);
+    expect((await pool.query('SELECT 1 FROM draft_audio_preparations WHERE id=$1', [preparing.preparationId])).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM draft_audio_receipts WHERE preparation_id=$1', [preparing.preparationId])).rowCount).toBe(0);
+    expect(await speechFailures()).toEqual([]);
+    expect((await operations()).usage.speech.failed).toBe(0);
+    synthesize.mockRejectedValueOnce(new Error('Provider secret must remain private.'));
+    const failed = await request(path, prepareBody());
+    expect(failed.json().status).toBe('failed');
+    expect(await speechFailures()).toHaveLength(1);
+  });
+
   it('fences an expired worker after a lock wait before any next paid segment and allows an explicit replacement', async () => {
     const gate = deferred<ReturnType<typeof audio>>(); synthesize.mockImplementationOnce(() => gate.promise);
     const path = draftPath(), body = prepareBody();

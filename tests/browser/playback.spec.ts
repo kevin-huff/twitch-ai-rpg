@@ -106,25 +106,31 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   expect(await mediaState(page)).toHaveLength(0);
 
   await expect.poll(async () => (await api(page, `${path}/playback`)).positionMs).toBeGreaterThan(1200);
-  await player.getByTestId('sound').locator(':scope > summary').click();
-  await player.getByTestId('listen-audio').click();
-  await expect.poll(async () => (await mediaState(player)).at(-1)?.time ?? 0).toBeGreaterThan(1);
-  await player.getByTestId('audio-volume').evaluate(input => {
+  // Seats play each part on their own and never follow the shared narration clock, so the listener is a second director page.
+  const listener = await context.newPage();
+  await listener.goto(page.url());
+  await openShowAll(listener);
+  await expect(listener.getByTestId('listen-audio')).toBeVisible();
+  expect(await mediaState(listener)).toHaveLength(0);
+  await listener.getByTestId('listen-audio').click();
+  await expect.poll(async () => (await mediaState(listener)).at(-1)?.time ?? 0).toBeGreaterThan(1);
+  await listener.getByTestId('audio-volume').evaluate(input => {
     (input as HTMLInputElement).value = '0.3';
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await expect.poll(async () => (await mediaState(player)).at(-1)?.volume).toBe(0.3);
-  await player.reload();
-  await player.getByTestId('sound').locator(':scope > summary').click();
-  await expect(player.getByTestId('listen-audio')).toBeVisible();
+  await expect.poll(async () => (await mediaState(listener)).at(-1)?.volume).toBe(0.3);
+  await listener.reload();
+  await openShowAll(listener);
+  await expect(listener.getByTestId('listen-audio')).toBeVisible();
+  expect(await mediaState(listener)).toHaveLength(0);
+  await listener.getByTestId('listen-audio').click();
+  await expect.poll(async () => (await mediaState(listener)).at(-1)?.time ?? 0).toBeGreaterThan(1);
   expect(await mediaState(player)).toHaveLength(0);
-  await player.getByTestId('listen-audio').click();
-  await expect.poll(async () => (await mediaState(player)).at(-1)?.time ?? 0).toBeGreaterThan(1);
 
   await page.getByTestId('pause-audio').click();
   await expect.poll(async () => (await api(page, `${path}/playback`)).status).toBe('paused');
   await expect.poll(async () => (await mediaState(stage)).every(item => item.paused)).toBe(true);
-  await expect.poll(async () => (await mediaState(player)).every(item => item.paused)).toBe(true);
+  await expect.poll(async () => (await mediaState(listener)).every(item => item.paused)).toBe(true);
   await page.getByTestId('resume-audio').click();
   await expect.poll(async () => (await mediaState(stage)).some(item => !item.paused)).toBe(true);
   await page.getByTestId('skip-audio').click();
@@ -145,7 +151,8 @@ test('one stage presents shared narration while listeners join, refresh, and fol
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.locator('.audio-panel').screenshot({ path: 'test-results/playback-director.png' });
   await stage.locator('.audio-panel').screenshot({ path: 'test-results/playback-stage.png' });
-  await player.locator('.audio-panel').screenshot({ path: 'test-results/playback-player.png' });
+  await listener.locator('.audio-panel').screenshot({ path: 'test-results/playback-player.png' });
+  expect(await mediaState(player)).toHaveLength(0);
   await stage.getByTestId('release-audio').click();
   await expect.poll(async () => (await api(page, `${path}/playback`)).status).toBe('paused');
   await expect.poll(async () => (await mediaState(stage)).every(item => item.paused)).toBe(true);

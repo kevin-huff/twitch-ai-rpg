@@ -32,7 +32,7 @@ export function galleryPictureFile(id: string, contentType: ImageContentType): s
 export function firstSentence(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  const match = /^[\s\S]*?[.!?](?=\s|$)/.exec(trimmed);
+  const match = /^[\s\S]*?(?:(?<!\b(?:Mr|Mrs|Ms|Mx|Dr|St|Capt|Sgt|Lt|Col|Gen|Maj|Prof|Rev|Jr|Sr|[A-Z]))\.|[!?])(?=\s|$)/.exec(trimmed);
   return match ? match[0].trim() : trimmed;
 }
 

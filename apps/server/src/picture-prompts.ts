@@ -12,6 +12,7 @@ const COMMON_NAME_WORDS = new Set([
   'capt', 'sgt', 'col', 'gen', 'maj', 'cmdr', 'prof', 'rev', 'insp', 'det',
   'detective', 'inspector', 'doctor', 'professor', 'father', 'mother', 'sister', 'brother', 'aunt', 'uncle', 'king', 'queen', 'prince', 'princess',
   'duke', 'duchess', 'baron', 'count', 'saint', 'master', 'mistress', 'elder', 'old', 'young', 'big', 'little', 'tall', 'red', 'black', 'white', 'grey', 'gray',
+  'her', 'his', 'its', 'who', 'one',
 ]);
 
 // Collapses whitespace and drops control characters, so no piece can leave double spaces or break a request.
@@ -47,11 +48,29 @@ export function withoutNames(text: string, names: string[]): string {
     return found.filter(part => !COMMON_NAME_WORDS.has(part.toLowerCase()));
   };
   const parts = [...new Set(full.flatMap(nameParts))].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const partSet = new Set(parts);
   let result = text;
-  for (const name of [...full, ...parts]) {
+  for (const name of full) {
     result = result.replace(new RegExp(`${TITLE_BEFORE_NAME}(?<![${WORD}])${escapePattern(name)}(?![${WORD}])`, 'gu'), 'someone');
   }
+  for (const part of parts) {
+    result = result.replace(
+      new RegExp(`${TITLE_BEFORE_NAME}(?<![${WORD}])${escapePattern(part)}(?![${WORD}])`, 'gu'),
+      (match: string, offset: number, whole: string) => (insideAnotherName(whole, offset, offset + match.length, partSet) ? match : 'someone'),
+    );
+  }
   return result;
+}
+
+// A word that only shares a part with a name stays when it sits in another proper noun ("The Waiting Room", "Center Court Fountain"): a capitalised neighbour one space away that is no common word, no name part and, before it, not just a sentence's first word.
+function insideAnotherName(text: string, start: number, end: number, nameParts: Set<string>): boolean {
+  const properNoun = (word: string | undefined) => word !== undefined && /^\p{Lu}/u.test(word) && !COMMON_NAME_WORDS.has(word.toLowerCase()) && !nameParts.has(word);
+  const after = new RegExp(`^ ([${WORD}]+)`, 'u').exec(text.slice(end))?.[1];
+  if (properNoun(after)) return true;
+  const before = new RegExp(`(?<![${WORD}])([${WORD}]+) $`, 'u').exec(text.slice(0, start));
+  if (!before || !properNoun(before[1])) return false;
+  const opensSentence = /(?:^|[.!?]["'”’]?\s)["'“‘]?\s*$/u.test(text.slice(0, before.index));
+  return !opensSentence;
 }
 
 // The title of the scene's place, or '' when it is missing or only the server's stand-in for an unnamed place ("Current location" or "Other location N").

@@ -230,6 +230,17 @@ describe('picture prompts', () => {
       expect(withoutNames('Det. Reyes and Prof. Reyes', ['Det. Okafor', 'Prof. Quill'])).toBe('Det. Reyes and Prof. Reyes');
     });
 
+    it('keeps place names that share a word with a name', () => {
+      const names = ['The Voice', 'The Room', 'The Mall Mother', 'The Whisper at the Fountain', 'Her in the Water', 'Dolores Pike', 'Mrs. Pike', 'Teddy Okafor', 'Jalen Price', 'Marcus Bell'];
+      expect(withoutNames('The Waiting Room', names)).toBe('The Waiting Room');
+      expect(withoutNames('Center Court Fountain', names)).toBe('Center Court Fountain');
+      expect(withoutNames('Halloway Commons Mall. The Mall Mother.', names)).toBe('Halloway Commons Mall. someone.');
+      expect(withoutNames('Then Pike lifts the cap', names)).toBe('Then someone lifts the cap');
+      expect(withoutNames('The Room watches', names)).toBe('someone watches');
+      expect(withoutNames('Teddy, Jalen and Marcus wait.', names)).toBe('someone, someone and someone wait.');
+      expect(withoutNames('Her coat is wet.', names)).toBe('Her coat is wet.');
+    });
+
     it('does not treat St as a title, so a street name stays', () => {
       expect(withoutNames('down Main St. Vale waits', ['Mara Vale'])).toBe('down Main St. someone waits');
     });
@@ -525,7 +536,8 @@ describe('moment prompts', () => {
       const text = fallbackDescription(moment({ lines, scene: { title: 'Mara Vale returns', description: '', place: 'Vale Hall' }, names: ['Mara Vale'] }), 1000);
       noControl(text);
       expect(text).not.toContain('Mara');
-      expect(text).not.toContain('Vale');
+      expect(text.replaceAll('Vale Hall', '')).not.toContain('Vale');
+      expect(text).toContain('Vale Hall');
       expect(text).toContain('Someone walks in. The door closes. Silence.');
     });
 

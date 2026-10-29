@@ -107,7 +107,13 @@ describe('firstSentence', () => {
     expect(firstSentence('It rains. Then')).toBe('It rains.');
     expect(firstSentence('Stop!')).toBe('Stop!');
     expect(firstSentence('Wait... what?')).toBe('Wait...');
-    expect(firstSentence('Dr. Vale')).toBe('Dr.');
+    expect(firstSentence('Dr. Vale')).toBe('Dr. Vale');
+  });
+
+  it('does not end a sentence at a title, a name abbreviation, or a single initial', () => {
+    expect(firstSentence('Mrs. Pike lifts the cap. Then she runs.')).toBe('Mrs. Pike lifts the cap.');
+    expect(firstSentence('Dr. Lee and J. Smith wait. More.')).toBe('Dr. Lee and J. Smith wait.');
+    expect(firstSentence('The bus. Then')).toBe('The bus.');
   });
 
   it('returns a text with no sentence end whole, trimmed', () => {

@@ -252,7 +252,7 @@ describe('live field drafting', () => {
   it('covers creative fields beside their labels while excluding audit reasons, selectors, and voice identifiers', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     await begin(wrapper, 'scene'); await wrapper.get(field('scene-location-kind')).setValue('new');
-    expect(wrapper.findAllComponents(FieldGenerator).map(control => control.props('field'))).toEqual(['scene.title', 'scene.description', 'location.title', 'location.description']);
+    expect(wrapper.findAllComponents(FieldGenerator).map(control => control.props('field'))).toEqual(['location.title', 'location.description', 'scene.title', 'scene.description']);
     await begin(wrapper, 'npc');
     for (const key of ['aliases', 'personality', 'limits', 'dialogueExamples', 'secrets']) await wrapper.get(field(`add-npc-${key}`)).trigger('click');
     expect(wrapper.findAllComponents(FieldGenerator).map(control => control.props('field'))).toEqual(['npc.displayName', 'npc.role', 'npc.appearance', 'npc.hiddenIdentity', 'npc.motivation', 'npc.goal', 'npc.mood', 'npc.communicationChannel', 'npc.alias', 'npc.personalityItem', 'npc.limit', 'npc.dialogueExample', 'npc.secret']);
@@ -542,6 +542,58 @@ describe('published reveals in every audience', () => {
     }
     expect(wrapper.find(field('live-controls')).exists()).toBe(role === 'director');
     if (role !== 'director') { expect(wrapper.text()).not.toContain('Private secret'); expect(wrapper.text()).not.toContain('Private identity'); }
+    wrapper.unmount();
+  });
+});
+
+describe('scene title follows the chosen place', () => {
+  const title = (wrapper: ReturnType<typeof mount>) => (wrapper.get(field('scene-title')).element as HTMLInputElement).value;
+  it('sets the title to the picked place and the typed new place name, never copying private notes', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    expect(title(wrapper)).toBe('The bar');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(title(wrapper)).toBe('The tower');
+    expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('A quiet place.');
+    await wrapper.get(field('scene-location-kind')).setValue('new');
+    await wrapper.get(field('location-title')).setValue('Harbor');
+    await wrapper.get(field('location-description')).setValue('Private harbor notes');
+    expect(title(wrapper)).toBe('Harbor');
+    expect(wrapper.text()).toContain('The title becomes public when you save.');
+    expect(title(wrapper)).not.toContain('Private'); expect(title(wrapper)).not.toContain('High above');
+    wrapper.unmount();
+  });
+  it('keeps a typed title when a place is picked later, and a new scene form starts following again', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-title')).setValue('My own title');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(title(wrapper)).toBe('My own title');
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(title(wrapper)).toBe('The tower');
+    wrapper.unmount();
+  });
+  it('warns while the description still describes the current place and hides once edited', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(wrapper.get(field('scene-description-stale')).text()).toBe('The description still describes The bar. Update it so the stream, players and AI see the new place.');
+    await wrapper.get(field('scene-description')).setValue('Wind and stone.');
+    expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
+    wrapper.unmount();
+  });
+  it('names who moves with the party and emits the new title in the scene change', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene'); await acknowledge(wrapper);
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Mara');
+    await wrapper.get(field('present-dax')).setValue(true);
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Mara, Dax');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    await wrapper.get(field('scene-description')).setValue('Wind and stone.');
+    await wrapper.get('form').trigger('submit');
+    expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', title: 'The tower', description: 'Wind and stone.', location: { kind: 'existing', locationId: 'tower' } }));
     wrapper.unmount();
   });
 });
