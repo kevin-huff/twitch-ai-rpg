@@ -42,6 +42,7 @@ export function pictureCast(state: SessionState, source: BeatPictureSource): Pic
       cast.push({
         name: character.displayName, appearance: character.appearance, role: character.specialty, pronouns: character.pronouns,
         portraitId: ImageIdSchema.safeParse(character.portraitId).success ? character.portraitId! : null, imageNumber: null,
+        ...(character.lookEditedAt ? { lookEdited: true as const } : {}),
       });
       continue;
     }

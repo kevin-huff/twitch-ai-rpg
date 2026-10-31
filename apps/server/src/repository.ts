@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import {
-  SessionStateSchema, SessionSnapshotSchema, PublicCorrectionSchema, type SessionState, type Beat, type Submission,
+  SessionStateSchema, SessionSnapshotSchema, PublicCorrectionSchema, GuidanceSchema, type Guidance, type SessionState, type Beat, type Submission,
   type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection, type GalleryStatus,
 } from '@rpg/contracts';
 import { actionPictureView, lastBeatInScene, portraitJobsView, scenePictureView } from './picture-views';
@@ -72,6 +72,16 @@ export async function saveSubmission(client: PoolClient, submission: Submission)
 export async function history(client: PoolClient, sessionId: string): Promise<PublishedBeat[]> {
   return (await client.query('SELECT data FROM published_beats WHERE session_id=$1 ORDER BY beat_number', [sessionId])).rows.map((row) => row.data);
 }
+export async function latestHistory(client: PoolClient, sessionId: string): Promise<PublishedBeat[]> {
+  return (await client.query('SELECT data FROM published_beats WHERE session_id=$1 ORDER BY beat_number DESC LIMIT 1', [sessionId])).rows.map((row) => row.data);
+}
+export async function readGuidance(client: PoolClient, sessionId: string): Promise<Guidance> {
+  const row = (await client.query('SELECT guidance FROM sessions WHERE id=$1', [sessionId])).rows[0];
+  return GuidanceSchema.parse(row?.guidance ?? {});
+}
+export async function saveGuidance(client: PoolClient, sessionId: string, guidance: Guidance) {
+  await client.query('UPDATE sessions SET guidance=$2 WHERE id=$1', [sessionId, guidance]);
+}
 export async function corrections(client: PoolClient, sessionId: string): Promise<PublicCorrection[]> {
   const result = await client.query("SELECT id,data->'public' AS correction FROM audit_events WHERE session_id=$1 AND kind='correction.recorded' ORDER BY sequence", [sessionId]);
   return result.rows.map(({ id, correction }) => PublicCorrectionSchema.parse({
@@ -107,7 +117,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
     npcs: state.npcs.map(({ id, displayName, role, appearance, status, voiceProfileId, portraitId }) => ({ id, displayName, role, appearance, status, voiceProfileId, portraitId })),
     tracks: state.tracks.filter((track) => track.visibility === 'public').map(({ id, label, kind, current, max, completionText, enabled }) => ({ id, label, kind, current, max, completionText, enabled })),
     facts: state.facts.filter((fact) => fact.visibility === 'public').map(({ id, text }) => ({ id, text })),
-    history: await history(client, sessionId), corrections: await corrections(client, sessionId),
+    history: role === 'stage' ? await latestHistory(client, sessionId) : await history(client, sessionId), corrections: await corrections(client, sessionId),
   };
   if (role === 'stage') return SessionSnapshotSchema.parse({ ...base, role, activeBeat: publicBeat });
   const all = await submissions(client, sessionId);
@@ -122,5 +132,6 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
     portraitJobs: picturesEnabled ? await portraitJobsView(client, sessionId, state.npcs.map(npc => npc.id)) : [],
     pictureSettings: picturesEnabled && options.defaultPictureModel ? await pictureSettingsOf(client, state, options.defaultPictureModel) : null,
     lastSceneBeatId: picturesEnabled ? await lastBeatInScene(client, sessionId) : null,
+    guidance: await readGuidance(client, sessionId),
     ...(role === 'director' ? { gallery: options.gallery ? await options.gallery.status(client, sessionId, state.session.status) : null } : {}) });
 }

@@ -189,6 +189,19 @@ const labels = [
   'Use this',
   'Read as',
   'Delivery',
+  'On stage for the AI',
+  '(not here)',
+  'Standing note',
+  'Save standing note',
+  'Clear standing note',
+  'Standing note on',
+  'Edit look and items',
+  'Carrying',
+  'Add an item',
+  'Save look and items',
+  'Stop that one',
+  'Nobody is playing the show audio right now.',
+  'What happens next is your call.',
 ];
 
 // Help pages quote these as buttons; they ship on the help page itself.

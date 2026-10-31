@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, useId, watch } from 'vue';
-import { CharacterCardDefinitionSchema, type Character, type CharacterCardDefinition, type Command, type DirectorSnapshot, type FieldGenerationCharacterContext } from '@rpg/contracts';
+import { CharacterCardDefinitionSchema, CommandSchema, type Character, type CharacterCardDefinition, type Command, type DirectorSnapshot, type FieldGenerationCharacterContext } from '@rpg/contracts';
 import CharacterForm from './CharacterForm.vue';
 import { withDescription } from './card-description';
 import PictureAvatar from './PictureAvatar.vue';
@@ -21,6 +21,10 @@ const testSeatUrl = (character: Character) => identityPath(`/sessions/${encodeUR
 const premise = computed(() => {
   const text = props.snapshot.session.brief?.premise.trim() ?? '';
   return text.length >= 1 && text.length <= 4000 ? text : undefined;
+});
+const liveEditable = computed(() => {
+  const status = props.snapshot.session.status;
+  return (!props.snapshot.setup || props.snapshot.setup.started) && (status === 'live' || status === 'paused');
 });
 const canRemove = computed(() => props.editable && props.snapshot.characterDetails.length > 1);
 
@@ -114,6 +118,49 @@ async function saveChange(character: Character) {
     if (saved) closeChange(character);
   } finally { changeSaving[character.id] = false; }
 }
+const liveOpen = reactive<Record<string, boolean>>({});
+const liveLook = reactive<Record<string, string>>({});
+const liveItems = reactive<Record<string, string[]>>({});
+const liveRevisions = reactive<Record<string, number>>({});
+const liveSaving = reactive<Record<string, boolean>>({});
+const liveLoaded: Record<string, { look: string; items: string[] }> = {};
+const maxLiveItems = 20;
+function loadLive(character: Character) {
+  liveLook[character.id] = character.appearance; liveItems[character.id] = [...character.possessions]; liveRevisions[character.id] = character.cardRevision;
+  liveLoaded[character.id] = { look: character.appearance, items: [...character.possessions] };
+}
+function openLive(character: Character) {
+  loadLive(character);
+  errors[character.id] = ''; liveOpen[character.id] = true;
+}
+function liveUntouched(id: string) {
+  const loaded = liveLoaded[id];
+  const items = (liveItems[id] ?? []).filter(item => item.trim());
+  return !!loaded && liveLook[id] === loaded.look && items.length === loaded.items.length && items.every((item, index) => item === loaded.items[index]);
+}
+watch(() => props.snapshot.characterDetails, details => {
+  for (const character of details) {
+    if (!liveOpen[character.id] || liveSaving[character.id]) continue;
+    if (character.cardRevision === liveRevisions[character.id]) continue;
+    if (liveUntouched(character.id)) { loadLive(character); errors[character.id] = ''; }
+  }
+}, { deep: true });
+function closeLive(character: Character) { liveOpen[character.id] = false; errors[character.id] = ''; }
+function addLiveItem(character: Character) {
+  const items = liveItems[character.id];
+  if (items && items.length < maxLiveItems) items.push('');
+}
+function removeLiveItem(character: Character, index: number) { liveItems[character.id]?.splice(index, 1); }
+async function saveLive(character: Character) {
+  if (liveSaving[character.id]) return;
+  errors[character.id] = '';
+  const command = CommandSchema.safeParse({ type: 'save_live_character', commandId: crypto.randomUUID(), characterId: character.id, expectedCharacterRevision: liveRevisions[character.id], appearance: liveLook[character.id] ?? '', possessions: (liveItems[character.id] ?? []).map(value => value.trim()).filter(Boolean) });
+  if (!command.success) { errors[character.id] = 'The look or one of the items is too long. Shorten it and try again.'; return; }
+  liveSaving[character.id] = true;
+  try {
+    if (await queueSave(character.id, command.data)) closeLive(character);
+  } finally { liveSaving[character.id] = false; }
+}
 function useDraft(character: Character) {
   if (isSaving(character.id)) return;
   errors[character.id] = '';
@@ -154,6 +201,27 @@ function removeSeat(character: Character) {
           </div>
         </template>
       </details>
+      <div v-if="hasCard(character) && liveEditable" class="seat-live">
+        <button v-if="!liveOpen[character.id]" type="button" class="secondary" :data-testid="`edit-look-${character.id}`" @click="openLive(character)">Edit look and items</button>
+        <div v-else class="seat-live-form">
+          <label :for="fieldId(`look-${character.id}`)">Look</label>
+          <textarea :id="fieldId(`look-${character.id}`)" v-model="liveLook[character.id]" rows="3" maxlength="1000" :data-testid="`live-look-${character.id}`"></textarea>
+          <fieldset class="seat-items">
+            <legend>Carrying</legend>
+            <div v-for="(_, index) in liveItems[character.id]" :key="index" class="seat-item">
+              <input v-model="liveItems[character.id]![index]" type="text" maxlength="160" :aria-label="`Item ${index + 1} for ${character.displayName}`" :data-testid="`live-item-${character.id}-${index}`" />
+              <button type="button" class="secondary" :aria-label="`Remove item ${index + 1} for ${character.displayName}`" :data-testid="`live-item-remove-${character.id}-${index}`" @click="removeLiveItem(character, index)">Remove</button>
+            </div>
+            <button type="button" class="secondary" :disabled="(liveItems[character.id]?.length ?? 0) >= maxLiveItems" :data-testid="`live-item-add-${character.id}`" @click="addLiveItem(character)">Add an item</button>
+          </fieldset>
+          <p class="muted">The AI and pictures use this from the next plan or script. If the stakes are already showing, press Plan again to use it.</p>
+          <p v-if="errors[character.id]" role="alert" class="notice error" :data-testid="`live-edit-error-${character.id}`">{{ errors[character.id] }}</p>
+          <div class="seat-actions">
+            <button type="button" :disabled="liveSaving[character.id] || isSaving(character.id)" :data-testid="`live-edit-save-${character.id}`" @click="saveLive(character)">Save look and items</button>
+            <button type="button" class="secondary" :disabled="liveSaving[character.id]" :data-testid="`live-edit-cancel-${character.id}`" @click="closeLive(character)">Cancel</button>
+          </div>
+        </div>
+      </div>
       <p v-if="hasCard(character) && editable && errors[character.id]" role="alert" class="notice error" :data-testid="`seat-error-${character.id}`">{{ errors[character.id] }}</p>
       <template v-if="!hasCard(character)">
         <p v-if="character.draft" class="muted" :data-testid="`card-waiting-${character.id}`">Card waiting to be used</p>
@@ -195,6 +263,12 @@ function removeSeat(character: Character) {
 .seat-card dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .seat-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .seat-change { display: grid; gap: 12px; margin-top: 12px; }
+.seat-live, .seat-live-form { display: grid; gap: 8px; justify-items: start; }
+.seat-live-form { width: 100%; justify-items: stretch; }
+.seat-live-form textarea, .seat-item input { width: 100%; }
+.seat-items { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; justify-items: start; }
+.seat-item { display: flex; gap: 12px; align-items: center; width: 100%; flex-wrap: wrap; }
+.seat-item input { flex: 1 1 200px; min-width: 0; width: auto; }
 .seat-writer { display: grid; gap: 8px; }
 .seat-writer textarea { width: 100%; }
 </style>

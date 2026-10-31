@@ -397,4 +397,141 @@ describe('CastSeats', () => {
     await wrapper.get('[data-testid="change-card-pc-1"]').trigger('click');
     expect(wrapper.find('[data-testid="seat-error-pc-1"]').exists()).toBe(false);
   });
+  describe('live look and items', () => {
+    const liveSnap = (status: string, setup?: unknown) => {
+      const base = snap([withCard, waiting]);
+      return { ...base, session: { ...base.session, status }, ...(setup ? { setup } : {}) } as unknown as DirectorSnapshot;
+    };
+    const live = () => mountIt({ snapshot: liveSnap('live', { started: true }), editable: false });
+
+    it('shows the action only while the show is live or paused, and only for seats with a card', () => {
+      for (const status of ['live', 'paused']) {
+        const wrapper = mountIt({ snapshot: liveSnap(status, { started: true }), editable: false });
+        expect(wrapper.find('[data-testid="edit-look-pc-1"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="edit-look-pc-2"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="edit-look-pc-1"]').text()).toBe('Edit look and items');
+      }
+      for (const status of ['lobby', 'ended']) expect(mountIt({ snapshot: liveSnap(status, { started: true }), editable: false }).find('[data-testid="edit-look-pc-1"]').exists()).toBe(false);
+      expect(mountIt({ snapshot: liveSnap('live', { started: false }), editable: false }).find('[data-testid="edit-look-pc-1"]').exists()).toBe(false);
+      expect(mountIt().find('[data-testid="edit-look-pc-1"]').exists()).toBe(false);
+    });
+
+    it('opens a prefilled form with the help line', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('A green coat.');
+      expect(wrapper.get('[data-testid="live-look-pc-1"]').attributes('maxlength')).toBe('1000');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Pick');
+      expect(wrapper.get('[data-testid="live-item-pc-1-0"]').attributes('maxlength')).toBe('160');
+      expect(wrapper.text()).toContain('Carrying');
+      expect(wrapper.text()).toContain('The AI and pictures use this from the next plan or script. If the stakes are already showing, press Plan again to use it.');
+      expect(wrapper.find('[data-testid="edit-look-pc-1"]').exists()).toBe(false);
+    });
+
+    it('adds, edits and removes items, and stops adding at 20', async () => {
+      const wrapper = mountIt({ snapshot: liveSnap('live', { started: true }), editable: false });
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-item-add-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-item-pc-1-1"]').setValue('Bell');
+      await wrapper.get('[data-testid="live-item-remove-pc-1-0"]').trigger('click');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Bell');
+      expect(wrapper.find('[data-testid="live-item-pc-1-1"]').exists()).toBe(false);
+      for (let i = 0; i < 25; i++) await wrapper.get('[data-testid="live-item-add-pc-1"]').trigger('click');
+      expect(wrapper.findAll('[data-testid^="live-item-pc-1-"]')).toHaveLength(20);
+      expect(wrapper.get('[data-testid="live-item-add-pc-1"]').attributes('disabled')).toBeDefined();
+    });
+
+    it('reloads an untouched open form when the card changes underneath it', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.setProps({ snapshot: { ...liveSnap('live', { started: true }), characterDetails: [{ ...withCard, appearance: 'A scorched coat.', possessions: ['Bell', 'Map'], cardRevision: 3 }, waiting] } as unknown as DirectorSnapshot });
+      expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('A scorched coat.');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Bell');
+      expect((wrapper.get('[data-testid="live-item-pc-1-1"]').element as HTMLInputElement).value).toBe('Map');
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      const [, command] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+      expect(command).toMatchObject({ type: 'save_live_character', characterId: 'pc-1', expectedCharacterRevision: 3, appearance: 'A scorched coat.', possessions: ['Bell', 'Map'] });
+    });
+
+    it('treats an empty new item row as untouched, and clears a stale refusal when the form reloads', async () => {
+      transport.command.mockRejectedValueOnce(new Error("This character's look or items changed since you opened the form, for example in a published round. Press Cancel, then Edit look and items again."));
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      expect(wrapper.find('[data-testid="live-edit-error-pc-1"]').exists()).toBe(true);
+      await wrapper.get('[data-testid="live-item-add-pc-1"]').trigger('click');
+      await wrapper.setProps({ snapshot: { ...liveSnap('live', { started: true }), characterDetails: [{ ...withCard, appearance: 'A scorched coat.', possessions: ['Bell'], cardRevision: 3 }, waiting] } as unknown as DirectorSnapshot });
+      expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('A scorched coat.');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Bell');
+      expect(wrapper.find('[data-testid="live-item-pc-1-1"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="live-edit-error-pc-1"]').exists()).toBe(false);
+    });
+
+    it('leaves a form the director has edited alone when the card changes underneath it', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-look-pc-1"]').setValue('My own words.');
+      await wrapper.setProps({ snapshot: { ...liveSnap('live', { started: true }), characterDetails: [{ ...withCard, appearance: 'A scorched coat.', possessions: ['Bell', 'Map'], cardRevision: 3 }, waiting] } as unknown as DirectorSnapshot });
+      expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('My own words.');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Pick');
+      expect(wrapper.find('[data-testid="live-item-pc-1-1"]').exists()).toBe(false);
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      const [, command] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+      expect(command).toMatchObject({ expectedCharacterRevision: 2, appearance: 'My own words.', possessions: ['Pick'] });
+    });
+
+    it('sends trimmed non-blank items with the revision captured when the form opened, then closes', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-look-pc-1"]').setValue('A torn coat, no cap.');
+      await wrapper.get('[data-testid="live-item-pc-1-0"]').setValue('  Lantern  ');
+      await wrapper.get('[data-testid="live-item-add-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-item-add-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-item-pc-1-2"]').setValue('   ');
+      await wrapper.get('[data-testid="live-item-pc-1-1"]').setValue(' Rope ');
+      await wrapper.setProps({ snapshot: { ...liveSnap('live', { started: true }), characterDetails: [{ ...withCard, cardRevision: 9 }, waiting] } as unknown as DirectorSnapshot });
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      const [sessionId, command] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+      expect(sessionId).toBe('show 1');
+      expect(command).toMatchObject({ type: 'save_live_character', characterId: 'pc-1', expectedCharacterRevision: 2, appearance: 'A torn coat, no cap.', possessions: ['Lantern', 'Rope'] });
+      expect(typeof command.commandId).toBe('string');
+      expect(wrapper.find('[data-testid="live-look-pc-1"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="edit-look-pc-1"]').exists()).toBe(true);
+    });
+
+    it('shows a refusal in the seat notice and keeps the form open', async () => {
+      transport.command.mockRejectedValue(new Error('The AI is planning or writing right now. Wait for it to finish, then save the change.'));
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      const notice = wrapper.get('[data-testid="live-edit-error-pc-1"]');
+      expect(notice.attributes('role')).toBe('alert');
+      expect(notice.text()).toBe('The AI is planning or writing right now. Wait for it to finish, then save the change.');
+      expect(wrapper.find('[data-testid="live-look-pc-1"]').exists()).toBe(true);
+    });
+
+    it('explains a too-long item without sending anything', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      const input = wrapper.get('[data-testid="live-item-pc-1-0"]');
+      (input.element as HTMLInputElement).value = 'x'.repeat(161);
+      await input.trigger('input');
+      await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+      expect(wrapper.get('[data-testid="live-edit-error-pc-1"]').text()).toContain('too long');
+      expect(transport.command).not.toHaveBeenCalled();
+    });
+
+    it('discards changes on Cancel', async () => {
+      const wrapper = live();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      await wrapper.get('[data-testid="live-look-pc-1"]').setValue('Changed');
+      await wrapper.get('[data-testid="live-item-remove-pc-1-0"]').trigger('click');
+      await wrapper.get('[data-testid="live-edit-cancel-pc-1"]').trigger('click');
+      expect(wrapper.find('[data-testid="live-look-pc-1"]').exists()).toBe(false);
+      expect(transport.command).not.toHaveBeenCalled();
+      await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+      expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('A green coat.');
+      expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Pick');
+    });
+  });
 });

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
+import type { ShowAudioHolder } from '@rpg/contracts';
+import { api } from './api';
 import { createPlaybackController } from './playback';
 
 const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean; compact?: boolean; autoPlayBeatId?: string | null }>();
@@ -11,6 +13,15 @@ const ownershipPending = ref(false);
 const asked = ref(false);
 const confirming = ref(false);
 const directorControls = computed(() => props.director && !props.stage);
+const timeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+const dayAndTimeFormat = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const holder = ref<ShowAudioHolder | null>(null);
+const holderStopped = ref(false);
+const holderError = ref('');
+const holderStopping = ref(false);
+let holderRequest = 0;
+let holderErrorFor: string | null = null;
+let disposed = false;
 const activeSegment = computed(() => {
   const current = state.snapshot;
   return current?.segmentIndex === null || !current?.manifest ? undefined : current.manifest.segments[current.segmentIndex];
@@ -32,6 +43,56 @@ const latestStatus = computed(() => {
   if (state.audioStatus === 'unavailable') return 'Speech is not configured. Continue with the published text.';
   return 'Narration for the latest published beat is not prepared.';
 });
+
+const holderSentence = computed(() => {
+  const current = holder.value;
+  if (!current) return '';
+  const where = current.browser === 'obs' ? 'in OBS' : current.browser === 'browser' ? 'in a regular browser (not OBS)' : 'in a browser';
+  let since = '';
+  if (current.claimedAt) {
+    const claimed = new Date(current.claimedAt);
+    const now = new Date();
+    const today = claimed.getFullYear() === now.getFullYear() && claimed.getMonth() === now.getMonth() && claimed.getDate() === now.getDate();
+    since = `, since ${(today ? timeFormat : dayAndTimeFormat).format(claimed)}`;
+  }
+  return `\u201C${current.label}\u201D has the show audio, ${where}${since}.`;
+});
+
+// While the look-up is pending or has failed, the line "Another page has the show audio." is all the director sees.
+// A stop error stays with the holder shown beside it, and clears once a successful look-up shows a different holder or nobody.
+async function loadHolder() {
+  if (!directorControls.value || props.compact) { holder.value = null; return; }
+  const request = ++holderRequest;
+  try {
+    const result = await api.showAudioHolder(props.sessionId);
+    if (disposed || request !== holderRequest) return;
+    holder.value = result.holder;
+    if (result.holder) holderStopped.value = false;
+    if ((result.holder?.holderId ?? null) !== holderErrorFor) holderError.value = '';
+  } catch {
+    if (disposed || request !== holderRequest) return;
+    holder.value = null;
+  }
+}
+
+async function stopHolder() {
+  const current = holder.value;
+  if (!current || holderStopping.value) return;
+  holderStopping.value = true; holderError.value = '';
+  let refusal = '';
+  try {
+    await api.stopShowAudio(props.sessionId, current.holderId);
+    holderStopped.value = true;
+  } catch (cause) {
+    refusal = cause instanceof Error ? cause.message : 'The show audio could not be stopped.';
+  } finally {
+    holderStopping.value = false;
+  }
+  await loadHolder();
+  if (disposed) return;
+  holderError.value = refusal;
+  holderErrorFor = holder.value?.holderId ?? null;
+}
 
 async function changePresenter(release = false) {
   if (ownershipPending.value) return;
@@ -69,10 +130,12 @@ function autoPlay() {
 watch(() => [props.autoPlayBeatId, props.beatId, directorControls.value, state.snapshot?.status, state.snapshot?.playbackId, state.snapshot?.presenter.available,
   state.audioStatus, state.manifest?.beatId, state.commandPending], autoPlay, { immediate: true });
 
+watch(() => [directorControls.value, props.compact, props.sessionId, state.snapshot?.revision, state.snapshot?.presenter.available], () => { void loadHolder(); }, { immediate: true });
+
 watch(presenterAvailable, available => { if (available && !state.presenting) confirming.value = false; });
 
 watch(() => [props.sessionId, props.beatId, props.director, props.stage], () => controller.setContext({ ...props }));
-onUnmounted(() => controller.dispose());
+onUnmounted(() => { disposed = true; controller.dispose(); });
 </script>
 
 <template>
@@ -98,7 +161,16 @@ onUnmounted(() => controller.dispose());
 
     <template v-if="directorControls">
       <p class="audio-detail">{{ latestStatus }}</p>
-      <p v-if="!presenterAvailable" class="audio-detail">No browser is playing broadcast audio yet. Load the main show link in OBS. You will find it in Cast & lobby, under Stream this show.</p>
+      <p v-if="!presenterAvailable" class="audio-detail" data-testid="audio-holder-none">Nobody is playing the show audio right now. Load the main show link in OBS. You will find it in Cast & lobby, under Stream this show.</p>
+      <div v-else-if="holder" class="audio-holder">
+        <p class="audio-detail" data-testid="audio-holder">{{ holderSentence }}</p>
+        <div class="actions">
+          <button data-testid="stop-holder" class="secondary" :disabled="holderStopping" @click="stopHolder()">Stop that one</button>
+        </div>
+      </div>
+      <p v-else-if="!holderStopped" class="audio-detail" data-testid="audio-holder-unknown">Another page has the show audio.</p>
+      <p v-if="holderStopped" class="audio-detail" data-testid="audio-holder-stopped">Stopped. A page with the show's link, such as your OBS, takes over within a few seconds. If narration was playing, press Resume shared audio.</p>
+      <p v-if="holderError" class="notice error" role="alert" data-testid="audio-holder-error">{{ holderError }}</p>
       <div class="actions">
         <button v-if="beatId && !latestReady" data-testid="prepare-audio" class="secondary" :disabled="state.preparing || state.audioStatus === 'preparing'" @click="controller.prepare()">{{ state.preparing ? 'Preparing…' : 'Prepare narration' }}</button>
         <button v-if="beatId && !currentIsLatest" data-testid="start-audio" class="secondary" :disabled="!canStart" @click="controller.command('start')">Play latest reviewed beat</button>

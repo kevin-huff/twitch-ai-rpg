@@ -136,18 +136,34 @@ export function draftNarration(draft: AiDraft | null | undefined): string {
 export const MOMENT_CLOSING_REFERENCES = "Keep each person's face, hair, build and clothing as in their reference image. Everyone fully clothed. No text, no letters.";
 export const MOMENT_CLOSING_WORDS = 'Everyone fully clothed. No text.';
 
-const momentClosing = (withReferences: boolean) => (withReferences ? MOMENT_CLOSING_REFERENCES : MOMENT_CLOSING_WORDS);
+// "the person from image 2", "the people from images 2 and 4", "the people from images 1, 3 and 5".
+const changedLookWho = (changed: number[]) => {
+  if (changed.length === 1) return `the person from image ${changed[0]}`;
+  return `the people from images ${changed.slice(0, -1).join(', ')} and ${changed[changed.length - 1]}`;
+};
 
-// The room the description has: the prompt limit minus the style and the closing, which are never cut. Only a picture drawn from portraits goes to FLUX 3 Klein, which takes the longer prompt.
-export function descriptionBudget(style: string, withReferences: boolean): number {
-  const limit = withReferences ? MOMENT_PROMPT_MAX : PICTURE_PROMPT_MAX;
-  return Math.max(0, limit - `${pictureStyleOf(style)}. `.length - ` ${momentClosing(withReferences)}`.length);
+// The numbers of people whose look was edited since their portrait was made, ascending; only numbered people have a reference image to be overridden.
+export function changedLookNumbers(cast: PicturePerson[]): number[] {
+  return cast.flatMap((person) => (person.lookEdited && person.imageNumber !== null ? [person.imageNumber] : [])).sort((a, b) => a - b);
 }
 
-export function momentPrompt(style: string, description: string, withReferences: boolean): string {
+const momentClosing = (withReferences: boolean, changed: number[] = []) => {
+  if (withReferences && changed.length > 0) {
+    return `Keep each person's face, hair and build as in their reference image, and their clothing too, except ${changedLookWho(changed)}, dressed as the words describe instead. Everyone fully clothed. No text, no letters.`;
+  }
+  return withReferences ? MOMENT_CLOSING_REFERENCES : MOMENT_CLOSING_WORDS;
+};
+
+// The room the description has: the prompt limit minus the style and the closing, which are never cut. Only a picture drawn from portraits goes to FLUX 3 Klein, which takes the longer prompt.
+export function descriptionBudget(style: string, withReferences: boolean, changed: number[] = []): number {
+  const limit = withReferences ? MOMENT_PROMPT_MAX : PICTURE_PROMPT_MAX;
+  return Math.max(0, limit - `${pictureStyleOf(style)}. `.length - ` ${momentClosing(withReferences, changed)}`.length);
+}
+
+export function momentPrompt(style: string, description: string, withReferences: boolean, changed: number[] = []): string {
   const head = `${pictureStyleOf(style)}.`;
-  const closing = momentClosing(withReferences);
-  const text = clip(description, descriptionBudget(style, withReferences));
+  const closing = momentClosing(withReferences, changed);
+  const text = clip(description, descriptionBudget(style, withReferences, changed));
   return [head, text, closing].filter(Boolean).join(' ');
 }
 

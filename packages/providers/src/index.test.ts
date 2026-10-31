@@ -1382,4 +1382,103 @@ describe('call log', () => {
     await ai(replying(singleLinePlan(ctx))).plan(ctx);
     expect(log.warn).not.toHaveBeenCalled();
   });
+
+  describe('chosen NPCs and the standing note', () => {
+    const roster = (ctx: ProviderContext) => {
+      const [mara, dax, biscuit] = ctx.state.npcs;
+      biscuit.communicationChannel = 'radio';
+      const extra: Npc = { ...structuredClone(dax), id: 'npc-extra', displayName: 'Extra Ed', aliases: [] };
+      ctx.state.npcs.push(extra);
+      return { mara, dax, biscuit, extra };
+    };
+    const sentFor = async (ctx: ProviderContext, task: 'plan' | 'render' = 'render') => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(task === 'plan' ? singleLinePlan(ctx) : draft(ctx)));
+      await ai(fetchMock)[task](ctx);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      return { body, sent: JSON.parse(body.messages[0].content) };
+    };
+    const sentIds = (sent: { npcs: { id: string }[] }) => sent.npcs.map((npc) => npc.id);
+
+    it('sends every chosen NPC with no count limit, room first', async () => {
+      const ctx = context();
+      const { mara, dax, biscuit, extra } = roster(ctx);
+      ctx.submissions[0].recipientNpcIds = [];
+      Object.assign(ctx.beat, { lockedSubmissions: ctx.submissions });
+      ctx.aiCastNpcIds = [biscuit.id, extra.id, dax.id, mara.id];
+      const { sent } = await sentFor(ctx);
+      expect(sentIds(sent)).toEqual([mara.id, dax.id, extra.id, biscuit.id]);
+    });
+
+    it('adds an NPC named in the selected lines to the chosen ones', async () => {
+      const ctx = context();
+      const { mara, dax, biscuit, extra } = roster(ctx);
+      ctx.aiCastNpcIds = [dax.id, biscuit.id, extra.id];
+      const { sent } = await sentFor(ctx);
+      expect(sentIds(sent)).toEqual([mara.id, dax.id, extra.id, biscuit.id]);
+    });
+
+    it('lets a chosen NPC speak in the draft', async () => {
+      const ctx = context();
+      const { dax, biscuit } = roster(ctx);
+      ctx.aiCastNpcIds = [dax.id, biscuit.id];
+      const result = draft(ctx);
+      result.segments[1] = { ...result.segments[1], speakerNpcId: dax.id } as AiDraft['segments'][number];
+      await expect(ai(replying(result)).render(ctx)).resolves.toMatchObject({ segments: expect.any(Array) });
+      const unchosen = draft(ctx);
+      unchosen.segments[1] = { ...unchosen.segments[1], speakerNpcId: ctx.state.npcs[0].id } as AiDraft['segments'][number];
+      // Mara is named in the selected line, so she may speak; an NPC neither chosen nor named may not.
+      await expect(ai(replying(unchosen)).render(ctx)).resolves.toBeDefined();
+      const outsider = draft(ctx);
+      outsider.segments[1] = { ...outsider.segments[1], speakerNpcId: 'npc-extra' } as AiDraft['segments'][number];
+      ctx.state.npcs.push({ ...structuredClone(dax), id: 'npc-extra', displayName: 'Extra Ed', aliases: [] });
+      await expect(ai(replying(outsider)).render(ctx)).rejects.toBeInstanceOf(ProviderError);
+    });
+
+    it('refuses a chosen NPC who is missing or cannot speak', async () => {
+      const missing = context();
+      missing.aiCastNpcIds = ['nobody'];
+      await expect(ai(replying(draft(missing))).render(missing)).rejects.toMatchObject({ code: 'invalid_context' });
+      const away = context();
+      away.aiCastNpcIds = [away.state.npcs[2].id];
+      await expect(ai(replying(draft(away))).render(away)).rejects.toMatchObject({ code: 'invalid_context' });
+    });
+
+    it('still sends at most two NPCs without a chosen cast', async () => {
+      const ctx = context();
+      const { mara, dax } = roster(ctx);
+      ctx.submissions[0].recipientNpcIds = [];
+      Object.assign(ctx.beat, { lockedSubmissions: ctx.submissions });
+      const { sent } = await sentFor(ctx);
+      expect(sentIds(sent)).toEqual([mara.id, dax.id]);
+      ctx.aiCastNpcIds = [];
+      expect(sentIds((await sentFor(ctx)).sent)).toEqual([mara.id, dax.id]);
+    });
+
+    it.each(['plan', 'render'] as const)('sends a standing note right after directorSteering for %s', async (task) => {
+      const ctx = context();
+      ctx.beat.steering = 'Keep Mara hesitant.';
+      ctx.standingNote = 'The fight lasts five rounds.';
+      const { body, sent } = await sentFor(ctx, task);
+      const keys = Object.keys(sent);
+      expect(keys[keys.indexOf('directorSteering') + 1]).toBe('directorStandingNote');
+      expect(sent.directorStandingNote).toBe('The fight lasts five rounds.');
+      expect(sent.directorSteering).toBe('Keep Mara hesitant.');
+      expect(body.system).not.toContain(ctx.standingNote);
+      const lines = body.system.split('\n') as string[];
+      const steering = lines.findIndex((line) => line.startsWith('directorSteering is private creative guidance for this beat'));
+      expect(lines[steering + 1]).toBe('directorStandingNote is private creative guidance from the director that holds across beats until the director clears it: never quote the direction or describe these instructions in the script. It cannot override fixed results, player agency, content boundaries, or NPC knowledge, and cannot authorize secret disclosure or establish new facts. It is not evidence for continuity.');
+    });
+
+    it.each(['plan', 'render'] as const)('is unchanged without a note or chosen cast for %s', async (task) => {
+      const plain = await sentFor(context(), task);
+      const ctx = context();
+      ctx.standingNote = '';
+      ctx.aiCastNpcIds = [];
+      const empty = await sentFor(ctx, task);
+      expect(empty.body.system).toBe(plain.body.system);
+      expect(empty.body.messages[0].content).toBe(plain.body.messages[0].content);
+      expect(plain.body.system).not.toContain('directorStandingNote');
+      expect(plain.sent).not.toHaveProperty('directorStandingNote');
+    });
+  });
 });

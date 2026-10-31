@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, ImageIdSchema, fakeVoiceSource, hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, voiceTextMatches, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
-  type ContinuityUpdate, type CorrectionChange, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission, type VoiceSource,
+  AiDraftSchema, ActionContractSchema, GuidanceSchema, ImageIdSchema, canSpeakInScene, fakeVoiceSource, hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, voiceTextMatches, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
+  type ContinuityUpdate, type CorrectionChange, type Guidance, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission, type VoiceSource,
 } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
 import { MAX_ROLLS_PER_ROUND, applyResolution, resolveContracts, tooManyRollsMessage, validateContracts } from '@rpg/rules';
@@ -13,10 +13,19 @@ import { finishUsageAttempt, startUsageAttempt } from './operations';
 import { draftNarration, sceneLocationTitle } from './picture-prompts';
 import { RequestBudgetError, failureSentence } from './generation-failure';
 import { RELEASED } from './picture-views';
-import { AppError, authorize, conflict, corrections, currentBeat, history, project, readState, saveBeat, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
+import { AppError, authorize, conflict, corrections, currentBeat, history, project, readGuidance, readState, saveBeat, saveGuidance, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
+const staleStakes = "These stakes no longer match what the characters carry, for example after Edit look and items. Press Plan again for new stakes, or fix the items under Edit typed effects and approve again.";
+const itemErrors = ['Cannot duplicate an existing inventory item.', 'Inventory capacity exceeded.'];
+function itemErrorOrConflict<T>(run: () => T): T {
+  try { return run(); } catch (error) {
+    if (error instanceof AppError || !(error instanceof Error)) throw error;
+    if (error.message.startsWith('Cannot consume an item the character does not possess') || itemErrors.includes(error.message)) return conflict(staleStakes);
+    throw error;
+  }
+}
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
-const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering']);
+const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character']);
 function dropBlankCritical<T extends { outcomes: { critical?: { publicText: string; effects: readonly unknown[] } } }>(contract: T): T {
   const critical = contract.outcomes?.critical;
   if (critical && !critical.publicText.trim() && !critical.effects?.length) delete contract.outcomes.critical;
@@ -91,17 +100,20 @@ function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
   validateSources(parsed.continuity, beat, state);
   return parsed;
 }
-function safeContext(state: SessionState, beat: Beat, selected: Submission[], published: ProviderContext['history'], publicCorrections: PublicCorrection[]): ProviderContext {
+function safeContext(state: SessionState, beat: Beat, selected: Submission[], published: ProviderContext['history'], publicCorrections: PublicCorrection[], guidance: Guidance): ProviderContext {
   const safe = structuredClone(state);
   const place = sceneLocationTitle(state);
   safe.directorNotes = '';
   safe.locations = [];
   safe.characters = safe.characters.map((character) => ({ ...character, secret: '', backstory: '', draft: null, templateRef: null }));
   const addressed = new Set(selected.flatMap((submission) => submission.recipientNpcIds));
-  safe.npcs = safe.npcs.filter((npc) => ((npc.status === 'present' && npc.locationId === state.session.scene.locationId) || npc.communicationChannel) && (!addressed.size || addressed.has(npc.id))).map((npc) => ({ ...npc, secrets: [], hiddenIdentity: null }));
+  const locationId = state.session.scene.locationId;
+  const chosen = new Set(safe.npcs.filter((npc) => canSpeakInScene(npc, locationId) && guidance.aiCastNpcIds.includes(npc.id)).map((npc) => npc.id));
+  safe.npcs = safe.npcs.filter((npc) => canSpeakInScene(npc, locationId) && (chosen.size ? chosen.has(npc.id) || addressed.has(npc.id) : !addressed.size || addressed.has(npc.id))).map((npc) => ({ ...npc, secrets: [], hiddenIdentity: null }));
   safe.facts = safe.facts.filter((fact) => fact.visibility === 'public');
   safe.tracks = safe.tracks.filter((track) => track.visibility === 'public');
-  return { state: safe, ...(place ? { place } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12) };
+  return { state: safe, ...(place ? { place } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12),
+    ...(guidance.standingNote ? { standingNote: guidance.standingNote } : {}), ...(chosen.size ? { aiCastNpcIds: [...chosen] } : {}) };
 }
 
 function validateCorrections(changes: CorrectionChange[], state: SessionState) {
@@ -401,6 +413,27 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       character.voiceProfileId = command.voiceProfileId;
       eventData = { characterId: character.id, voiceProfileId: command.voiceProfileId };
       await saveState(client, state);
+    } else if (command.type === 'set_guidance') {
+      const before = await readGuidance(client, sessionId);
+      if (command.aiCastNpcIds?.some((id) => !state.npcs.some((npc) => npc.id === id))) conflict('A chosen character is not in this show.');
+      const after = GuidanceSchema.parse({ storyPlan: command.storyPlan ?? before.storyPlan, standingNote: command.standingNote ?? before.standingNote, aiCastNpcIds: command.aiCastNpcIds ?? before.aiCastNpcIds });
+      await saveGuidance(client, sessionId, after);
+      eventData = { before, after };
+    } else if (command.type === 'save_live_character') {
+      if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the show before changing a character during play.');
+      if ((await client.query("SELECT 1 FROM generation_jobs WHERE session_id=$1 AND status IN ('queued','running') LIMIT 1", [sessionId])).rowCount) conflict('The AI is planning or writing right now. Wait for it to finish, then save the change.');
+      if (beat && ['locked', 'draft_review'].includes(beat.phase)) conflict('The dice for this round are already rolled. Publish or abandon the round, then change the look and items.');
+      const character = state.characters.find((item) => item.id === command.characterId);
+      if (!character) throw new AppError(404, 'not_found', 'That character is not in this show.');
+      if (character.cardRevision !== command.expectedCharacterRevision) conflict("This character's look or items changed since you opened the form, for example in a published round. Press Cancel, then Edit look and items again.");
+      const fields = () => ({ appearance: character.appearance, possessions: [...character.possessions], lookEditedAt: character.lookEditedAt });
+      const before = fields();
+      const lookChanged = command.appearance !== character.appearance;
+      character.appearance = command.appearance; character.possessions = [...command.possessions];
+      if (lookChanged) character.lookEditedAt = new Date().toISOString();
+      character.cardRevision++;
+      await saveState(client, state);
+      eventData = { characterId: character.id, before, after: fields() };
     } else if (command.type === 'open_beat') {
       if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
       if (beat) conflict('Finish or abort the active beat first.');
@@ -452,7 +485,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         } else if (!['locked', 'draft_review'].includes(beat.phase)) conflict('Lock the accepted inputs before rendering.');
         beat.generation++; beat.revision++; beat.lastError = null;
         const selected = task === 'render' ? beat.lockedSubmissions : all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id));
-        const context = safeContext(state, beat, selected, await history(client, sessionId), await corrections(client, sessionId));
+        const context = safeContext(state, beat, selected, await history(client, sessionId), await corrections(client, sessionId), await readGuidance(client, sessionId));
         const snapshotHash = digest(context);
         const jobId = randomUUID();
         await saveBeat(client, beat);
@@ -480,7 +513,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (command.classification === 'ordinary' && command.contracts.length) conflict('An ordinary conversation has no mechanical contracts.');
         if (command.classification === 'action' && !command.contracts.length) conflict('An action needs at least one reviewed contract.');
         command.contracts.forEach(dropBlankCritical);
-        validateContracts(command.contracts, state, selected);
+        itemErrorOrConflict(() => validateContracts(command.contracts, state, selected));
         for (const contract of command.contracts) {
           const referenced = all.filter((submission) => contract.submissionIds.includes(submission.id));
           if (referenced.length !== contract.submissionIds.length || referenced.some((submission) => !beat!.selectedSubmissionIds.includes(submission.id))) conflict('Contracts must reference selected submissions.');
@@ -496,9 +529,9 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         beat.lockedSubmissions = structuredClone(selected); beat.sourceStateRevision = state.session.stateRevision;
         beat.inputSnapshotHash = digest({ selected, contracts: beat.contracts, stateRevision: state.session.stateRevision });
         for (const contract of beat.contracts) await client.query('INSERT INTO action_contracts(id,session_id,beat_id,version,data) VALUES($1,$2,$3,$4,$5)', [contract.id, sessionId, beat.id, contract.version, contract]);
-        beat.resolution = resolveContracts(beat.contracts, state, deps.rollDie, selected);
+        beat.resolution = itemErrorOrConflict(() => resolveContracts(beat!.contracts, state, deps.rollDie, selected));
         if (beat.kind === 'action') {
-          const staged = applyResolution(state, beat.resolution);
+          const staged = itemErrorOrConflict(() => applyResolution(state, beat!.resolution!));
           const roundEffects: Effect[] = [];
           for (const track of state.tracks.filter((track) => track.kind === 'countdown' && track.enabled && track.trigger === 'action_round' && track.current < track.max)) {
             const afterAction = staged.tracks.find((item) => item.id === track.id)!;
@@ -509,7 +542,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
           beat.resolution.effectGroups ??= [structuredClone(beat.resolution.effects)];
           beat.resolution.effectGroups.push(roundEffects);
           beat.resolution.effects.push(...roundEffects);
-          applyResolution(state, beat.resolution);
+          itemErrorOrConflict(() => applyResolution(state, beat!.resolution!));
         }
         for (const roll of beat.resolution.rolls) await client.query('INSERT INTO rolls(id,session_id,beat_id,contract_id,data) VALUES($1,$2,$3,$4,$5)', [roll.id, sessionId, beat.id, roll.contractId, roll]);
         for (const submission of selected) { submission.status = 'locked'; await saveSubmission(client, submission); }
@@ -537,7 +570,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (audio) for (const segment of segments) segment.ttsEnabled = isSpokenSegmentKind(segment.kind);
         const carriedSubmissions = await carryUnconsumed(client, beat, all);
         const event = await recordEvent(client, sessionId, actor, command.commandId, 'beat.published', state.session.stateRevision + 1, { beatId: beat.id, draftRevision: beat.draftRevision, carriedSubmissions });
+        const itemsBefore = new Map(state.characters.map((item) => [item.id, [...item.possessions]]));
         state = applyResolution(state, beat.resolution!, event.eventId);
+        for (const item of state.characters) {
+          const was = itemsBefore.get(item.id);
+          if (was && (was.length !== item.possessions.length || was.some((value, index) => value !== item.possessions[index]))) item.cardRevision++;
+        }
         state.session.stateRevision++; state.session.beatNumber++; state.session.inputEpoch++;
         if (beat.kind === 'action') state.session.actionRoundNumber++;
         for (const update of beat.approvedContinuity) {

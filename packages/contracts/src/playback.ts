@@ -53,3 +53,12 @@ export const PlaybackTelemetrySchema = z.discriminatedUnion('type', [
 export type PlaybackTelemetry = z.infer<typeof PlaybackTelemetrySchema>;
 export const PlaybackResponseSchema = z.strictObject({ snapshot: PlaybackSnapshotSchema, leaseId: z.uuid().optional() });
 export type PlaybackResponse = z.infer<typeof PlaybackResponseSchema>;
+export const ShowAudioHolderSchema = z.strictObject({
+  holderId: z.uuid(), label: z.string().min(1).max(80), showTitle: z.string().max(160),
+  browser: z.enum(['obs', 'browser', 'unknown']), claimedAt: z.iso.datetime().nullable(),
+});
+export type ShowAudioHolder = z.infer<typeof ShowAudioHolderSchema>;
+export const ShowAudioHolderResponseSchema = z.strictObject({ holder: ShowAudioHolderSchema.nullable() });
+export type ShowAudioHolderResponse = z.infer<typeof ShowAudioHolderResponseSchema>;
+export const StopShowAudioSchema = z.strictObject({ commandId: id, holderId: z.uuid() });
+export type StopShowAudio = z.infer<typeof StopShowAudioSchema>;

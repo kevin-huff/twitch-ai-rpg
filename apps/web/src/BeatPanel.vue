@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
-import type { ActionContract, AiSegment, Beat } from '@rpg/contracts';
+import type { ActionContract, AiSegment, Beat, Command } from '@rpg/contracts';
 import { ActionContractSchema, hasAudioTags, playerWords, stripAudioTags } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
+import DirectorGuidance from './DirectorGuidance.vue';
 import StakesCards from './StakesCards.vue';
 import ScriptEditor from './ScriptEditor.vue';
 import BeatStepper from './BeatStepper.vue';
@@ -147,6 +148,11 @@ function applyEditorReset(next: NonNullable<typeof snapshot.value>) {
 if (snapshot.value) applyEditorReset(toRaw(snapshot.value));
 const stopListening = onSnapshot(applyEditorReset);
 onUnmounted(stopListening);
+
+async function saveGuidance(command: Command, done: (error?: string) => void) {
+  try { await send(command); done(); }
+  catch (cause) { done(cause instanceof Error ? cause.message : 'The request could not be completed.'); }
+}
 
 function beatMeta() {
   if (!beat.value) throw new Error('There is no active beat.');
@@ -354,6 +360,7 @@ function runGold() {
           <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
       </template>
+      <DirectorGuidance :snapshot="director" @command="saveGuidance" />
       <div ref="actionsBar" class="beat-actions" role="region" tabindex="-1" aria-label="Beat actions">
         <p class="beat-next" data-testid="beat-next">{{ step.next }}<span v-if="step.reason" class="beat-reason">{{ ' ' + step.reason }}</span></p>
         <p v-if="statusText" class="beat-status" data-testid="beat-status">{{ statusText }}</p>
@@ -363,6 +370,7 @@ function runGold() {
         <p v-if="playbackError" class="notice error beat-error" data-testid="playback-error" role="alert">{{ playbackError }} <button type="button" class="secondary" data-testid="start-playback" @click="emit('start-playback')">Play latest reviewed beat</button></p>
         <div v-if="(confirmRegenerate === 'plain' || confirmRegenerate === 'note') && beat?.draft && showScript" class="beat-confirm"><p>Replace the current draft? Saved script edits are discarded; the dice stay the same.</p><button class="secondary" :disabled="locked" @click="confirmRender">Yes, regenerate</button><button class="secondary" :disabled="paused" @click="confirmRegenerate = null">Keep draft</button></div>
         <div v-if="confirmRegenerate === 'replace' && beat" class="beat-confirm"><p>Replace what you wrote? The AI writes a new script and the lines you typed are lost. The dice stay the same.</p><button class="secondary" :disabled="locked" data-testid="confirm-replace" @click="confirmRender">Yes, replace it</button><button class="secondary" :disabled="paused" data-testid="keep-written" @click="confirmRegenerate = null">Keep what I wrote</button></div>
+        <p v-if="director.guidance?.standingNote" class="beat-status" data-testid="standing-note-on">Standing note on</p>
         <div class="actions">
           <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
           <template v-if="outsidePlan">

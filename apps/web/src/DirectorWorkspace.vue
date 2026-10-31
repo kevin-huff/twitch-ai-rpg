@@ -51,6 +51,8 @@ const hidePicture = () => togglePicture(id => api.hideScenePicture(id));
 const showPicture = () => togglePicture(id => api.showScenePicture(id));
 const createPortrait = (npcId: string) => work(async () => { await api.createNpcPortrait(sessionId, npcId); await refresh(); });
 const removePortrait = (npcId: string) => work(async () => { await api.removeNpcPortrait(sessionId, npcId); await refresh(); });
+const closedSentence = (text: string) => { const trimmed = text.trim(); return /[.!?…]["'”’)\]]*$/.test(trimmed) ? trimmed : `${trimmed}.`; };
+const fullCountdowns = computed(() => (director.value?.tracks ?? []).filter(track => track.kind === 'countdown' && track.enabled && track.current >= track.max));
 const pauseRequests = computed(() => pending.value.filter(item => item.kind === 'ooc' && item.status === 'queued' && item.text === PAUSE_REQUEST_TEXT && !dismissed.value.includes(item.id)));
 
 const linesWaiting = computed(() => pending.value.filter(item => item.kind !== 'ooc').length);
@@ -143,6 +145,9 @@ onUnmounted(stopListening);
         <span>{{ nameOf(item.characterId) }} asked for a pause.</span>
         <span class="actions"><button v-if="!paused" class="secondary" :disabled="busy" @click="setStatus('paused')">Pause now</button><button class="quiet" @click="dismissed.push(item.id)">Dismiss</button></span>
       </div>
+      <div v-for="track in fullCountdowns" :key="track.id" class="pause-notice countdown-notice" data-testid="countdown-full" aria-live="polite">
+        <span>The countdown “{{ track.label.trim() }}” is full.<template v-if="track.completionText?.trim()"> When it fills: {{ closedSentence(track.completionText) }}</template> What happens next is your call.</span>
+      </div>
     </template>
     <div class="workspace" data-testid="director-controls">
           <aside class="stack"><DirectorQueue v-if="!ended" v-model="selected" :snapshot="director" /></aside>
@@ -190,8 +195,8 @@ onUnmounted(stopListening);
 .scene-description summary { cursor: pointer; color: var(--dust); }
 .scene-description summary:hover { color: var(--candle); }
 .scene-description p { color: var(--dust); max-width: 720px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
-.pause-notice { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; color: var(--bone); padding: 12px 16px; margin-bottom: 16px; font-size: 20px; line-height: 24px; }
-.pause-notice::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--candle), inset 0 0 0 6px var(--void); clip-path: var(--cut-1); }
+.pause-notice, .countdown-notice { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; color: var(--bone); padding: 12px 16px; margin-bottom: 16px; font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
+.pause-notice::before, .countdown-notice::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--night); box-shadow: inset 0 0 0 2px var(--void), inset 0 0 0 4px var(--candle), inset 0 0 0 6px var(--void); clip-path: var(--cut-1); }
 .stage-first-line { margin: 0 0 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .stage-show-all > summary, .show-tools > summary { cursor: pointer; }
 .show-tools > summary { font-family: var(--font-body); font-size: 20px; line-height: 24px; font-weight: 400; margin: 12px 0; }

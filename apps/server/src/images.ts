@@ -7,7 +7,7 @@ import { failUnstarted, runImageJob, type ImageJobContext, type ImageJobOutcome 
 import { ImageSlots } from './image-slots';
 import { PICTURE_MESSAGES, pictureFailure, pictureLimitMessage, type PictureLimitSettings } from './picture-limits';
 import { buildPictureMoment, pictureCast, type BeatPictureSource } from './picture-cast';
-import { descriptionBudget, draftNarration, fallbackDescription, momentPrompt, namesInState, portraitPrompt, sceneLocationTitle, scenePrompt } from './picture-prompts';
+import { changedLookNumbers, descriptionBudget, draftNarration, fallbackDescription, momentPrompt, namesInState, portraitPrompt, sceneLocationTitle, scenePrompt } from './picture-prompts';
 import { pictureSettingsOf } from './picture-settings';
 import type { ImageReservation, ImageRow, PictureEngine } from './picture-views';
 import { AppError, type Actor } from './repository';
@@ -275,7 +275,8 @@ export class ImageService implements PictureEngine {
       : [];
     const moment = buildPictureMoment(state, source, settings, new Set(ready));
     const withReferences = moment.cast.some(person => person.imageNumber !== null);
-    const prompt = momentPrompt(settings.style, fallbackDescription(moment, descriptionBudget(settings.style, withReferences)), withReferences);
+    const changed = changedLookNumbers(moment.cast);
+    const prompt = momentPrompt(settings.style, fallbackDescription(moment, descriptionBudget(settings.style, withReferences, changed)), withReferences, changed);
     return { moment, prompt, model: withReferences ? MOMENT_MODEL : settings.model };
   }
 

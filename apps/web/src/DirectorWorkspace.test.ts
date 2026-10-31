@@ -510,3 +510,60 @@ describe('On the stage and Show tools', () => {
     wrapper.unmount();
   });
 });
+
+describe('full countdown notice', () => {
+  const track = (over: Record<string, unknown> = {}) => ({ id: 't1', kind: 'countdown', label: 'Closing time', current: 4, max: 4, enabled: true, completionText: 'The doors lock.', ...over });
+  const notices = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="countdown-full"]');
+
+  it('shows the label, the completion text and the call line for a full enabled countdown', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track()] }));
+    const found = notices(wrapper);
+    expect(found).toHaveLength(1);
+    expect(found[0].text()).toContain('The countdown “Closing time” is full.');
+    expect(found[0].text()).toContain('When it fills: The doors lock.');
+    expect(found[0].text()).toContain('What happens next is your call.');
+    expect(found[0].attributes('aria-live')).toBe('polite');
+  });
+
+  it('drops the completion line when the text is blank', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track({ completionText: '   ' })] }));
+    expect(notices(wrapper)).toHaveLength(1);
+    expect(notices(wrapper)[0].text()).not.toContain('When it fills');
+    expect(notices(wrapper)[0].text()).toContain('What happens next is your call.');
+  });
+
+  it('quotes the label so no word is doubled', async () => {
+    for (const [label, sentence] of [['The 4:00 AM Countdown', 'The countdown “The 4:00 AM Countdown” is full.'], ['Countdown to dawn', 'The countdown “Countdown to dawn” is full.'], ['  Until 4:00 AM ', 'The countdown “Until 4:00 AM” is full.']]) {
+      const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track({ label })] }));
+      expect(notices(wrapper)[0].text()).toContain(sentence);
+      expect(notices(wrapper)[0].text()).not.toMatch(/\bthe the\b|countdown countdown/i);
+    }
+  });
+
+  it('adds a full stop to completion text with no closing punctuation', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track({ completionText: 'The doors lock' })] }));
+    expect(notices(wrapper)[0].text()).toContain('When it fills: The doors lock. What happens next is your call.');
+  });
+
+  it('leaves completion text that already ends in punctuation alone', async () => {
+    for (const text of ['The doors lock!"', 'Who locked them?)', 'The doors lock…']) {
+      const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track({ completionText: text })] }));
+      expect(notices(wrapper)[0].text()).toContain(`When it fills: ${text} What happens next is your call.`);
+    }
+  });
+
+  it('shows nothing for not-full, disabled, danger or progress tracks', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track({ current: 3 }), track({ id: 't2', enabled: false }), track({ id: 't3', kind: 'danger' }), track({ id: 't4', kind: 'progress' })] }));
+    expect(notices(wrapper)).toHaveLength(0);
+  });
+
+  it('shows nothing once the show has ended', async () => {
+    const wrapper = await mountWorkspace(snapshot('ended', [], { tracks: [track()] }));
+    expect(notices(wrapper)).toHaveLength(0);
+  });
+
+  it('shows two notices for two full countdowns', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track(), track({ id: 't2', label: 'Dawn' })] }));
+    expect(notices(wrapper)).toHaveLength(2);
+  });
+});

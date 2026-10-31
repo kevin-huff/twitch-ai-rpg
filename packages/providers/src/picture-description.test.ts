@@ -30,6 +30,22 @@ describe('ClewdR picture description', () => {
     expect(JSON.parse(body.messages[0].content)).toEqual(input);
   });
 
+  it('adds the changed-look rule only when a cast member has lookEdited', async () => {
+    const line = 'A cast member marked lookEdited has changed how they look since their reference image was made: describe what they wear and carry from their appearance words, never from the reference image.';
+    const run = async (request: PictureDescriptionRequest) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ text: 'The person from image 1 stands in fog.' }));
+      await ai(fetchMock).describePicture(request);
+      return JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).system as string;
+    };
+    const plain = await run(input);
+    expect(plain).not.toContain('lookEdited');
+    const edited = await run({ ...input, cast: [{ ...input.cast[0], lookEdited: true }] });
+    const lines = edited.split('\n');
+    const at = lines.findIndex((entry) => entry.startsWith("Refer to a cast member who has an imageNumber"));
+    expect(lines[at + 1]).toBe(line);
+    expect(edited.split('\n').filter((entry) => entry !== line).join('\n')).toBe(plain);
+  });
+
   it('refuses invalid input without fetching', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     await expect(ai(fetchMock).describePicture({ ...input, budget: 0 })).rejects.toMatchObject({ code: 'invalid_input' });

@@ -205,6 +205,37 @@ export const topics: HelpTopic[] = [
         ],
       },
       {
+        heading: 'Choosing who is on stage for the AI',
+        paragraphs: [
+          'On the main beat panel, On stage for the AI lists the non-player characters who can speak in the current scene: those at the scene\'s place, and those somewhere else who can reach the scene by phone, radio or similar. Tick a character to let the AI give them lines. Only you see this list.',
+          'Without a tick, the AI gives lines to the characters the players talk to, or else to two characters, those in the room first. With ticks, the AI can give lines to the ticked characters who are here, plus anyone the players talk to. Use it when one character keeps taking over the scene.',
+          'Your choice lasts for every beat and every scene change until you change it. A character you ticked who cannot speak in the new scene stays ticked and reads (not here). The AI is not sent that character until they can speak again.',
+        ],
+      },
+      {
+        heading: 'Standing note',
+        paragraphs: [
+          'A Note for the AI lasts one beat. A Standing note lasts until you clear it, so you can type it once for a five-round fight. It is in the same panel as On stage for the AI. Type it in Standing note and press Save standing note. Press Clear standing note to remove it. While one is set, Standing note on shows above the gold button as a reminder.',
+          'Saving or clearing a standing note keeps the current plan, the dice and the script. The AI reads it the next time it plans or writes a script. If the AI is working right now, that request finishes without it. The AI follows a standing note the same way it follows a Note for the AI. Players and the stream never see it.',
+        ],
+      },
+      {
+        heading: 'Changing a character\'s look and items during the show',
+        paragraphs: [
+          'A card is fixed once the show starts, so use Edit look and items on Cast & lobby when something changes in the story, such as a thrown cap or a lost bell. Press it on a character, change the text in Look, then change the list under Carrying. Press Add an item for a new one, Remove to take one off, then Save look and items. Cancel closes the form with nothing changed.',
+          'You can do this between rounds, while lines are being collected, while the show is paused, and while the stakes are showing. If the stakes are showing, press Plan again afterwards, because the plan already made does not change by itself. Saving does not clear any lines and posts nothing public.',
+          'It is refused while the AI is planning or writing, so wait for it to finish and save again. It is also refused after the dice for the round are rolled. Publish or abandon the round first.',
+          'If a published round changes that character\'s items while the form is open, a form you have not typed in updates by itself. If you had typed in it, Save is refused. Press Cancel, then Edit look and items again.',
+          'The AI reads the new look and items from the next plan or script. Pictures of a character whose look you changed draw their clothes from the new words. Their face, hair and build still come from their portrait.',
+        ],
+      },
+      {
+        heading: 'When a countdown fills',
+        paragraphs: [
+          'When a public countdown reaches its maximum, the director page shows a notice with the countdown\'s name, the text you wrote for when it fills, and the line What happens next is your call. The show does not decide for you. Narrate what happens, or change the scene, when you are ready.',
+        ],
+      },
+      {
         heading: 'Changing the scene',
         paragraphs: [
           'Press Change scene in the live controls to move the story to a new place. Pick the place first. The scene title fills in from the place until you type your own title. The title becomes public when you save. The page lists who is Moving with the party.',
@@ -665,6 +696,13 @@ export const topics: HelpTopic[] = [
           'If a stream link has been turned off or has expired, the stage shows The story continues shortly. Make a new link and paste it into OBS.',
         ],
       },
+      {
+        heading: 'See who has the show audio',
+        paragraphs: [
+          'On the director page, open Show all under On the stage. A line there names the link that has the show audio, says whether it is in OBS or in a regular browser, and says since when. Two pages on the same link read the same apart from the time, so compare the time with when you last loaded your OBS. If nothing has it, the page says Nobody is playing the show audio right now.',
+          'Press Stop that one to end that page\'s turn. That page cannot take the show audio back until someone reloads it. Your OBS with the main show link takes over within a few seconds. If narration was playing, press Resume shared audio.',
+        ],
+      },
     ],
   },
   {
@@ -879,6 +917,16 @@ export const topics: HelpTopic[] = [
           'To test a link, use Preview (silent) on its card. Do not open the main show link in an ordinary browser tab. A tab like that only listens. It does not play the broadcast audio.',
           'If a browser asks you to press Listen in this browser, press it. Browsers block sound until someone does.',
           'On a player\'s seat there is no such button: each part of the story has its own Play button instead.',
+        ],
+      },
+      {
+        heading: 'The narration plays where nobody hears it',
+        steps: [
+          'On the director page, open Show all under On the stage. The line there names the link that has the show audio and says whether it is in OBS or a regular browser.',
+          'If it is a link on another computer, or a regular browser, press Stop that one. That page cannot take the audio back until it is reloaded.',
+          'Your OBS with the main show link takes over within a few seconds. If narration was playing, press Resume shared audio.',
+          'If you stopped your own OBS by mistake, the other page takes the show audio within a few seconds. Stop that one too, then reload your OBS browser source so it can take the show audio again.',
+          'If the page says Nobody is playing the show audio right now, load the main show link in OBS.',
         ],
       },
       {

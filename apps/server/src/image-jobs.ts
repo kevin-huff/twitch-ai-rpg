@@ -8,7 +8,7 @@ import { transaction } from './database';
 import { readImageFile, storeImage } from './image-files';
 import type { ImageSlots } from './image-slots';
 import { PICTURE_MESSAGES, pictureFailure } from './picture-limits';
-import { cleanDescription, descriptionBudget, fallbackDescription, momentPrompt, pictureDescriptionRequest } from './picture-prompts';
+import { changedLookNumbers, cleanDescription, descriptionBudget, fallbackDescription, momentPrompt, pictureDescriptionRequest } from './picture-prompts';
 import type { ImageRow } from './picture-views';
 
 export interface ImageJobContext {
@@ -166,7 +166,8 @@ async function prepareMoment(context: ImageJobContext, row: ImageRow, moment: Pi
     }),
   };
   const withReferences = references.length > 0;
-  const budget = descriptionBudget(moment.style, withReferences);
+  const changed = changedLookNumbers(settled.cast);
+  const budget = descriptionBudget(moment.style, withReferences, changed);
   let description = '';
   if (context.ai?.describePicture) {
     try {
@@ -177,7 +178,7 @@ async function prepareMoment(context: ImageJobContext, row: ImageRow, moment: Pi
     }
   }
   if (description === '') description = fallbackDescription(settled, budget);
-  const prompt = momentPrompt(moment.style, description, withReferences);
+  const prompt = momentPrompt(moment.style, description, withReferences, changed);
   const model = withReferences ? MOMENT_MODEL : moment.model;
   const saved = await context.pool.query("UPDATE images SET prompt=$2, model=$3 WHERE id=$1 AND status='making'", [row.id, prompt, model]);
   return saved.rowCount ? { prompt, model, references } : null;

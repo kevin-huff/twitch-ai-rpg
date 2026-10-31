@@ -29,6 +29,11 @@ const manifest = { beatId: 'beat-1', segments: [
 let shared: PlaybackSnapshot;
 let latest: unknown;
 let preparation: { ok: boolean; data: unknown };
+const holderId = '33333333-3333-4333-8333-333333333333';
+type HolderData = { holderId: string; label: string; showTitle: string; browser: 'obs' | 'browser' | 'unknown'; claimedAt: string | null };
+let holder: HolderData | null;
+let holderFails: boolean;
+let stopRefusal: string | null;
 const wrappers: ReturnType<typeof mount>[] = [];
 const serverNow = () => 100_000 + Math.floor(performance.now());
 const response = (data: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data }) as Response;
@@ -52,11 +57,18 @@ beforeEach(() => {
   shared = { schemaVersion: 1, sessionId: 'show', revision: 0, sampleRevision: 0, serverTimeMs: 100_000, playbackId: null, status: 'idle', manifest: null, segmentIndex: null, positionMs: 0, anchorTimeMs: null, presenter: { available: false, leaseExpiresAtMs: null } };
   latest = { status: 'ready', manifest };
   preparation = { ok: true, data: { status: 'ready', manifest } };
+  holder = null; holderFails = false; stopRefusal = null;
   vi.stubGlobal('Audio', FakeAudio);
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (url.includes('/audio/')) return body ? response(preparation.data, preparation.ok) : response(latest);
+    if (url.endsWith('/holder/stop')) {
+      if (stopRefusal) return { ok: false, status: 409, json: async () => ({ message: stopRefusal }) } as Response;
+      holder = null;
+      return response({ holder: null });
+    }
+    if (url.endsWith('/playback/holder')) return holderFails ? response({ message: 'down' }, false) : response({ holder });
     shared.serverTimeMs = serverNow();
     if (url.endsWith('/presenter')) {
       shared = { ...shared, revision: shared.revision + (body.type === 'renew' ? 0 : 1), sampleRevision: shared.sampleRevision + 1,
@@ -443,5 +455,188 @@ describe('compact audio panel', () => {
     const wrapper = panel({ director: false, beatId: 'beat-1', compact: true }); await flushPromises();
     await click(wrapper, 'listen-audio');
     expect(wrapper.get('[role="alert"]').text()).toBe('The sound could not play in this browser. Press Hear the story here to try again. The story still plays on the stream.');
+  });
+});
+
+describe('show audio holder on the director controls', () => {
+  const claimedAt = '2026-10-29T18:05:00.000Z';
+  const clock = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(claimedAt));
+  const withPresenter = () => { shared.presenter = { available: true, leaseExpiresAtMs: 110_000 }; shared.sampleRevision++; };
+  const holderCalls = () => requests('/playback/holder');
+  const otherHolderId = '44444444-4444-4444-8444-444444444444';
+  const obsHolder = (): HolderData => ({ holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt });
+  beforeEach(() => { vi.setSystemTime(new Date('2026-10-29T18:06:00.000Z')); });
+
+  it('names an OBS holder with the time it took over', async () => {
+    withPresenter(); holder = { holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt };
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-holder"]').text()).toBe(`\u201CMain show\u201D has the show audio, in OBS, since ${clock}.`);
+    expect(wrapper.find('[data-testid="audio-holder-none"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="stop-holder"]').text()).toBe('Stop that one');
+  });
+
+  it('says a regular browser is not OBS and an unknown one is just a browser', async () => {
+    withPresenter(); holder = { holderId, label: 'Mara link', showTitle: 'Night one', browser: 'browser', claimedAt };
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-holder"]').text()).toBe(`\u201CMara link\u201D has the show audio, in a regular browser (not OBS), since ${clock}.`);
+    holder = { holderId, label: 'A page opened before this update', showTitle: 'Night one', browser: 'unknown', claimedAt: null };
+    shared.revision++; await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-holder"]').text()).toBe('\u201CA page opened before this update\u201D has the show audio, in a browser.');
+  });
+
+  it('posts the shown holder id on Stop that one, shows the stopped line and looks again', async () => {
+    withPresenter(); holder = { holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt };
+    const wrapper = panel(); await flushPromises();
+    const before = holderCalls().length;
+    await click(wrapper, 'stop-holder');
+    const stop = requests('/holder/stop');
+    expect(stop).toHaveLength(1);
+    expect(stop[0][1]).toMatchObject({ method: 'POST' });
+    const sent = JSON.parse(String(stop[0][1]?.body));
+    expect(sent).toMatchObject({ holderId });
+    expect(typeof sent.commandId).toBe('string');
+    expect(wrapper.get('[data-testid="audio-holder-stopped"]').text()).toBe("Stopped. A page with the show's link, such as your OBS, takes over within a few seconds. If narration was playing, press Resume shared audio.");
+    expect(holderCalls().length).toBeGreaterThan(before);
+    expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="audio-holder-unknown"]').exists()).toBe(false);
+  });
+
+  it('shows the refusal when the stop is refused', async () => {
+    withPresenter(); holder = { holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt };
+    stopRefusal = 'The show audio moved to another page. Check who has it now.';
+    const wrapper = panel(); await flushPromises();
+    await click(wrapper, 'stop-holder');
+    expect(wrapper.get('[data-testid="audio-holder-error"]').text()).toBe(stopRefusal);
+    expect(wrapper.find('[data-testid="audio-holder-stopped"]').exists()).toBe(false);
+  });
+
+  it('says plainly that nobody is playing the show audio', async () => {
+    const wrapper = panel(); await flushPromises();
+    const none = wrapper.get('[data-testid="audio-holder-none"]');
+    expect(none.text()).toContain('Nobody is playing the show audio right now.');
+    expect(none.text()).toContain('Load the main show link in OBS. You will find it in Cast & lobby, under Stream this show.');
+    expect(wrapper.find('[data-testid="stop-holder"]').exists()).toBe(false);
+  });
+
+  it('never asks for the holder on the stage or the compact panel', async () => {
+    withPresenter(); holder = { holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt };
+    const stage = panel({ director: true, stage: true, beatId: 'beat-1' });
+    const seat = panel({ director: false, stage: true, beatId: 'beat-1' });
+    const compact = panel({ director: false, compact: true, beatId: 'beat-1' });
+    const player = panel({ director: false, beatId: 'beat-1' });
+    await flushPromises(); await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(holderCalls()).toHaveLength(0);
+    for (const wrapper of [stage, seat, compact, player]) expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(false);
+  });
+
+  it('shows nothing new and raises no error when the holder look-up fails', async () => {
+    withPresenter(); holderFails = true;
+    const wrapper = panel(); await flushPromises();
+    expect(holderCalls().length).toBeGreaterThan(0);
+    expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="stop-holder"]').exists()).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+
+  it('shows a fallback line while the holder look-up is pending, and swaps it for the holder', async () => {
+    withPresenter(); holder = obsHolder();
+    let release: (value: Response) => void = () => {};
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => (String(input).endsWith('/playback/holder') ? pending : original(input, init)));
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-holder-unknown"]').text()).toBe('Another page has the show audio.');
+    expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="audio-holder-none"]').exists()).toBe(false);
+    release(response({ holder })); await flushPromises();
+    expect(wrapper.find('[data-testid="audio-holder-unknown"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(true);
+  });
+
+  it('shows the fallback line when the holder look-up fails, and not when nobody has the audio', async () => {
+    withPresenter(); holderFails = true;
+    const failed = panel(); await flushPromises();
+    expect(failed.get('[data-testid="audio-holder-unknown"]').text()).toBe('Another page has the show audio.');
+    shared.presenter = { available: false, leaseExpiresAtMs: null }; shared.sampleRevision++;
+    const nobody = panel(); await flushPromises();
+    expect(nobody.find('[data-testid="audio-holder-unknown"]').exists()).toBe(false);
+    expect(nobody.find('[data-testid="audio-holder-none"]').exists()).toBe(true);
+  });
+
+  describe('a refused stop', () => {
+    async function refused() {
+      withPresenter(); holder = obsHolder(); stopRefusal = 'The show audio moved to another page. Check who has it now.';
+      const wrapper = panel(); await flushPromises();
+      await click(wrapper, 'stop-holder');
+      expect(wrapper.get('[data-testid="audio-holder-error"]').text()).toBe(stopRefusal);
+      return wrapper;
+    }
+    const lookAgain = async () => { shared.revision++; await vi.advanceTimersByTimeAsync(1000); await flushPromises(); };
+
+    it('stays while the same holder comes back', async () => {
+      const wrapper = await refused();
+      await lookAgain();
+      expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="audio-holder-error"]').exists()).toBe(true);
+    });
+
+    it('clears when a different holder comes back', async () => {
+      const wrapper = await refused();
+      holder = { ...obsHolder(), holderId: otherHolderId, label: 'Mara link' };
+      await lookAgain();
+      expect(wrapper.get('[data-testid="audio-holder"]').text()).toContain('Mara link');
+      expect(wrapper.find('[data-testid="audio-holder-error"]').exists()).toBe(false);
+    });
+
+    it('clears when nobody holds the audio any more', async () => {
+      const wrapper = await refused();
+      holder = null;
+      await lookAgain();
+      expect(wrapper.find('[data-testid="audio-holder-error"]').exists()).toBe(false);
+    });
+
+    it('stays beside the page that took over, as the look-up right after the refusal shows it', async () => {
+      withPresenter(); holder = obsHolder();
+      const wrapper = panel(); await flushPromises();
+      stopRefusal = 'The show audio moved to another page. Check who has it now.';
+      holder = { ...obsHolder(), holderId: otherHolderId, label: 'Mara link' };
+      await click(wrapper, 'stop-holder');
+      expect(wrapper.get('[data-testid="audio-holder"]').text()).toContain('Mara link');
+      expect(wrapper.get('[data-testid="audio-holder-error"]').text()).toBe(stopRefusal);
+    });
+
+    it('stays when a later look-up fails, and when the same holder then comes back', async () => {
+      const wrapper = await refused();
+      holderFails = true;
+      await lookAgain();
+      expect(wrapper.get('[data-testid="audio-holder-error"]').text()).toBe(stopRefusal!);
+      expect(wrapper.get('[data-testid="audio-holder-unknown"]').text()).toBe('Another page has the show audio.');
+      holderFails = false;
+      await lookAgain();
+      expect(wrapper.find('[data-testid="audio-holder"]').exists()).toBe(true);
+      expect(wrapper.get('[data-testid="audio-holder-error"]').text()).toBe(stopRefusal!);
+    });
+  });
+
+  it('adds the weekday and date when the claim was on an earlier day, and keeps the time only for today', async () => {
+    withPresenter();
+    const earlier = '2026-10-28T18:05:00.000Z';
+    holder = { ...obsHolder(), claimedAt: earlier };
+    const wrapper = panel(); await flushPromises();
+    const expected = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(earlier));
+    const text = wrapper.get('[data-testid="audio-holder"]').text();
+    expect(text).toBe(`\u201CMain show\u201D has the show audio, in OBS, since ${expected}.`);
+    expect(expected).toMatch(/^[A-Z][a-z]{2}/);
+    expect(text).not.toContain(`since ${clock}.`);
+    holder = obsHolder();
+    shared.revision++; await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-holder"]').text()).toBe(`\u201CMain show\u201D has the show audio, in OBS, since ${clock}.`);
+  });
+
+  it('adds no timers of its own', async () => {
+    withPresenter(); holder = { holderId, label: 'Main show', showTitle: 'Night one', browser: 'obs', claimedAt };
+    const wrapper = panel(); await flushPromises();
+    wrapper.unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

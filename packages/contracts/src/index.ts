@@ -121,6 +121,7 @@ export const CharacterSchema = z.strictObject({
   draft: CharacterCardDefinitionSchema.nullable().default(null), ready: z.boolean().default(false),
   acceptedBoundariesRevision: RevisionSchema.nullable().default(null), portraitId: authoredCharacter.portraitId,
   cardSource: z.enum(['host', 'player']).optional(), voiceProfileId: IdSchema.nullable().default(null),
+  lookEditedAt: z.string().datetime().nullable().default(null),
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
@@ -432,6 +433,16 @@ const snapshotBase = {
   facts: z.array(PublicFactSchema), history: z.array(PublishedBeatSchema), corrections: z.array(PublicCorrectionSchema).default([]),
   picturesEnabled: z.boolean().default(false), scenePicture: ScenePictureSchema.nullable().default(null),
 };
+const uniqueNpcIds = z.array(IdSchema).max(50).refine(ids => new Set(ids).size === ids.length, 'Choose each character once.');
+export const GuidanceSchema = z.strictObject({
+  storyPlan: z.string().trim().max(12000).default(''), standingNote: z.string().trim().max(3000).default(''),
+  aiCastNpcIds: uniqueNpcIds.default([]),
+});
+export type Guidance = z.infer<typeof GuidanceSchema>;
+export const EMPTY_GUIDANCE: Guidance = { storyPlan: '', standingNote: '', aiCastNpcIds: [] };
+export function canSpeakInScene(npc: Pick<Npc, 'status' | 'locationId' | 'communicationChannel'>, locationId: string): boolean {
+  return (npc.status === 'present' && npc.locationId === locationId) || (typeof npc.communicationChannel === 'string' && npc.communicationChannel.length > 0);
+}
 export const DirectorSnapshotSchema = z.strictObject({
   ...snapshotBase, role: z.literal('director'), activeBeat: BeatSchema.nullable(),
   submissions: z.array(SubmissionSchema), npcDetails: z.array(NpcSchema), characterDetails: z.array(CharacterSchema),
@@ -439,7 +450,7 @@ export const DirectorSnapshotSchema = z.strictObject({
   locations: z.array(LocationSchema).max(100).default([]),
   scenePictureStatus: ScenePictureStatusSchema.nullable().default(null), actionPicture: ActionPictureStatusSchema.nullable().default(null), portraitJobs: z.array(PortraitJobSchema).max(50).default([]),
   pictureSettings: PictureSettingsSchema.nullable().default(null), lastSceneBeatId: IdSchema.nullable().default(null),
-  gallery: GalleryStatusSchema.nullable().default(null),
+  gallery: GalleryStatusSchema.nullable().default(null), guidance: GuidanceSchema.optional(),
 });
 export type DirectorSnapshot = z.infer<typeof DirectorSnapshotSchema>;
 export const PlayerSnapshotSchema = z.strictObject({
@@ -457,7 +468,6 @@ export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
 const commandBase = { commandId: IdSchema };
 const beatCommand = { ...commandBase, beatId: IdSchema, expectedBeatRevision: RevisionSchema };
 const liveCommand = { ...commandBase, expectedStateRevision: RevisionSchema, reason: z.string().trim().min(1).max(1000), discardQueuedInput: z.literal(true) };
-const uniqueNpcIds = z.array(IdSchema).max(50).refine(ids => new Set(ids).size === ids.length, 'Choose each character once.');
 export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('record_correction'), ...liveCommand, publishedBeatId: IdSchema,
     publicText: z.string().trim().min(1).max(3000), changes: CorrectionChangesSchema }),
@@ -494,6 +504,11 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('publish_beat'), ...beatCommand, expectedStateRevision: RevisionSchema, draftRevision: RevisionSchema, textOnly: z.boolean(), audioPreparationId: z.uuid().optional() })
     .refine(value => value.textOnly ? value.audioPreparationId === undefined : value.audioPreparationId !== undefined, 'Choose text-only publication or a prepared recording.'),
   z.strictObject({ type: z.literal('abort_beat'), ...beatCommand, reason: TextSchema }),
+  z.strictObject({ type: z.literal('set_guidance'), ...commandBase, storyPlan: z.string().trim().max(12000).optional(),
+    standingNote: z.string().trim().max(3000).optional(), aiCastNpcIds: uniqueNpcIds.optional() })
+    .refine(value => value.storyPlan !== undefined || value.standingNote !== undefined || value.aiCastNpcIds !== undefined, 'Send at least one guidance field.'),
+  z.strictObject({ type: z.literal('save_live_character'), ...commandBase, characterId: IdSchema, expectedCharacterRevision: RevisionSchema,
+    appearance: z.string().max(1000), possessions: z.array(z.string().trim().min(1).max(160)).max(20) }),
   z.strictObject({ type: z.literal('set_voice'), ...commandBase, voiceProfileId: VoiceRefSchema.nullable() }),
   z.strictObject({ type: z.literal('set_status'), ...commandBase, status: z.enum(['live', 'paused', 'ended']), expectedStateRevision: RevisionSchema }),
 ]);
@@ -531,6 +546,8 @@ export interface ProviderContext {
   history: PublishedBeat[];
   corrections?: PublicCorrection[];
   place?: string;
+  standingNote?: string;
+  aiCastNpcIds?: string[];
 }
 
 export const PictureDescriptionRequestSchema = z.strictObject({

@@ -3,9 +3,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import {
   AudioManifestSchema, isSpokenSegmentKind, MAX_PLAYBACK_POSITION_MS, PLAYBACK_SCHEDULE_LEAD_MS, PRESENTER_LEASE_MS,
-  PlaybackCommandSchema, PlaybackTelemetrySchema, PresenterCommandSchema, PublishedBeatSchema,
+  PlaybackCommandSchema, PlaybackTelemetrySchema, PresenterCommandSchema, PublishedBeatSchema, StopShowAudioSchema,
   type AudioManifest, type PlaybackCommand, type PlaybackResponse, type PlaybackSnapshot,
-  type PlaybackTelemetry, type PresenterCommand,
+  type PlaybackTelemetry, type PresenterCommand, type ShowAudioHolderResponse, type StopShowAudio,
 } from '@rpg/contracts';
 import { digest } from './commands';
 import { transaction } from './database';
@@ -29,11 +29,18 @@ interface PlaybackRow {
   presenter_client_id: string | null;
   presenter_lease_id: string | null;
   presenter_expires_at_ms: number | null;
+  presenter_label: string | null;
+  presenter_show_title: string | null;
+  presenter_agent: 'obs' | 'browser' | null;
+  presenter_claimed_at_ms: number | null;
   renewal_sequence: number;
   telemetry_sequence: number;
 }
 type Params = { sessionId: string };
-type Mutation = PlaybackCommand | PresenterCommand | PlaybackTelemetry;
+type Mutation = PlaybackCommand | PresenterCommand | PlaybackTelemetry | StopShowAudio;
+type Endpoint = 'commands' | 'presenter' | 'telemetry' | 'holder' | 'holder_stop';
+interface PresenterDetails { label: string; showTitle: string; agent: 'obs' | 'browser' }
+const HOLDER_FORBIDDEN = 'Only the director can see or stop the show audio.';
 const changed = (row: PlaybackRow, discrete = true) => { row.sample_revision++; if (discrete) row.revision++; };
 const pause = (row: PlaybackRow) => { row.status = 'paused'; row.anchor_time_ms = null; };
 function clearPresenter(row: PlaybackRow) {
@@ -41,6 +48,10 @@ function clearPresenter(row: PlaybackRow) {
   row.presenter_client_id = null;
   row.presenter_lease_id = null;
   row.presenter_expires_at_ms = null;
+  row.presenter_label = null;
+  row.presenter_show_title = null;
+  row.presenter_agent = null;
+  row.presenter_claimed_at_ms = null;
   row.renewal_sequence = 0;
   row.telemetry_sequence = 0;
 }
@@ -58,11 +69,42 @@ function snapshot(row: PlaybackRow, now: number): PlaybackSnapshot {
 async function save(client: PoolClient, row: PlaybackRow) {
   await client.query(`UPDATE session_playback SET revision=$2,sample_revision=$3,playback_id=$4,status=$5,
     manifest=$6,segment_index=$7,position_ms=$8,anchor_time_ms=$9,presenter_actor_id=$10,presenter_client_id=$11,
-    presenter_lease_id=$12,presenter_expires_at_ms=$13,renewal_sequence=$14,telemetry_sequence=$15 WHERE session_id=$1`, [
+    presenter_lease_id=$12,presenter_expires_at_ms=$13,renewal_sequence=$14,telemetry_sequence=$15,
+    presenter_label=$16,presenter_show_title=$17,presenter_agent=$18,presenter_claimed_at_ms=$19 WHERE session_id=$1`, [
     row.session_id, row.revision, row.sample_revision, row.playback_id, row.status, row.manifest,
     row.segment_index, row.position_ms, row.anchor_time_ms, row.presenter_actor_id, row.presenter_client_id,
     row.presenter_lease_id, row.presenter_expires_at_ms, row.renewal_sequence, row.telemetry_sequence,
+    row.presenter_label, row.presenter_show_title, row.presenter_agent, row.presenter_claimed_at_ms,
   ]);
+}
+function holder(row: PlaybackRow, sessionTitle: string): ShowAudioHolderResponse {
+  if (!row.presenter_lease_id) return { holder: null };
+  return {
+    holder: {
+      holderId: row.presenter_lease_id,
+      label: (row.presenter_label ?? 'A page opened before this update').slice(0, 80),
+      showTitle: (row.presenter_show_title ?? sessionTitle).slice(0, 160),
+      browser: row.presenter_agent ?? 'unknown',
+      claimedAt: row.presenter_claimed_at_ms === null ? null : new Date(row.presenter_claimed_at_ms).toISOString(),
+    },
+  };
+}
+async function presenterDetails(client: PoolClient, request: FastifyRequest, actor: Actor, sessionTitle: string): Promise<PresenterDetails> {
+  let label = actor.role === 'host' ? 'Preview page' : 'Stream page';
+  if (actor.role === 'stage' && actor.stream_link_id) {
+    const link = (await client.query('SELECT label FROM stream_links WHERE id=$1', [actor.stream_link_id])).rows[0];
+    if (link?.label) label = link.label;
+  }
+  const agent = /\bOBS\//.test(String(request.headers['user-agent'] ?? '')) ? 'obs' : 'browser';
+  return { label: label.slice(0, 80), showTitle: sessionTitle.slice(0, 160), agent };
+}
+async function stopHolder(client: PoolClient, row: PlaybackRow, command: StopShowAudio): Promise<ShowAudioHolderResponse> {
+  if (!row.presenter_lease_id || row.presenter_lease_id !== command.holderId) conflict('The show audio moved to another page. Check who has it now.');
+  if (row.presenter_client_id) await client.query('INSERT INTO playback_stopped_clients(session_id,client_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [row.session_id, row.presenter_client_id]);
+  clearPresenter(row);
+  if (row.status === 'playing') pause(row);
+  changed(row);
+  return { holder: null };
 }
 function checkRevision(row: PlaybackRow, command: { expectedRevision: number }) {
   if (row.revision !== command.expectedRevision) conflict('Playback changed. Review the current playback state.');
@@ -133,15 +175,20 @@ async function control(client: PoolClient, row: PlaybackRow, actor: Actor, comma
   }
   changed(row);
 }
-function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, now: number) {
+function checkPresenterRole(actor: Actor) {
   if (actor.role !== 'host' && actor.role !== 'stage') throw new AppError(403, 'forbidden', 'Only the director or stage can present narration.');
   if (actor.role === 'stage' && actor.can_present === false) throw new AppError(403, 'forbidden', 'This stream view can listen but cannot present the show audio.');
+}
+function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, now: number, details?: PresenterDetails) {
+  checkPresenterRole(actor);
   if (command.type === 'claim') {
     checkRevision(row, command);
     if (row.presenter_lease_id) conflict('Another browser is already presenting narration.');
     row.presenter_actor_id = actor.actor_id; row.presenter_client_id = command.clientId;
     row.presenter_lease_id = randomUUID(); row.presenter_expires_at_ms = now + PRESENTER_LEASE_MS;
     row.renewal_sequence = 0; row.telemetry_sequence = 0;
+    row.presenter_label = details?.label ?? null; row.presenter_show_title = details?.showTitle ?? null;
+    row.presenter_agent = details?.agent ?? null; row.presenter_claimed_at_ms = details ? now : null;
     changed(row);
     return row.presenter_lease_id;
   }
@@ -174,14 +221,14 @@ function report(row: PlaybackRow, actor: Actor, command: PlaybackTelemetry, now:
 
 export function registerPlayback(app: FastifyInstance, options: PlaybackOptions) {
   const { pool, authenticate } = options;
-  const execute = async (request: FastifyRequest<{ Params: Params }>, endpoint: 'commands' | 'presenter' | 'telemetry' | null, command?: Mutation) => {
+  const execute = async (request: FastifyRequest<{ Params: Params }>, endpoint: Endpoint | null, command?: Mutation) => {
     const initialActor = await authenticate(request);
     const result = await transaction(pool, async client => {
       const sessionId = request.params.sessionId;
       await authorize(client, sessionId, initialActor);
       await client.query('INSERT INTO session_playback(session_id) VALUES($1) ON CONFLICT(session_id) DO NOTHING', [sessionId]);
       const row: PlaybackRow = (await client.query('SELECT * FROM session_playback WHERE session_id=$1 FOR UPDATE', [sessionId])).rows[0];
-      for (const key of ['revision', 'sample_revision', 'anchor_time_ms', 'presenter_expires_at_ms', 'renewal_sequence', 'telemetry_sequence'] as const) if (row[key] !== null) row[key] = Number(row[key]);
+      for (const key of ['revision', 'sample_revision', 'anchor_time_ms', 'presenter_expires_at_ms', 'presenter_claimed_at_ms', 'renewal_sequence', 'telemetry_sequence'] as const) if (row[key] !== null) row[key] = Number(row[key]);
       // Receipt keys are global to the actor, including requests for different sessions.
       if (command) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([initialActor.actor_id, command.commandId])]);
       const actor = await authenticate(request, client);
@@ -194,21 +241,37 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
         changed(row);
         await save(client, row);
       }
+      if ((endpoint === 'holder' || endpoint === 'holder_stop') && actor.role !== 'host') return { error: new AppError(403, 'forbidden', HOLDER_FORBIDDEN) };
+      if (endpoint === 'holder') return { value: holder(row, session.title) };
       if (!command || !endpoint) return { value: snapshot(row, now) };
       const requestHash = digest({ endpoint, sessionId, command });
       const existing = (await client.query('SELECT request_hash,response FROM playback_receipts WHERE actor_id=$1 AND command_id=$2', [actor.actor_id, command.commandId])).rows[0];
       if (existing) {
         if (existing.request_hash !== requestHash) return { error: new AppError(409, 'conflict', 'This command ID was already used with different input.') };
+        if (endpoint === 'holder_stop') return { value: existing.response as ShowAudioHolderResponse };
         const response = existing.response as PlaybackResponse;
         return { value: { ...response, snapshot: { ...response.snapshot, serverTimeMs: now } } };
       }
       try {
         let leaseId: string | undefined;
-        if (endpoint === 'commands') await control(client, row, actor, command as PlaybackCommand, session.status, now);
-        else if (endpoint === 'presenter') leaseId = presenter(row, actor, command as PresenterCommand, now);
-        else report(row, actor, command as PlaybackTelemetry, now);
+        let response: PlaybackResponse | ShowAudioHolderResponse;
+        if (endpoint === 'holder_stop') {
+          response = await stopHolder(client, row, command as StopShowAudio);
+        } else {
+          if (endpoint === 'commands') await control(client, row, actor, command as PlaybackCommand, session.status, now);
+          else if (endpoint === 'presenter') {
+            const presenterCommand = command as PresenterCommand;
+            let details: PresenterDetails | undefined;
+            if (presenterCommand.type === 'claim') {
+              checkPresenterRole(actor);
+              if ((await client.query('SELECT 1 FROM playback_stopped_clients WHERE session_id=$1 AND client_id=$2', [sessionId, presenterCommand.clientId])).rowCount) conflict('This page was stopped from the director page. Reload it to play the show audio here again.');
+              details = await presenterDetails(client, request, actor, session.title);
+            }
+            leaseId = presenter(row, actor, presenterCommand, now, details);
+          } else report(row, actor, command as PlaybackTelemetry, now);
+          response = { snapshot: snapshot(row, now), ...(leaseId ? { leaseId } : {}) };
+        }
         if (row.sample_revision !== priorSample) await save(client, row);
-        const response: PlaybackResponse = { snapshot: snapshot(row, now), ...(leaseId ? { leaseId } : {}) };
         await client.query('INSERT INTO playback_receipts(actor_id,command_id,request_hash,session_id,response) VALUES($1,$2,$3,$4,$5)', [actor.actor_id, command.commandId, requestHash, sessionId, response]);
         return { value: response };
       } catch (error) {
@@ -224,4 +287,6 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
   app.post<{ Params: Params }>('/api/sessions/:sessionId/playback/commands', request => execute(request, 'commands', PlaybackCommandSchema.parse(request.body)));
   app.post<{ Params: Params }>('/api/sessions/:sessionId/playback/presenter', request => execute(request, 'presenter', PresenterCommandSchema.parse(request.body)));
   app.post<{ Params: Params }>('/api/sessions/:sessionId/playback/telemetry', request => execute(request, 'telemetry', PlaybackTelemetrySchema.parse(request.body)));
+  app.get<{ Params: Params }>('/api/sessions/:sessionId/playback/holder', request => execute(request, 'holder'));
+  app.post<{ Params: Params }>('/api/sessions/:sessionId/playback/holder/stop', request => execute(request, 'holder_stop', StopShowAudioSchema.parse(request.body)));
 }
