@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { buildApp } from '../src/app';
 import { createPool } from '../src/database';
 import { hourlyLimitMessage, PICTURE_MESSAGES } from '../src/picture-limits';
-import { actionPictureView, imageVisibleTo, lastBeatInScene, portraitJobsView, scenePictureView, type ImageRow } from '../src/picture-views';
+import { actionPictureView, imageVisibleTo, lastBeatInScene, pinnedPictureView, portraitJobsView, scenePictureView, type ImageRow } from '../src/picture-views';
 import type { Actor } from '../src/repository';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -11,7 +11,7 @@ const suite = databaseUrl ? describe : describe.skip;
 const origin = 'http://localhost:3000';
 const hostToken = 'picture-views-test-host-credential';
 
-type Fields = Partial<Pick<ImageRow, 'owner_id' | 'session_id' | 'builder_id' | 'purpose' | 'subject_id' | 'attach' | 'status' | 'hidden' | 'message' | 'beat_id'>> & { released?: boolean | number; finished?: number; moment?: boolean };
+type Fields = Partial<Pick<ImageRow, 'owner_id' | 'session_id' | 'builder_id' | 'purpose' | 'subject_id' | 'attach' | 'status' | 'hidden' | 'message' | 'beat_id'>> & { released?: boolean | number; finished?: number; moment?: boolean; shelf?: boolean; showsBeat?: string };
 
 suite('picture views and visibility', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -42,6 +42,7 @@ suite('picture views and visibility', () => {
        VALUES($1,$2,$3,$4,$5,$6,'test-limit',$7,$8,$9,'A quiet harbor.',768,768,'fake','fake-image',$2,$10,$11,$12,$13,$14, now() + $15::double precision * interval '1 second', now() + $16 * interval '1 second', now() + $17::double precision * interval '1 second', $18)`,
       [id, row.owner_id, row.session_id, row.builder_id, purpose, row.subject_id, row.attach, status, row.hidden,
         status === 'ready' ? 'a'.repeat(64) : null, status === 'ready' ? 'image/jpeg' : null, status === 'ready' ? 1000 : null, row.message, row.beat_id, releasedAt, clock++, finishedAt, fields.moment ? JSON.stringify({ style: 'Painterly', model: 'flux-3-klein', scene: { title: 'Harbor', description: 'A quiet harbor.', place: 'Harbor' }, lines: [], cast: [], names: [] }) : null]);
+    if (fields.shelf || fields.showsBeat) await pool.query('UPDATE images SET shelf_only=$2, shows_beat_id=$3 WHERE id=$1', [id, Boolean(fields.shelf), fields.showsBeat ?? null]);
     return id;
   }
   // Turns a making picture into a ready one that finished that many seconds from now.
@@ -109,7 +110,7 @@ suite('picture views and visibility', () => {
 
     it('shows a ready picture to everyone and to the director', async () => {
       const ready = await insert();
-      expect(await scene()).toEqual({ shown: { imageId: ready, sceneId }, status: { sceneId, state: 'ready', imageId: ready, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: ready, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: ready, hidden: false, message: null, drawing: null } });
     });
 
     it('reports failed with its message and no picture when nothing was ever ready', async () => {
@@ -120,16 +121,16 @@ suite('picture views and visibility', () => {
     it('keeps the older ready picture public while a replacement is making or after it failed', async () => {
       const older = await insert();
       const replacement = await insert({ status: 'making' });
-      expect(await scene()).toEqual({ shown: { imageId: older, sceneId }, status: { sceneId, state: 'making', imageId: older, hidden: false, message: null, drawing: 'place' } });
+      expect(await scene()).toEqual({ shown: { imageId: older, sceneId, kind: 'place' }, status: { sceneId, state: 'making', imageId: older, hidden: false, message: null, drawing: 'place' } });
       await pool.query("UPDATE images SET status='failed', message='Pictures are busy right now. Try again in a minute.' WHERE id=$1", [replacement]);
-      expect(await scene()).toEqual({ shown: { imageId: older, sceneId }, status: { sceneId, state: 'failed', imageId: older, hidden: false, message: 'Pictures are busy right now. Try again in a minute.', drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: older, sceneId, kind: 'place' }, status: { sceneId, state: 'failed', imageId: older, hidden: false, message: 'Pictures are busy right now. Try again in a minute.', drawing: null } });
     });
 
     it('lets the newest ready picture win', async () => {
       await insert();
       const newest = await insert();
       const view = await scene();
-      expect(view.shown).toEqual({ imageId: newest, sceneId });
+      expect(view.shown).toEqual({ imageId: newest, sceneId, kind: 'place' });
       expect(view.status.imageId).toBe(newest);
     });
 
@@ -140,13 +141,13 @@ suite('picture views and visibility', () => {
       expect((await scene()).status).toMatchObject({ state: 'making', hidden: true, imageId: ready });
       await pool.query("UPDATE images SET hidden=false WHERE id=$1", [replacement]);
       expect((await scene()).status.hidden).toBe(false);
-      expect((await scene()).shown).toEqual({ imageId: ready, sceneId });
+      expect((await scene()).shown).toEqual({ imageId: ready, sceneId, kind: 'place' });
     });
 
     it('ignores cancelled rows, including a cancelled newest row', async () => {
       const ready = await insert();
       await insert({ status: 'cancelled', hidden: true, message: 'The scene changed before the picture was made.' });
-      expect(await scene()).toEqual({ shown: { imageId: ready, sceneId }, status: { sceneId, state: 'ready', imageId: ready, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: ready, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: ready, hidden: false, message: null, drawing: null } });
       await pool.query("UPDATE images SET status='cancelled', file_hash=NULL, content_type=NULL, byte_length=NULL WHERE id=$1", [ready]);
       expect((await scene()).status.state).toBe('none');
     });
@@ -162,7 +163,7 @@ suite('picture views and visibility', () => {
     it('never counts a held action picture, even a newer ready one', async () => {
       const older = await insert();
       await insert({ beat_id: 'beat-1' });
-      expect(await scene()).toEqual({ shown: { imageId: older, sceneId }, status: { sceneId, state: 'ready', imageId: older, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: older, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: older, hidden: false, message: null, drawing: null } });
       await insert({ beat_id: 'beat-1', status: 'making' });
       await insert({ beat_id: 'beat-2', status: 'failed', message: 'held failure' });
       expect((await scene()).status).toEqual({ sceneId, state: 'ready', imageId: older, hidden: false, message: null, drawing: null });
@@ -183,16 +184,16 @@ suite('picture views and visibility', () => {
       // The action row is made first and the scene row is created between its creation (0) and its release (100), so only the release time puts the action ahead.
       const action = await insert({ beat_id: 'beat-1', released: 100 });
       const sceneRow = await insert();
-      expect((await scene()).shown).toEqual({ imageId: action, sceneId });
+      expect((await scene()).shown).toEqual({ imageId: action, sceneId, kind: 'place' });
       expect((await scene()).status.imageId).toBe(action);
       await pool.query("UPDATE images SET released_at=now() - interval '1 hour' WHERE id=$1", [action]);
-      expect((await scene()).shown).toEqual({ imageId: sceneRow, sceneId });
+      expect((await scene()).shown).toEqual({ imageId: sceneRow, sceneId, kind: 'place' });
     });
 
     it('keeps the older ready picture shown when a released action picture failed', async () => {
       const older = await insert();
       await insert({ beat_id: 'beat-1', status: 'failed', message: 'The picture could not be made.', released: 100 });
-      expect(await scene()).toEqual({ shown: { imageId: older, sceneId }, status: { sceneId, state: 'failed', imageId: older, hidden: false, message: 'The picture could not be made.', drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: older, sceneId, kind: 'place' }, status: { sceneId, state: 'failed', imageId: older, hidden: false, message: 'The picture could not be made.', drawing: null } });
     });
   });
 
@@ -247,6 +248,39 @@ suite('picture views and visibility', () => {
     });
   });
 
+  describe('scenePictureView kinds and shelf pictures', () => {
+    it('says the shown picture shows a beat when it has a moment and the place otherwise', async () => {
+      const place = await insert();
+      expect((await scene()).shown).toEqual({ imageId: place, sceneId, kind: 'place' });
+      const beat = await insert({ moment: true });
+      expect((await scene()).shown).toEqual({ imageId: beat, sceneId, kind: 'beat' });
+      const released = await insert({ beat_id: 'beat-1', released: true, moment: true });
+      expect((await scene()).shown).toEqual({ imageId: released, sceneId, kind: 'beat' });
+    });
+
+    it('never shows a shelf picture, even a newer ready one', async () => {
+      const shown = await insert();
+      await insert({ shelf: true, moment: true, showsBeat: 'beat-1' });
+      expect(await scene()).toEqual({ shown: { imageId: shown, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: shown, hidden: false, message: null, drawing: null } });
+    });
+
+    it('leaves the status, the drawing line and the hidden flag alone while a shelf picture is drawn, fails or is hidden', async () => {
+      const shown = await insert();
+      const expected = { shown: { imageId: shown, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: shown, hidden: false, message: null, drawing: null } };
+      await insert({ shelf: true, status: 'making', moment: true });
+      expect(await scene()).toEqual(expected);
+      await insert({ shelf: true, status: 'failed', message: 'The picture could not be made.' });
+      expect(await scene()).toEqual(expected);
+      await insert({ shelf: true, hidden: true });
+      expect(await scene()).toEqual(expected);
+    });
+
+    it('reports none when the scene has only shelf pictures', async () => {
+      await insert({ shelf: true });
+      expect(await scene()).toEqual({ shown: null, status: { sceneId, state: 'none', imageId: null, hidden: false, message: null, drawing: null } });
+    });
+  });
+
   describe('lastBeatInScene', () => {
     it('is null when no beat has been published', async () => {
       expect(await lastBeat()).toBeNull();
@@ -293,25 +327,25 @@ suite('picture views and visibility', () => {
     it('keeps the action picture when a New picture asked for before the release finishes after it', async () => {
       const newPicture = await insert({ status: 'making' });
       const action = await insert({ beat_id: 'beat-1', released: 100 });
-      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: action, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
       await finish(newPicture, 200);
-      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: action, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
     });
 
     it('lets a New picture asked for after the release replace the action picture once it finishes', async () => {
       const action = await insert({ beat_id: 'beat-1', released: 0.5 });
       const newPicture = await insert({ status: 'making' });
-      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'making', imageId: action, hidden: false, message: null, drawing: 'place' } });
+      expect(await scene()).toEqual({ shown: { imageId: action, sceneId, kind: 'place' }, status: { sceneId, state: 'making', imageId: action, hidden: false, message: null, drawing: 'place' } });
       await finish(newPicture, 200);
-      expect(await scene()).toEqual({ shown: { imageId: newPicture, sceneId }, status: { sceneId, state: 'ready', imageId: newPicture, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: newPicture, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: newPicture, hidden: false, message: null, drawing: null } });
     });
 
     it('shows an action picture that was still being made at release over an older ready picture once it is ready', async () => {
       const older = await insert();
       const action = await insert({ beat_id: 'beat-1', status: 'making', released: 100 });
-      expect(await scene()).toEqual({ shown: { imageId: older, sceneId }, status: { sceneId, state: 'making', imageId: older, hidden: false, message: null, drawing: 'place' } });
+      expect(await scene()).toEqual({ shown: { imageId: older, sceneId, kind: 'place' }, status: { sceneId, state: 'making', imageId: older, hidden: false, message: null, drawing: 'place' } });
       await finish(action, 200);
-      expect(await scene()).toEqual({ shown: { imageId: action, sceneId }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
+      expect(await scene()).toEqual({ shown: { imageId: action, sceneId, kind: 'place' }, status: { sceneId, state: 'ready', imageId: action, hidden: false, message: null, drawing: null } });
     });
 
     it('breaks a tie in the moment by the larger id', async () => {
@@ -344,8 +378,8 @@ suite('picture views and visibility', () => {
     it.each([
       ['credit', PICTURE_MESSAGES.credit, PICTURE_MESSAGES.credit],
       ['key', PICTURE_MESSAGES.key, PICTURE_MESSAGES.key],
-      ['scene safety', PICTURE_MESSAGES.sceneSafety, 'The picture service would not draw this round. You can still publish it.'],
-      ['beat safety', PICTURE_MESSAGES.beatSafety, 'The picture service would not draw this round. You can still publish it.'],
+      ['scene safety', PICTURE_MESSAGES.sceneSafety, 'The picture service would not draw this beat. You can still publish it.'],
+      ['beat safety', PICTURE_MESSAGES.beatSafety, 'The picture service would not draw this beat. You can still publish it.'],
       ['beat failed', PICTURE_MESSAGES.beatFailed, null],
       ['scene failed', PICTURE_MESSAGES.sceneFailed, null],
       ['busy', PICTURE_MESSAGES.busy, null],
@@ -404,6 +438,86 @@ suite('picture views and visibility', () => {
       await insert({ purpose: 'npc', subject_id: npcIds[1]!, session_id: otherSessionId, attach: true, status: 'making' });
       expect(await jobs()).toEqual([{ npcId: npcIds[0], state: 'failed', message: 'still the newest real job' }]);
       expect(await jobs([npcIds[1]!])).toEqual([]);
+    });
+  });
+
+  describe('pinnedPictureView', () => {
+    const pin = (id: string | null, session = sessionId) => pool.query('UPDATE sessions SET pinned_image_id=$2 WHERE id=$1', [session, id]);
+    const pinned = async (session = sessionId) => {
+      const client = await pool.connect();
+      try { return await pinnedPictureView(client, session); } finally { client.release(); }
+    };
+    const npcName = async (index: number) => (await pool.query("SELECT data->>'displayName' AS name FROM npcs WHERE id=$1", [npcIds[index]])).rows[0]!.name as string;
+    const characterName = async (index: number) => (await pool.query("SELECT data->>'displayName' AS name FROM characters WHERE id=$1", [characterIds[index]])).rows[0]!.name as string;
+    async function publishActionRound(round: number) {
+      const id = randomUUID();
+      await pool.query("INSERT INTO beats(id, session_id, kind, phase, data) VALUES($1,$2,'action','published','{}')", [id, sessionId]);
+      await pool.query('INSERT INTO published_beats(id, session_id, beat_number, data) VALUES($1,$2,$3,$4)', [id, sessionId, beatCounter, { id, kind: 'action', beatNumber: beatCounter++, actionRoundNumber: round, segments: [] }]);
+      return id;
+    }
+
+    it('is null when nothing is pinned', async () => {
+      await insert();
+      expect(await pinned()).toBeNull();
+    });
+
+    it('names a pinned place picture, even a hidden or older one', async () => {
+      const place = await insert({ hidden: true });
+      await insert();
+      await pin(place);
+      expect(await pinned()).toEqual({ imageId: place, kind: 'place', label: 'The place' });
+    });
+
+    it('names a pinned beat picture from an action round by its round', async () => {
+      const beatId = await publishActionRound(3);
+      const action = await insert({ beat_id: beatId, released: true, moment: true });
+      await pin(action);
+      expect(await pinned()).toEqual({ imageId: action, kind: 'beat', label: 'Action round 3' });
+    });
+
+    it('calls a pinned shelf picture of a beat a beat', async () => {
+      const shelf = await insert({ shelf: true, moment: true });
+      await pin(shelf);
+      expect(await pinned()).toMatchObject({ imageId: shelf, kind: 'beat' });
+      expect((await pinned())!.label.length).toBeGreaterThan(0);
+    });
+
+    it('names a pinned NPC portrait after its NPC, even when it is no longer the current portrait', async () => {
+      const older = await insert({ purpose: 'npc', subject_id: npcIds[1]!, attach: true });
+      await pin(older);
+      expect(await pinned()).toEqual({ imageId: older, kind: 'portrait', label: `Portrait of ${await npcName(1)}` });
+    });
+
+    it('names a pinned library portrait after the character who uses it, and falls back to A portrait', async () => {
+      const card = await insert({ purpose: 'card', session_id: null, subject_id: 'editor-key' });
+      await pin(card);
+      expect(await pinned()).toEqual({ imageId: card, kind: 'portrait', label: 'A portrait' });
+      await pool.query("UPDATE characters SET data=jsonb_set(data, '{portraitId}', to_jsonb($3::text)) WHERE session_id=$1 AND id=$2", [sessionId, characterIds[1], card]);
+      expect(await pinned()).toEqual({ imageId: card, kind: 'portrait', label: `Portrait of ${await characterName(1)}` });
+    });
+
+    it.each(['making', 'failed', 'cancelled'] as const)('is null while the pinned picture is %s', async (status) => {
+      const picture = await insert({ status });
+      await pin(picture);
+      expect(await pinned()).toBeNull();
+    });
+
+    it('is null for a pinned picture still held for its beat, another show\'s picture or someone else\'s', async () => {
+      const held = await insert({ beat_id: 'beat-1', moment: true });
+      await pin(held);
+      expect(await pinned()).toBeNull();
+      const other = await insert({ session_id: otherSessionId });
+      await pin(other);
+      expect(await pinned()).toBeNull();
+      const foreign = await insert({ owner_id: 'someone-else' });
+      await pin(foreign);
+      expect(await pinned()).toBeNull();
+    });
+
+    it('only reads the asked show\'s pin', async () => {
+      const place = await insert();
+      await pin(place);
+      expect(await pinned(otherSessionId)).toBeNull();
     });
   });
 
@@ -490,6 +604,51 @@ suite('picture views and visibility', () => {
     it('does not let a player see a fresh seat portrait made in another show', async () => {
       const foreign = await insert({ purpose: 'character', session_id: otherSessionId, subject_id: characterIds[0]! });
       expect(await visible(player(0), foreign)).toBe(false);
+    });
+
+    const pin = (id: string, session = sessionId) => pool.query('UPDATE sessions SET pinned_image_id=$2 WHERE id=$1', [session, id]);
+
+    it('lets a seat and a stage link fetch the pinned picture, even an older NPC portrait or a hidden picture', async () => {
+      const older = await insert({ purpose: 'npc', subject_id: npcIds[1]!, attach: true });
+      const hiddenScene = await insert({ hidden: true });
+      for (const actor of [player(), stage]) {
+        expect(await visible(actor, older)).toBe(false);
+        expect(await visible(actor, hiddenScene)).toBe(false);
+      }
+      await pin(older);
+      for (const actor of [player(), stage]) expect(await visible(actor, older)).toBe(true);
+      await pin(hiddenScene);
+      for (const actor of [player(), stage]) {
+        expect(await visible(actor, hiddenScene)).toBe(true);
+        expect(await visible(actor, older)).toBe(false);
+      }
+    });
+
+    it('keeps a shelf picture from seats and the stage until it is pinned, but not from the director', async () => {
+      const shelf = await insert({ shelf: true, moment: true, showsBeat: 'beat-1' });
+      for (const actor of [player(), stage]) expect(await visible(actor, shelf)).toBe(false);
+      expect(await visible(director(), shelf)).toBe(true);
+      await pin(shelf);
+      for (const actor of [player(), stage]) expect(await visible(actor, shelf)).toBe(true);
+    });
+
+    it('keeps another show\'s picture and a held picture private, pinned or not', async () => {
+      const other = await insert({ session_id: otherSessionId });
+      const held = await insert({ beat_id: 'beat-1', moment: true });
+      for (const target of [null, other, held]) {
+        if (target) await pin(target);
+        for (const actor of [player(), stage]) {
+          expect(await visible(actor, other)).toBe(false);
+          expect(await visible(actor, held)).toBe(false);
+        }
+      }
+    });
+
+    it('does not let another show\'s pin open a picture', async () => {
+      const hiddenScene = await insert({ hidden: true });
+      await pin(hiddenScene, otherSessionId);
+      expect(await visible(player(), hiddenScene)).toBe(false);
+      expect(await visible(stage, hiddenScene)).toBe(false);
     });
 
     it('never exposes a scene picture through a portrait reference', async () => {

@@ -66,14 +66,14 @@ export function sceneCaption(
     const round = published.get(row.beat_id);
     if (row.status === 'cancelled') {
       return {
-        label: round ? `Earlier draft of action round ${round.actionRoundNumber}` : 'Earlier draft of a round',
+        label: round ? round.kind === 'conversation' ? `Earlier draft of beat ${round.beatNumber}` : `Earlier draft of action round ${round.actionRoundNumber}` : 'Earlier draft of a round',
         line: round ? beatLine(round) : null,
         tag: 'Not shown on stream',
       };
     }
     if (round) {
       return {
-        label: `Action round ${round.actionRoundNumber}`,
+        label: round.kind === 'conversation' ? `Beat ${round.beatNumber}` : `Action round ${round.actionRoundNumber}`,
         line: beatLine(round),
         tag: row.released_at ? hiddenTag : 'Not shown on stream',
       };

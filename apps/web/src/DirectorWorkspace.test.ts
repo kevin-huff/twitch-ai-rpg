@@ -16,8 +16,8 @@ const stubs = {
   DirectorQueue: stub('DirectorQueue', { props: ['modelValue', 'snapshot'] }),
   GalleryPanel: { name: 'GalleryPanel', props: ['status', 'busy'], emits: ['action'], template: '<div data-testid="gallery-stub" />' },
   Story: stub('Story', { props: ['history', 'characters', 'corrections'] }),
-  LiveControls: stub('LiveControls', { props: ['snapshot', 'busy'] }), CastPresence: stub('CastPresence', { props: ['snapshot', 'busy'] }), CorrectionControls: stub('CorrectionControls', { props: ['snapshot', 'busy'] }), RestControls: stub('RestControls', { props: ['snapshot', 'busy'] }), BeatSteering: stub('BeatSteering', { props: ['snapshot', 'busy'] }), OperationsPanel: stub('OperationsPanel'),
-  ScenePicturePanel: stub('ScenePicturePanel'), NpcPortraitControls: stub('NpcPortraitControls'), PictureAvatar: stub('PictureAvatar'),
+  LiveControls: stub('LiveControls', { props: ['snapshot', 'busy'] }), CastPresence: stub('CastPresence', { props: ['snapshot', 'busy', 'aiBusy'] }), CorrectionControls: stub('CorrectionControls', { props: ['snapshot', 'busy'] }), RestControls: stub('RestControls', { props: ['snapshot', 'busy', 'aiBusy'] }), BeatSteering: stub('BeatSteering', { props: ['snapshot', 'busy'] }), OperationsPanel: stub('OperationsPanel'),
+  ScenePicturePanel: stub('ScenePicturePanel'), PictureShelf: stub('PictureShelf', { props: ['sessionId', 'snapshot', 'busy'] }), NpcPortraitControls: stub('NpcPortraitControls'), PictureAvatar: stub('PictureAvatar'),
 };
 
 const PAUSE_TEXT = 'Pause requested. Please check in with the table.';
@@ -514,6 +514,33 @@ describe('On the stage and Show tools', () => {
   });
 });
 
+describe('picture shelf mount', () => {
+  const shelfIn = (wrapper: VueWrapper) => wrapper.get('[data-testid="director-controls"]').element.children[2].querySelector('[data-testid="PictureShelf-stub"]');
+
+  it('sits below the scene picture panel when pictures are on and the show has not ended', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { picturesEnabled: true }));
+    const column = wrapper.get('[data-testid="director-controls"]').element.children[2];
+    expect([...column.children].map(node => node.getAttribute('data-testid'))).toEqual(['ScenePicturePanel-stub', 'PictureShelf-stub']);
+    const shelf = wrapper.getComponent({ name: 'PictureShelf' });
+    expect(shelf.props('sessionId')).toBe('show');
+    expect(shelf.props('busy')).toBe(false);
+    expect((shelf.props('snapshot') as { role: string }).role).toBe('director');
+    wrapper.unmount();
+  });
+
+  it('is left out when pictures are off', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { picturesEnabled: false }));
+    expect(shelfIn(wrapper)).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('is left out once the show has ended', async () => {
+    const wrapper = await mountWorkspace(snapshot('ended', [], { picturesEnabled: true }));
+    expect(shelfIn(wrapper)).toBeNull();
+    wrapper.unmount();
+  });
+});
+
 describe('full countdown notice', () => {
   const track = (over: Record<string, unknown> = {}) => ({ id: 't1', kind: 'countdown', label: 'Closing time', current: 4, max: 4, enabled: true, completionText: 'The doors lock.', ...over });
   const notices = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="countdown-full"]');
@@ -573,6 +600,15 @@ describe('full countdown notice', () => {
 
 describe('pausing while the AI works', () => {
   const statusCalls = () => transport.command.mock.calls.filter(call => call[1].type === 'set_status');
+  const beatMeta = { commandId: 'c-1', beatId: 'beat-2', expectedBeatRevision: 3 };
+  // Starts a request that stays open until the returned function is called.
+  const holdRequest = (command: Record<string, unknown>) => {
+    let finish: () => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
+    const done = table.beatWork(() => table.send(command as never));
+    return { finish: async () => { finish(); await done; await flushPromises(); } };
+  };
+  const planRequest = () => holdRequest({ type: 'plan_beat', ...beatMeta, submissionIds: [] });
 
   it('pauses at once when no beat work is running', async () => {
     const wrapper = await mountWorkspace(snapshot());
@@ -584,9 +620,9 @@ describe('pausing while the AI works', () => {
     wrapper.unmount();
   });
 
-  it('asks first during beat work, and Pause anyway then pauses', async () => {
+  it('asks first while a plan request runs, and Pause anyway then pauses', async () => {
     const wrapper = await mountWorkspace(snapshot());
-    table.beatBusy.value = true;
+    const request = planRequest();
     await flushPromises();
     await testid(wrapper, 'top-pause').trigger('click');
     await flushPromises();
@@ -599,23 +635,72 @@ describe('pausing while the AI works', () => {
     expect(statusCalls()).toHaveLength(1);
     expect(statusCalls()[0][1]).toMatchObject({ status: 'paused', expectedStateRevision: 4 });
     expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    await request.finish();
     wrapper.unmount();
   });
 
-  it('Keep going closes the row and sends nothing', async () => {
+  it('asks first while a script request runs too', async () => {
     const wrapper = await mountWorkspace(snapshot());
-    table.beatBusy.value = true;
+    const request = holdRequest({ type: 'render_beat', ...beatMeta });
+    await flushPromises();
+    await testid(wrapper, 'top-pause').trigger('click');
+    await flushPromises();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(true);
+    expect(statusCalls()).toHaveLength(0);
+    await request.finish();
+    wrapper.unmount();
+  });
+
+  it.each([
+    ['approve_stakes', { classification: 'ordinary', contracts: [] }],
+    ['lock_beat', {}],
+    ['publish_beat', {}],
+    ['abort_beat', { reason: 'No.' }],
+    ['set_status', { status: 'live', expectedStateRevision: 4 }],
+  ])('pauses at once while %s runs, because that is not AI work', async (type, extra) => {
+    const wrapper = await mountWorkspace(snapshot());
+    const request = holdRequest({ type, ...beatMeta, ...extra });
+    await flushPromises();
+    expect(table.beatBusy.value).toBe(true);
+    expect(table.aiWorking.value).toBe(false);
+    await testid(wrapper, 'top-pause').trigger('click');
+    await flushPromises();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    expect(statusCalls().filter(call => call[1].status === 'paused')).toHaveLength(1);
+    await request.finish();
+    wrapper.unmount();
+  });
+
+  it('closes the row when the request ends', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    const request = planRequest();
+    await flushPromises();
+    await testid(wrapper, 'top-pause').trigger('click');
+    await flushPromises();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(true);
+    await request.finish();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    expect(statusCalls()).toHaveLength(0);
+    wrapper.unmount();
+  });
+
+  it('Keep going closes the row and sends no pause', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    const request = planRequest();
+    await flushPromises();
     await testid(wrapper, 'top-pause').trigger('click');
     await testid(wrapper, 'pause-keep-going').trigger('click');
     await flushPromises();
     expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
-    expect(transport.command).not.toHaveBeenCalled();
+    expect(statusCalls()).toHaveLength(0);
+    await request.finish();
     wrapper.unmount();
   });
 
   it('asks from Pause now on a pause request too', async () => {
     const wrapper = await mountWorkspace(snapshot('live', [{ ...submission('p', 'ooc'), text: PAUSE_TEXT }]));
-    table.beatBusy.value = true;
+    const request = planRequest();
+    await flushPromises();
     await buttonNamed(wrapper, 'Pause now')!.trigger('click');
     await flushPromises();
     expect(statusCalls()).toHaveLength(0);
@@ -623,6 +708,7 @@ describe('pausing while the AI works', () => {
     await testid(wrapper, 'pause-anyway').trigger('click');
     await flushPromises();
     expect(statusCalls()).toHaveLength(1);
+    await request.finish();
     wrapper.unmount();
   });
 });
@@ -690,13 +776,27 @@ describe('tools that keep or untick waiting lines', () => {
 });
 
 describe('who is here, rest and the cast panel', () => {
-  it('waits for the AI: only the beat panel work disables the new panels and steering', async () => {
+  it('waits for the AI: beat panel work locks the new panels and steering, but only a plan or script request sets aiBusy', async () => {
     const wrapper = await mountWorkspace(snapshot());
+    const beatMeta = { commandId: 'c-1', beatId: 'beat-2', expectedBeatRevision: 3 };
+    const aiBusy = () => ['CastPresence', 'RestControls'].map(name => wrapper.findComponent({ name }).props('aiBusy'));
     for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
-    table.beatBusy.value = true;
+    expect(aiBusy()).toEqual([false, false]);
+    let finish: () => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
+    const quick = table.beatWork(() => table.send({ type: 'lock_beat', ...beatMeta }));
     await flushPromises();
     for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(true);
+    expect(aiBusy()).toEqual([false, false]);
+    finish(); await quick; await flushPromises();
+    transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
+    const planning = table.beatWork(() => table.send({ type: 'plan_beat', ...beatMeta, submissionIds: [] }));
+    await flushPromises();
+    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(true);
+    expect(aiBusy()).toEqual([true, true]);
     for (const name of ['LiveControls', 'CorrectionControls']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
+    finish(); await planning; await flushPromises();
+    expect(aiBusy()).toEqual([false, false]);
     wrapper.unmount();
   });
 

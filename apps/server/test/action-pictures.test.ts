@@ -248,14 +248,19 @@ suite('action pictures', () => {
     expect((await load(second!)).status).toBe('making');
   });
 
-  it('makes nothing for a conversation round or when pictures are off', async () => {
+  it('holds one picture for a conversation round, releases it, and makes nothing without narration or when pictures are off', async () => {
     const current = await state();
     const { images } = service();
-    expect(await reserveAction(images, current, beat({ kind: 'conversation' }))).toBeNull();
+    const held = await reserveAction(images, current, beat({ kind: 'conversation' }));
+    expect(held).not.toBeNull();
+    expect(await load(held!)).toMatchObject({ beat_id: 'beat-action-1', released_at: null });
+    expect(await release(images)).toBe(held);
+    const empty = beat({ id: 'beat-conv-2', kind: 'conversation', draft: draft('   ') });
+    expect(await reserveAction(images, current, empty)).toBeNull();
     const { images: off } = service(null);
     expect(await reserveAction(off, current, beat())).toBeNull();
     expect(await release(off)).toBeNull();
-    expect(await rows()).toEqual([]);
+    expect(await rows()).toHaveLength(1);
   });
 
   it('releases the newest held picture of the round while it is being made or ready', async () => {

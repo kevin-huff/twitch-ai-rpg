@@ -79,9 +79,9 @@ suite('background picture job', () => {
     ...moment, cast: moment.cast.map((person, index) => ({ ...person, imageNumber: numbers[index]!, portraitId: numbers[index] === null ? null : person.portraitId })),
   });
   // Beat ids are unique across sessions; the unique index allows one open round per session, so a test makes at most one.
-  async function insertBeat(phase: string) {
+  async function insertBeat(phase: string, kind: 'action' | 'conversation' = 'action') {
     const id = randomUUID();
-    await pool.query("INSERT INTO beats(id, session_id, kind, phase, data) VALUES($1,$2,'action',$3,'{}')", [id, sessionId, phase]);
+    await pool.query("INSERT INTO beats(id, session_id, kind, phase, data) VALUES($1,$2,$4,$3,'{}')", [id, sessionId, phase, kind]);
     return id;
   }
   const load = async (id: string) => (await pool.query<ImageRow>('SELECT * FROM images WHERE id=$1', [id])).rows[0]!;
@@ -153,6 +153,19 @@ suite('background picture job', () => {
     expect(await run(held)).toEqual({ status: 'ready' });
     expect(provider.requests.map(request => request.title)).toEqual(['Action picture', 'Action picture']);
     expect(await load(held)).toMatchObject({ status: 'ready', released_at: null });
+  });
+
+  it('titles the picture of a conversation beat Beat picture, held or released, while action rounds stay Action picture', async () => {
+    const talk = await insertBeat('draft_review', 'conversation');
+    const heldTalk = await insert({ beat_id: talk });
+    const releasedTalk = await insert({ beat_id: talk, released: true });
+    const { provider, run } = setup();
+    expect(await run(heldTalk)).toEqual({ status: 'ready' });
+    expect(await run(releasedTalk)).toEqual({ status: 'ready' });
+    await pool.query("UPDATE beats SET phase='published' WHERE id=$1", [talk]);
+    const action = await insert({ beat_id: await insertBeat('draft_review') });
+    expect(await run(action)).toEqual({ status: 'ready' });
+    expect(provider.requests.map(request => request.title)).toEqual(['Beat picture', 'Beat picture', 'Action picture']);
   });
 
   it('makes a held picture whose round has no row, and still titles a plain scene picture Scene picture', async () => {

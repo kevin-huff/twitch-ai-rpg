@@ -3,7 +3,7 @@ import {
   SessionStateSchema, SessionSnapshotSchema, PublicCorrectionSchema, GuidanceSchema, type Guidance, type SessionState, type Beat, type Submission,
   type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection, type GalleryStatus,
 } from '@rpg/contracts';
-import { actionPictureView, lastBeatInScene, portraitJobsView, scenePictureView } from './picture-views';
+import { actionPictureView, lastBeatInScene, pinnedPictureView, portraitJobsView, scenePictureView } from './picture-views';
 import { pictureSettingsOf } from './picture-settings';
 
 export class AppError extends Error {
@@ -111,8 +111,9 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   } : null;
   const picturesEnabled = Boolean(options.picturesEnabled);
   const scenePicture = picturesEnabled ? await scenePictureView(client, sessionId, state.session.scene.id) : null;
+  const pinnedPicture = picturesEnabled ? await pinnedPictureView(client, sessionId) : null;
   const base = {
-    schemaVersion: 1 as const, session: state.session, eventSeq, picturesEnabled, scenePicture: scenePicture?.shown ?? null,
+    schemaVersion: 1 as const, session: state.session, eventSeq, picturesEnabled, scenePicture: scenePicture?.shown ?? null, ...(pinnedPicture ? { pinnedPicture } : {}),
     characters: state.characters.filter((character) => role !== 'stage' || character.approved).map(({ id, displayName, traits, strain, appearance, approved, ready, portraitId }) => ({ id, displayName, traits, strain, appearance, approved, ready, portraitId })),
     npcs: state.npcs.map(({ id, displayName, role, appearance, status, voiceProfileId, portraitId }) => ({ id, displayName, role, appearance, status, voiceProfileId, portraitId })),
     tracks: state.tracks.filter((track) => track.visibility === 'public').map(({ id, label, kind, current, max, completionText, enabled }) => ({ id, label, kind, current, max, completionText, enabled })),
@@ -128,7 +129,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   const jobs = (await client.query('SELECT id,beat_id,task,generation,status,error FROM generation_jobs WHERE session_id=$1 ORDER BY created_at', [sessionId])).rows.map((row) => ({ id: row.id, beatId: row.beat_id, task: row.task, generation: row.generation, status: row.status, error: row.error }));
   return SessionSnapshotSchema.parse({ ...base, role, activeBeat: beat, submissions: all, npcDetails: state.npcs, locations: state.locations, characterDetails: state.characters, jobs, directorNotes: state.directorNotes, ...(state.setup ? { setup: state.setup } : {}),
     scenePictureStatus: scenePicture?.status ?? null,
-    actionPicture: picturesEnabled && beat?.kind === 'action' && beat.phase === 'draft_review' ? await actionPictureView(client, sessionId, beat.id) : null,
+    actionPicture: picturesEnabled && beat?.phase === 'draft_review' ? await actionPictureView(client, sessionId, beat.id) : null,
     portraitJobs: picturesEnabled ? await portraitJobsView(client, sessionId, state.npcs.map(npc => npc.id)) : [],
     pictureSettings: picturesEnabled && options.defaultPictureModel ? await pictureSettingsOf(client, state, options.defaultPictureModel) : null,
     lastSceneBeatId: picturesEnabled ? await lastBeatInScene(client, sessionId) : null,

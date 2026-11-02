@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { STRAIN_MAX, isPlayerSegmentKind, type PublicActionContract, type SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
-import { pictureUrl, portraitAlt, portraitIdFor, shownScenePicture } from './pictures';
+import { pictureUrl, portraitAlt, displayedPicture, portraitIdFor, shownScenePicture } from './pictures';
 import {
   AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, slateKind, sortRolls, speakerName, statusLabel, traitName, wagerOutcomes
 } from './stage-format';
@@ -32,7 +32,7 @@ function imageFailed(id: string) {
   failedImages.value = new Set(failedImages.value).add(id);
 }
 const shownImageKey = computed(() => {
-  const ids = [shownScenePicture(props.snapshot)?.imageId ?? null, ...props.snapshot.characters.map(character => portraitIdFor(props.snapshot, character.id))];
+  const ids = [props.snapshot.picturesEnabled === true ? props.snapshot.pinnedPicture?.imageId ?? null : null, shownScenePicture(props.snapshot)?.imageId ?? null, ...props.snapshot.characters.map(character => portraitIdFor(props.snapshot, character.id))];
   return ids.filter((id): id is string => !!id).join('|');
 });
 // A failed picture is remembered only while it stays shown; a fresh show gets one new try.
@@ -42,10 +42,9 @@ watch(shownImageKey, key => {
   if (kept.length !== failedImages.value.size) failedImages.value = new Set(kept);
 });
 const sessionScope = computed(() => ({ kind: 'session' as const, sessionId: props.snapshot.session.id }));
-const cornerId = computed(() => {
-  const id = shownScenePicture(props.snapshot)?.imageId ?? null;
-  return id && !failedImages.value.has(id) ? id : null;
-});
+const corner = computed(() => displayedPicture(props.snapshot, failedImages.value));
+const cornerId = computed(() => corner.value?.imageId ?? null);
+const cornerAlt = computed(() => corner.value?.pinned ? corner.value.label ?? props.snapshot.session.scene.title : props.snapshot.session.scene.title);
 const cornerSrc = computed(() => cornerId.value ? pictureUrl(sessionScope.value, cornerId.value) : null);
 function chipPortrait(characterId: string): string | null {
   const id = portraitIdFor(props.snapshot, characterId);
@@ -315,7 +314,7 @@ onBeforeUnmount(() => {
     </div>
 
     <img
-      v-if="cornerSrc" class="scene-corner" :src="cornerSrc" :alt="snapshot.session.scene.title"
+      v-if="cornerSrc" class="scene-corner" :class="{ 'fit-whole': corner?.pinned && corner.kind === 'portrait' }" :src="cornerSrc" :alt="cornerAlt"
       @error="imageFailed(cornerId!)"
     >
 
@@ -415,6 +414,8 @@ onBeforeUnmount(() => {
   position: absolute; left: 96px; top: 184px; width: 336px; height: 192px; padding: 12px; box-sizing: border-box; object-fit: cover;
   border: 0; border-radius: 0; background: var(--night); box-shadow: var(--canvas-frame-window); clip-path: var(--cut-1);
 }
+
+.scene-corner.fit-whole { object-fit: contain; background: var(--void); }
 
 .top-right { right: 96px; top: 60px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .ai-badge {

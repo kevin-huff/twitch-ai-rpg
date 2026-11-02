@@ -24,7 +24,8 @@ suite('action round pictures: hiding, failure and abort', () => {
   let app: App | null = null;
   let host = '';
   // The fake provider fails while `failing` is set, so a test decides which pictures can be made.
-  const control: { failing: boolean } = { failing: false };
+  // `gate` holds every picture call until a test releases it.
+  const control: { failing: boolean; gate: Promise<void> | null } = { failing: false, gate: null };
 
   const cookie = (response: { headers: Record<string, unknown> }) => String(response.headers['set-cookie']).split(';')[0]!;
   const request = (url: string, payload?: Record<string, unknown>, credential = host): Promise<Reply> => app!.inject({
@@ -32,10 +33,11 @@ suite('action round pictures: hiding, failure and abort', () => {
   });
   async function boot() {
     control.failing = false;
+    control.gate = null;
     const hostToken = `action-round-pictures-host-${randomUUID()}`;
     app = await buildApp({
       databaseUrl: databaseUrl!, hostToken, origin, serveStatic: false, assetDir,
-      images: new FakeImageProvider({ fail: () => control.failing ? new ProviderError('http_error', 'Sogni') : null }),
+      images: new FakeImageProvider({ fail: () => control.failing ? new ProviderError('http_error', 'Sogni') : null, hold: () => control.gate ?? Promise.resolve() }),
     });
     host = cookie(await app.inject({ method: 'POST', url: '/api/auth/host', headers: { origin }, payload: { token: hostToken } }));
   }
@@ -78,7 +80,7 @@ suite('action round pictures: hiding, failure and abort', () => {
     return { show, first: (await rows(show))[0]! };
   }
   // Runs an action round to draft review and waits until its picture is no longer being made.
-  async function draftedActionRound(show: Show) {
+  async function renderedActionRound(show: Show) {
     let view = await director(show);
     view = await ok(show, { type: 'open_beat', kind: 'action', expectedInputEpoch: view.session.inputEpoch });
     await ok(show, {
@@ -90,7 +92,11 @@ suite('action round pictures: hiding, failure and abort', () => {
     view = await ok(show, beat('plan_beat', { submissionIds: view.submissions.filter(item => item.status === 'queued').map(item => item.id) }));
     view = await ok(show, beat('approve_stakes', { classification: 'action', contracts: view.activeBeat!.contracts }));
     view = await ok(show, beat('lock_beat'));
-    view = await ok(show, beat('render_beat'));
+    await ok(show, beat('render_beat'));
+    return director(show);
+  }
+  async function draftedActionRound(show: Show) {
+    await renderedActionRound(show);
     await waitFor(async () => (await director(show)).actionPicture?.state !== 'making', 'the action picture to finish');
     return director(show);
   }
@@ -128,8 +134,8 @@ suite('action round pictures: hiding, failure and abort', () => {
     const shown = await request(`/api/sessions/${show.sessionId}/scene-picture/show`, {});
     expect(shown.statusCode, shown.body).toBe(200);
     const sceneId = (await director(show)).session.scene.id;
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: action.id, sceneId });
-    expect((await playerView(show)).scenePicture).toEqual({ imageId: action.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
+    expect((await playerView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
     expect((await director(show)).scenePictureStatus).toMatchObject({ imageId: action.id, hidden: false });
   });
 
@@ -145,8 +151,8 @@ suite('action round pictures: hiding, failure and abort', () => {
     expect(published.activeBeat).toBeNull();
     expect((await actionRow(show)).released_at).toBeNull();
     const sceneId = (await director(show)).session.scene.id;
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
-    expect((await playerView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
+    expect((await playerView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: first.id });
   });
 
@@ -160,11 +166,44 @@ suite('action round pictures: hiding, failure and abort', () => {
     await ok(show, { type: 'abort_beat', beatId: drafted.activeBeat!.id, expectedBeatRevision: drafted.activeBeat!.revision, reason: 'The players changed their minds.' });
 
     expect((await actionRow(show)).released_at).toBeNull();
+    expect((await actionRow(show)).status).toBe('cancelled');
     const sceneId = (await director(show)).session.scene.id;
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
-    expect((await playerView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
+    expect((await playerView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
     expect((await director(show)).actionPicture).toBeNull();
     expect((await request(`/api/sessions/${show.sessionId}/images/${action.id}`, undefined, show.stage)).statusCode).toBe(404);
     expect((await request(`/api/sessions/${show.sessionId}/images/${action.id}`, undefined, show.player)).statusCode).toBe(404);
+  });
+
+  it('stops a held picture that is still being drawn when its beat is abandoned', async () => {
+    await boot();
+    const { show } = await liveWithPicture();
+    let open: () => void = () => undefined;
+    control.gate = new Promise<void>((resolve) => { open = resolve; });
+    const view = await renderedActionRound(show);
+    await waitFor(async () => (await rows(show)).some(row => row.beat_id && row.status === 'making'), 'the held picture to start');
+
+    await ok(show, { type: 'abort_beat', beatId: view.activeBeat!.id, expectedBeatRevision: view.activeBeat!.revision, reason: 'Never mind.' });
+    open();
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const held = await actionRow(show);
+    expect(held.status).toBe('cancelled');
+    expect(held.released_at).toBeNull();
+  });
+
+  it('leaves only the next beat\'s picture held after an abandoned beat', async () => {
+    await boot();
+    const { show } = await liveWithPicture();
+    const drafted = await draftedActionRound(show);
+    await ok(show, { type: 'abort_beat', beatId: drafted.activeBeat!.id, expectedBeatRevision: drafted.activeBeat!.revision, reason: 'Never mind.' });
+    const narrating = await ok(show, { type: 'narrate_scene', expectedInputEpoch: (await director(show)).session.inputEpoch });
+    await ok(show, { type: 'render_beat', beatId: narrating.activeBeat!.id, expectedBeatRevision: narrating.activeBeat!.revision });
+    await waitFor(async () => (await rows(show)).filter(row => row.beat_id && row.status === 'ready').length === 1, 'the next beat\'s picture');
+
+    const held = (await rows(show)).filter(row => row.beat_id && row.released_at === null);
+    expect(held).toHaveLength(2);
+    expect(held.filter(row => row.status !== 'cancelled')).toHaveLength(1);
+    expect(held.filter(row => row.status === 'cancelled')).toHaveLength(1);
   });
 });

@@ -16,6 +16,7 @@ import DirectorQueue from './DirectorQueue.vue';
 import DirectorStatusStrip from './DirectorStatusStrip.vue';
 import type { GalleryAction, PictureSettings } from '@rpg/contracts';
 import ScenePicturePanel from './ScenePicturePanel.vue';
+import PictureShelf from './PictureShelf.vue';
 import GalleryPanel from './GalleryPanel.vue';
 import NpcPortraitControls from './NpcPortraitControls.vue';
 import PictureAvatar from './PictureAvatar.vue';
@@ -23,7 +24,7 @@ import { api } from './api';
 import { pictureUrl } from './pictures';
 
 
-const { sessionId, stage, snapshot, busy, beatBusy, error, director, setup, latestHistory, work, send, refresh, onSnapshot, setStatus, nameOf } = useTable();
+const { sessionId, stage, snapshot, busy, beatBusy, aiWorking, error, director, setup, latestHistory, work, send, refresh, onSnapshot, setStatus, nameOf } = useTable();
 
 const beat = computed(() => director.value?.activeBeat ?? null);
 const pending = computed(() => director.value?.submissions.filter(item => ['queued', 'selected'].includes(item.status)) ?? []);
@@ -80,10 +81,10 @@ const endError = ref('');
 const askToEnd = () => { endError.value = ''; confirmingEnd.value = true; };
 const keepGoing = () => { confirmingEnd.value = false; endError.value = ''; };
 const confirmingPause = ref(false);
-const askToPause = () => { if (beatBusy.value) confirmingPause.value = true; else setStatus('paused'); };
+const askToPause = () => { if (aiWorking.value) confirmingPause.value = true; else setStatus('paused'); };
 const pauseAnyway = () => { confirmingPause.value = false; return setStatus('paused'); };
 const keepGoingPause = () => { confirmingPause.value = false; };
-watch([paused, ended], ([isPaused, isEnded]) => { if (isPaused || isEnded) confirmingPause.value = false; });
+watch([paused, ended, aiWorking], ([isPaused, isEnded, working]) => { if (isPaused || isEnded || !working) confirmingPause.value = false; });
 const endShow = () => work(async () => {
   endError.value = '';
   try {
@@ -180,9 +181,9 @@ onUnmounted(stopListening);
               <summary>Show tools</summary>
               <div class="stack">
                 <LiveControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
-                <CastPresence :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
+                <CastPresence :snapshot="director" :busy="busy || beatBusy" :ai-busy="aiWorking" @command="sendOnly" />
                 <CorrectionControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
-                <RestControls :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
+                <RestControls :snapshot="director" :busy="busy || beatBusy" :ai-busy="aiWorking" @command="sendOnly" />
                 <BeatSteering :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
                 <OperationsPanel :session-id="sessionId" />
                 <section class="panel"><p class="eyebrow">In the room</p><div v-for="npc in director.npcDetails" :key="npc.id" class="queue-item"><h3>{{ npc.displayName }}</h3><p class="muted">{{ npc.role }} · {{ npc.status }}</p><NpcPortraitControls :name="npc.displayName" :image-url="portraitSrc(npc.portraitId)" :state="portraitJob(npc.id)?.state ?? null" :message="portraitJob(npc.id)?.message ?? null" :enabled="picturesOn" :disabled="busy || ended" :can-create="Boolean(npc.appearance?.trim() || npc.role?.trim())" @create="createPortrait(npc.id)" @remove="removePortrait(npc.id)" /><details><summary>Director notes & memory</summary><p class="private-note">{{ npc.goal }}</p><p v-for="secret in npc.secrets" :key="secret" class="private-note">Secret: {{ secret }}</p><p v-for="memory in npc.knowledge" :key="memory.id" class="private-note">{{ memory.category }} · {{ memory.statement }}</p></details></div></section>
@@ -193,7 +194,7 @@ onUnmounted(stopListening);
               </div>
             </details>
           </section>
-          <aside class="stack"><ScenePicturePanel :snapshot="director" :busy="busy" :toggling="pictureToggling" @new-picture="newPicture" @draw-beat="drawBeat" @save-settings="savePictureSettings" @hide="hidePicture" @show="showPicture" /></aside>
+          <aside class="stack"><ScenePicturePanel :snapshot="director" :busy="busy" :toggling="pictureToggling" @new-picture="newPicture" @draw-beat="drawBeat" @save-settings="savePictureSettings" @hide="hidePicture" @show="showPicture" /><PictureShelf v-if="picturesOn && !ended" :session-id="sessionId" :snapshot="director" :busy="busy" /></aside>
     </div>
   </template>
 </template>

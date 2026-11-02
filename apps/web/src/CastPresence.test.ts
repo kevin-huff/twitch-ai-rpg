@@ -18,7 +18,7 @@ function snapshot(patch: { status?: string; activeBeat?: unknown; setup?: unknow
 }
 const beat = (phase: string) => ({ id: 'beat1', phase });
 const field = (id: string) => `[data-testid="${id}"]`;
-const mountPanel = (current = snapshot(), busy = false) => mount(CastPresence, { props: { snapshot: current, busy } });
+const mountPanel = (current = snapshot(), busy = false, aiBusy = false) => mount(CastPresence, { props: { snapshot: current, busy, aiBusy } });
 
 describe('Who is here panel', () => {
   it('lists who is here now, or says nobody is', async () => {
@@ -136,6 +136,35 @@ describe('Who is here panel', () => {
       await wrapper.get('form').trigger('submit');
       expect(wrapper.emitted('command')![0][0]).toMatchObject({ expectedStateRevision: 8 });
     });
+
+    it('keeps the notice and Start over when the ticks are set back to how they started', async () => {
+      const wrapper = mountPanel();
+      await wrapper.get(field('begin-cast')).trigger('click');
+      await wrapper.get(field('here-ivy')).setValue(true);
+      await wrapper.setProps({ snapshot: snapshot({ stateRevision: 8 }) });
+      await wrapper.get(field('here-ivy')).setValue(false);
+      expect(wrapper.text()).toContain('The show changed while you were choosing.');
+      expect(wrapper.find(field('cast-reset')).exists()).toBe(true);
+      expect(wrapper.get(field('save-cast')).attributes('disabled')).toBeDefined();
+    });
+  });
+
+  it('reads Waiting for the AI to finish while the AI works, and Saving only during its own save', async () => {
+    const wrapper = mountPanel(snapshot(), false, true);
+    expect(wrapper.get(field('begin-cast')).attributes('disabled')).toBeDefined();
+    await wrapper.setProps({ aiBusy: false });
+    await wrapper.get(field('begin-cast')).trigger('click');
+    await wrapper.get(field('here-ivy')).setValue(true);
+    expect(wrapper.get(field('save-cast')).text()).toBe('Save who is here');
+    await wrapper.setProps({ busy: true });
+    expect(wrapper.get(field('save-cast')).text()).toBe('Save who is here');
+    await wrapper.setProps({ busy: false });
+    await wrapper.get('form').trigger('submit');
+    expect(wrapper.get(field('save-cast')).text()).toBe('Saving…');
+    await wrapper.setProps({ busy: true });
+    await wrapper.setProps({ busy: false });
+    await wrapper.setProps({ aiBusy: true });
+    expect(wrapper.get(field('save-cast')).text()).toBe('Waiting for the AI to finish');
   });
 
   it('gives every checkbox its own help line over 20 characters, outside its label', async () => {

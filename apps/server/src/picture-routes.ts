@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { PICTURE_MODELS, PictureSettingsSchema } from '@rpg/contracts';
+import { BeatPictureRequestSchema, PICTURE_MODELS, PictureSettingsSchema } from '@rpg/contracts';
 import { transaction } from './database';
 import { AppError, authorize, conflict, readState, type Actor } from './repository';
 import { recordEvent } from './commands';
@@ -25,6 +25,7 @@ const NPC_ONLY = 'Only the director can change portraits of non-player character
 const NPC_MISSING = 'That character is not in this session.';
 const NPC_NOTHING_TO_DRAW = 'Give this character an appearance or a role first.';
 const NPC_MAKING = 'A portrait for this character is already being made. Wait for it to finish.';
+const BEAT_NOT_PUBLISHED = 'That beat has not been published yet.';
 const MODEL_UNKNOWN = 'Choose a picture model from the list.';
 
 export function registerPictureRoutes(app: FastifyInstance, options: PictureRouteOptions) {
@@ -66,7 +67,7 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
   });
 
   app.post<SessionParams>('/api/sessions/:sessionId/beat-picture', async (request, reply) => {
-    noBody(request);
+    const body = BeatPictureRequestSchema.parse(request.body ?? {});
     const original = await director(request, SCENE_ONLY);
     const { sessionId } = request.params;
     const imageId = await transaction(pool, async (client) => {
@@ -74,12 +75,21 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
       const state = await readState(client, sessionId);
       if (state.session.status === 'ended') conflict('This session has ended.');
       if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the show before you make a new picture.');
-      const beatId = await lastBeatInScene(client, sessionId);
-      if (!beatId) return conflict('No beat has been published in this scene yet.');
+      let beatId: string | null;
+      if (body.beatId) {
+        const published = await client.query('SELECT 1 FROM published_beats WHERE session_id=$1 AND id=$2', [sessionId, body.beatId]);
+        if (!published.rowCount) return conflict(BEAT_NOT_PUBLISHED);
+        beatId = body.beatId;
+      } else {
+        beatId = await lastBeatInScene(client, sessionId);
+        if (!beatId) return conflict('No beat has been published in this scene yet.');
+      }
+      const shelfOnly = Boolean(body.beatId);
       const sceneId = state.session.scene.id;
-      const id = await images.reserveBeatPicture(client, state, beatId, actor);
+      const id = await images.reserveBeatPicture(client, state, beatId, actor, shelfOnly ? { shelfOnly } : undefined);
       if (!id) throw new AppError(502, 'picture_failed', PICTURE_MESSAGES.beatFailed);
-      await recordEvent(client, sessionId, actor, randomUUID(), 'picture.making', state.session.stateRevision, { imageId: id, purpose: 'scene', subjectId: sceneId });
+      await recordEvent(client, sessionId, actor, randomUUID(), 'picture.making', state.session.stateRevision,
+        { imageId: id, purpose: 'scene', subjectId: sceneId, ...(shelfOnly ? { shelfOnly: true } : {}) });
       return id;
     });
     images.run([imageId]);
@@ -117,7 +127,14 @@ export function registerPictureRoutes(app: FastifyInstance, options: PictureRout
         }
         const changed = await client.query("UPDATE images SET hidden=$3 WHERE session_id=$1 AND purpose='scene' AND subject_id=$2", [sessionId, sceneId, hidden]);
         if (!changed.rowCount) conflict('There is no picture for this scene yet.');
-        await recordEvent(client, sessionId, actor, randomUUID(), hidden ? 'picture.hidden' : 'picture.shown', session.version, { sceneId, hidden });
+        // Hide also lets go of a pinned picture, so the stream really goes without a scene picture.
+        let unpinned: string | null = null;
+        if (hidden) {
+          unpinned = (await client.query<{ pinned_image_id: string | null }>('SELECT pinned_image_id FROM sessions WHERE id=$1', [sessionId])).rows[0]?.pinned_image_id ?? null;
+          if (unpinned) await client.query('UPDATE sessions SET pinned_image_id=NULL WHERE id=$1', [sessionId]);
+        }
+        await recordEvent(client, sessionId, actor, randomUUID(), hidden ? 'picture.hidden' : 'picture.shown', session.version,
+          hidden ? { sceneId, hidden, unpinnedImageId: unpinned } : { sceneId, hidden });
         return { ok: true };
       });
       await options.gallery?.refreshIfOn(sessionId);

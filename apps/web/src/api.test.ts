@@ -390,6 +390,36 @@ describe('picture calls', () => {
     await expect(api.createBuilderPortrait({ expectedRevision: 2, details })).rejects.toThrow();
   });
 
+  it('draws an older beat on the shelf by sending its id', async () => {
+    const fetch = ok({ imageId });
+    expect(await api.drawBeatPicture('show/1', 'beat-4')).toEqual({ imageId });
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/beat-picture');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ beatId: 'beat-4' });
+  });
+
+  it('reads the picture list with a plain GET and checks its shape', async () => {
+    const row = { imageId, kind: 'beat', label: 'Beat 2', scene: 'The Velvet Static', status: 'ready', message: null, onStream: true, pinned: false, held: false, shelfOnly: false, beatId: 'beat-2', createdAt: '2026-11-02T10:00:00.000Z' };
+    const fetch = ok({ pictures: [row] });
+    expect(await api.pictures('show/1')).toEqual({ pictures: [row] });
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/pictures');
+    expect(fetch.mock.calls[0][1].method).toBeUndefined();
+    ok({ pictures: [{ ...row, status: 'odd' }] });
+    await expect(api.pictures('show/1')).rejects.toThrow();
+  });
+
+  it('pins and releases a picture through the pin routes', async () => {
+    const fetch = ok({ ok: true });
+    await api.pinPicture('show/1', imageId);
+    expect(fetch.mock.calls[0][0]).toBe('/api/sessions/show%2F1/pinned-picture');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ imageId });
+    await api.releasePicture('show/1');
+    expect(fetch.mock.calls[1][0]).toBe('/api/sessions/show%2F1/pinned-picture/release');
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({});
+    await expect(api.pinPicture('show/1', 'not-a-uuid')).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('draws a beat picture at its URL with an empty body and reads the picture id', async () => {
     const fetch = ok({ imageId });
     expect(await api.drawBeatPicture('show/1')).toEqual({ imageId });

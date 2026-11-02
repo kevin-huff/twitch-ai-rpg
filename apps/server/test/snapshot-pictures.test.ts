@@ -82,7 +82,7 @@ suite('snapshot picture fields', () => {
     for (const actor of [stage(), player(0), director()]) {
       const view = await snapshot(actor, true);
       expect(view.picturesEnabled).toBe(true);
-      expect(view.scenePicture).toEqual({ imageId: sceneImage, sceneId });
+      expect(view.scenePicture).toEqual({ imageId: sceneImage, sceneId, kind: 'place' });
       expect(view.characters.find(c => c.id === characterIds[0])?.portraitId).toBe(approvedPortrait);
       expect(view.npcs.find(n => n.id === npcIds[0])?.portraitId).toBe(npcPortrait);
     }
@@ -177,17 +177,24 @@ suite('snapshot picture fields', () => {
     expect(await actionOf(director())).toEqual({ beatId, state: 'failed', imageId: null, message: null });
   });
 
-  it('has no action picture with pictures off, for a conversation beat or after the draft review', async () => {
+  it('has no action picture with pictures off or after the draft review', async () => {
     const beatId = await insertBeat('action', 'draft_review');
     await insert({ purpose: 'scene', subjectId: sceneId, beatId });
     expect(await actionOf(director())).not.toBeNull();
     expect(await actionOf(director(), false)).toBeNull();
     await pool.query("UPDATE beats SET phase='locked', data=jsonb_set(data,'{phase}',to_jsonb('locked'::text)) WHERE id=$1", [beatId]);
     expect(await actionOf(director())).toBeNull();
-    await pool.query("UPDATE beats SET phase='aborted', data=jsonb_set(data,'{phase}',to_jsonb('aborted'::text)) WHERE id=$1", [beatId]);
+  });
+
+  it('reports the held picture of a conversation beat in draft review too', async () => {
     const talk = await insertBeat('conversation', 'draft_review');
-    await insert({ purpose: 'scene', subjectId: sceneId, beatId: talk });
     expect(await actionOf(director())).toBeNull();
+    const held = await insert({ purpose: 'scene', subjectId: sceneId, beatId: talk, status: 'making' });
+    expect(await actionOf(director())).toEqual({ beatId: talk, state: 'making', imageId: null, message: null });
+    await pool.query("UPDATE images SET status='ready', file_hash=$2, content_type='image/jpeg', byte_length=1000 WHERE id=$1", [held, 'a'.repeat(64)]);
+    expect(await actionOf(director())).toEqual({ beatId: talk, state: 'ready', imageId: held, message: null });
+    expect(await actionOf(director(), false)).toBeNull();
+    for (const actor of [stage(), player(0)]) expect((await snapshot(actor, true)).scenePicture).toEqual({ imageId: sceneImage, sceneId, kind: 'place' });
   });
 
   it('keeps a held action picture and the actionPicture field away from the stage and players until it is released', async () => {
@@ -196,10 +203,49 @@ suite('snapshot picture fields', () => {
     for (const actor of [stage(), player(0)]) {
       const view = await snapshot(actor, true);
       expect(view).not.toHaveProperty('actionPicture');
-      expect(view.scenePicture).toEqual({ imageId: sceneImage, sceneId });
+      expect(view.scenePicture).toEqual({ imageId: sceneImage, sceneId, kind: 'place' });
     }
     await pool.query('UPDATE images SET released_at=clock_timestamp() WHERE id=$1', [held]);
-    for (const actor of [stage(), player(0)]) expect((await snapshot(actor, true)).scenePicture).toEqual({ imageId: held, sceneId });
+    for (const actor of [stage(), player(0)]) expect((await snapshot(actor, true)).scenePicture).toEqual({ imageId: held, sceneId, kind: 'place' });
+  });
+
+  const pin = (id: string | null) => pool.query('UPDATE sessions SET pinned_image_id=$2 WHERE id=$1', [sessionId, id]);
+
+  it('gives every role the pinned picture while one is pinned', async () => {
+    const olderPortrait = await insert({ purpose: 'npc', subjectId: npcIds[1]!, attach: true });
+    const name = (await pool.query("SELECT data->>'displayName' AS name FROM npcs WHERE id=$1", [npcIds[1]])).rows[0].name as string;
+    await pin(olderPortrait);
+    for (const actor of [stage(), player(0), player(1), director()]) {
+      const view = await snapshot(actor, true);
+      expect(view.pinnedPicture).toEqual({ imageId: olderPortrait, kind: 'portrait', label: `Portrait of ${name}` });
+      expect(view.scenePicture).toEqual({ imageId: sceneImage, sceneId, kind: 'place' });
+    }
+    await pool.query('UPDATE images SET hidden=true WHERE id=$1', [sceneImage]);
+    await pin(sceneImage);
+    for (const actor of [stage(), player(0), director()]) {
+      const view = await snapshot(actor, true);
+      expect(view.pinnedPicture).toEqual({ imageId: sceneImage, kind: 'place', label: 'The place' });
+      expect(view.scenePicture).toBeNull();
+    }
+  });
+
+  it('leaves the pinned picture out when nothing is pinned, the pin is not ready or pictures are off', async () => {
+    for (const actor of [stage(), player(0), director()]) expect(await snapshot(actor, true)).not.toHaveProperty('pinnedPicture');
+    await pin(sceneImage);
+    for (const actor of [stage(), player(0), director()]) expect(await snapshot(actor, false)).not.toHaveProperty('pinnedPicture');
+    const making = await insert({ purpose: 'scene', subjectId: sceneId, status: 'making' });
+    await pin(making);
+    for (const actor of [stage(), player(0), director()]) expect(await snapshot(actor, true)).not.toHaveProperty('pinnedPicture');
+    await pin(null);
+    for (const actor of [stage(), player(0), director()]) expect(await snapshot(actor, true)).not.toHaveProperty('pinnedPicture');
+  });
+
+  it('starts a new show with nothing pinned', async () => {
+    const host = cookie(await app.inject({ method: 'POST', url: '/api/auth/host', headers: { origin }, payload: { token: hostToken } }));
+    const created = (await app.inject({ method: 'POST', url: '/api/sessions', headers: { origin, cookie: host }, payload: { commandId: randomUUID() } })).json();
+    expect((await pool.query('SELECT pinned_image_id FROM sessions WHERE id=$1', [created.sessionId])).rows[0].pinned_image_id).toBeNull();
+    const view = await transaction(pool, client => project(client, created.sessionId, { ...director(), actor_id: ownerId }, undefined, { picturesEnabled: true }));
+    expect(view).not.toHaveProperty('pinnedPicture');
   });
 
   it('gives the director the effective picture settings only with pictures on and a default model', async () => {

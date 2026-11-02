@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionSnapshot } from '@rpg/contracts';
-import { BATCH_PORTRAIT_CONCURRENCY, pictureUrl, portraitAlt, portraitIdFor, runPool, shownScenePicture } from './pictures';
+import { BATCH_PORTRAIT_CONCURRENCY, displayedPicture, pictureUrl, portraitAlt, portraitIdFor, runPool, shownScenePicture } from './pictures';
 
 afterEach(() => window.history.replaceState({}, '', '/'));
 
@@ -101,5 +101,34 @@ describe('shownScenePicture', () => {
     expect(shownScenePicture(snapshot({ scenePicture: null }))).toBeNull();
     expect(shownScenePicture(snapshot({ scenePicture: undefined }))).toBeNull();
     expect(shownScenePicture(snapshot({ scenePicture: { imageId, sceneId: 'scene-0' } }))).toBeNull();
+  });
+});
+
+describe('displayedPicture', () => {
+  const pinId = '223e4567-e89b-42d3-a456-426614174111';
+  const pin = { imageId: pinId, kind: 'portrait', label: 'Portrait of Mara' };
+
+  it('returns the scene picture as a place when it has no kind', () => {
+    expect(displayedPicture(snapshot(), new Set())).toEqual({ imageId, kind: 'place', pinned: false, label: null });
+  });
+
+  it('keeps the kind of a beat picture', () => {
+    const shown = displayedPicture(snapshot({ scenePicture: { imageId, sceneId: 'scene-1', kind: 'beat' } }), new Set());
+    expect(shown?.kind).toBe('beat');
+  });
+
+  it('prefers the pinned picture', () => {
+    expect(displayedPicture(snapshot({ pinnedPicture: pin }), new Set())).toEqual({ imageId: pinId, kind: 'portrait', pinned: true, label: 'Portrait of Mara' });
+  });
+
+  it('skips a broken pin and a broken scene picture', () => {
+    expect(displayedPicture(snapshot({ pinnedPicture: pin }), new Set([pinId]))?.imageId).toBe(imageId);
+    expect(displayedPicture(snapshot({ pinnedPicture: pin }), new Set([pinId, imageId]))).toBeNull();
+    expect(displayedPicture(snapshot(), new Set([imageId]))).toBeNull();
+  });
+
+  it('shows the pin even when the scene picture is another scene, and nothing when pictures are off', () => {
+    expect(displayedPicture(snapshot({ pinnedPicture: pin, scenePicture: null }), new Set())?.pinned).toBe(true);
+    expect(displayedPicture(snapshot({ pinnedPicture: pin, picturesEnabled: false }), new Set())).toBeNull();
   });
 });

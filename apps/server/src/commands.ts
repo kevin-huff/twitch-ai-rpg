@@ -180,6 +180,7 @@ export interface CommandPictures {
   reserveNpcPortrait(client: PoolClient, state: SessionState, npcId: string, actor: Actor): Promise<string | null>;
   reserveActionPicture(client: PoolClient, state: SessionState, beat: Beat, actor: Actor): Promise<string | null>;
   releaseActionPicture(client: PoolClient, sessionId: string, beatId: string): Promise<string | null>;
+  retireHeldPictures?(client: PoolClient, sessionId: string, beatId: string): Promise<void>;
   run(imageIds: string[]): void;
 }
 export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource; voices?: VoiceSource }
@@ -463,17 +464,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         await saveState(client, state);
         eventData = { before, after: state.npcs.filter(here).map((npc) => npc.id) };
       } else {
-        const rested = command.rests.map((rest) => {
-          const character = state.characters.find((item) => item.id === rest.characterId);
-          if (!character) return conflict('That character is not in this show.');
-          if (rest.amount > character.strain) conflict(`${character.displayName} has only ${character.strain} strain to rest.`);
-          return { character, amount: rest.amount };
-        });
-        const before = rested.map(({ character }) => ({ characterId: character.id, strain: character.strain }));
-        for (const { character, amount } of rested) character.strain -= amount;
+        const strained = state.characters.filter((character) => character.strain > 0);
+        if (!strained.length) conflict('Nobody has strain to rest.');
+        const before = strained.map((character) => ({ characterId: character.id, strain: character.strain }));
+        for (const character of strained) character.strain = 0;
         state.session.stateRevision++;
         await saveState(client, state);
-        eventData = { before, after: rested.map(({ character }) => ({ characterId: character.id, strain: character.strain })) };
+        eventData = { before, after: strained.map((character) => ({ characterId: character.id, strain: character.strain })) };
       }
     } else if (command.type === 'open_beat') {
       if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
@@ -653,12 +650,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         const id = await deps.pictures.reserveNpcPortrait(client, state, createdNpcId, actor);
         if (id) pictureIds.push(id);
       }
-      if (beat?.kind === 'action' && command.type === 'edit_script' && narrationChanged(draftBefore, beat.draft)) {
+      if (beat && command.type === 'edit_script' && narrationChanged(draftBefore, beat.draft)) {
         const id = await deps.pictures.reserveActionPicture(client, state, beat, actor);
         if (id) pictureIds.push(id);
       }
-      // Publishing reveals the round's newest held picture together with the round itself.
-      if (beat?.kind === 'action' && command.type === 'publish_beat') await deps.pictures.releaseActionPicture(client, sessionId, beat.id);
+      // Publishing reveals the beat's newest held picture together with the beat itself.
+      if (beat && command.type === 'publish_beat') await deps.pictures.releaseActionPicture(client, sessionId, beat.id);
+      if (beat && command.type === 'abort_beat') await deps.pictures.retireHeldPictures?.(client, sessionId, beat.id);
     }
     if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor, command.commandId, command.type, state.session.stateRevision, eventData);
     return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureIds };
@@ -716,7 +714,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     await saveBeat(client, beat);
     await client.query('UPDATE generation_jobs SET status=$2,error=$3,finished_at=now() WHERE id=$1', [generation.jobId, failure ? 'failed' : 'succeeded', failure]);
     await recordEvent(client, sessionId, actor, command.commandId, failure ? 'job.failed' : command.type, state.session.stateRevision);
-    const pictureId = deps.pictures && !failure && generation.task === 'render' && beat.kind === 'action' && narrationChanged(draftBefore, beat.draft)
+    const pictureId = deps.pictures && !failure && generation.task === 'render' && narrationChanged(draftBefore, beat.draft)
       ? await deps.pictures.reserveActionPicture(client, state, beat, actor) : null;
     return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureId };
   });

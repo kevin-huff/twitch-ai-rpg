@@ -281,11 +281,11 @@ describe('ScenePicturePanel', () => {
 
   describe('action picture', () => {
     const beatId = 'beat-one';
-    const MAKING = 'Making the picture for this action round. Viewers and players see it when you publish the round.';
-    const MAKING_HIDDEN = 'Making the picture for this action round. It stays hidden until you press Show picture.';
-    const READY = 'The picture for this action round is ready. Viewers and players see it when you publish the round.';
-    const READY_HIDDEN = 'The picture for this action round is ready. It stays hidden until you press Show picture.';
-    const FAILED = 'The picture for this action round could not be made. You can still publish the round, and the stream keeps the picture it has now.';
+    const MAKING = 'Making this beat\'s picture. Viewers and players see it when you publish the beat.';
+    const MAKING_HIDDEN = 'Making this beat\'s picture. It stays hidden until you press Show picture.';
+    const READY = 'This beat\'s picture is ready. Viewers and players see it when you publish the beat.';
+    const READY_HIDDEN = 'This beat\'s picture is ready. It stays hidden until you press Show picture.';
+    const FAILED = 'This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now.';
     const action = (state: string, extra: Record<string, unknown> = {}) => ({ beatId, state, imageId: null, message: null, ...extra });
     const actionLine = (w: ReturnType<typeof mountPanel>) => w.get('[data-testid="action-picture-status"]').text();
 
@@ -309,7 +309,7 @@ describe('ScenePicturePanel', () => {
       expect(mountPanel(snapshot({ actionPicture: action('failed') })).find('[data-testid="action-picture-preview"]').exists()).toBe(false);
       const img = mountPanel(snapshot({ actionPicture: action('ready', { imageId }) })).get('[data-testid="action-picture-preview"]');
       expect(img.attributes('src')).toBe(`/api/sessions/show/images/${imageId}`);
-      expect(img.attributes('alt')).toBe('Picture for this action round');
+      expect(img.attributes('alt')).toBe('Picture for this beat');
     });
 
     it('removes the preview after a load error and tries again for a new picture', async () => {
@@ -349,6 +349,15 @@ describe('ScenePicturePanel', () => {
       const stored = 'The picture service is out of credit.';
       expect(actionLine(mountPanel(snapshot({ actionPicture: action('failed', { message: stored }) })))).toBe(stored);
       expect(actionLine(mountPanel(snapshot({ actionPicture: action('failed', { message: null }) })))).toBe(FAILED);
+    });
+
+    it('says the pinned picture is shown instead while one is pinned and the scene picture is ready', () => {
+      const PINNED = 'Your pinned picture is on the stream and the player seats instead. Press Release to show this one.';
+      const pinnedPicture = { imageId: '33333333-3333-4333-8333-333333333333', kind: 'place', label: 'The cellar' };
+      const ready = (hiddenFlag: boolean) => snapshot({ pinnedPicture } as never, { state: 'ready', imageId, hidden: hiddenFlag });
+      expect(line(mountPanel(ready(false)))).toBe(PINNED);
+      expect(line(mountPanel(ready(true)))).not.toBe(PINNED);
+      expect(line(mountPanel(snapshot({}, { state: 'ready', imageId })))).not.toBe(PINNED);
     });
 
     it('emits hide when Hide picture is pressed for a held action picture', async () => {

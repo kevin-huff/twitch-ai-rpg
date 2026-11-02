@@ -1,4 +1,4 @@
-import type { ScenePicture, SessionSnapshot } from '@rpg/contracts';
+import type { PictureKind, ScenePicture, SessionSnapshot } from '@rpg/contracts';
 import { identityPath } from './identity';
 
 export type PictureScope = { kind: 'session'; sessionId: string } | { kind: 'library' } | { kind: 'builder' };
@@ -39,4 +39,16 @@ export function shownScenePicture(snapshot: SessionSnapshot): ScenePicture | nul
   if (snapshot.picturesEnabled !== true) return null;
   const picture = snapshot.scenePicture ?? null;
   return picture && picture.sceneId === snapshot.session.scene.id ? picture : null;
+}
+
+export type DisplayedPicture = { imageId: string; kind: PictureKind; pinned: boolean; label: string | null };
+
+// The one picture the stage, overlay and seats show: the pinned picture first, else the scene picture, skipping files that failed to load.
+export function displayedPicture(snapshot: SessionSnapshot, broken: ReadonlySet<string>): DisplayedPicture | null {
+  if (snapshot.picturesEnabled !== true) return null;
+  const pinned = snapshot.pinnedPicture;
+  if (pinned && !broken.has(pinned.imageId)) return { imageId: pinned.imageId, kind: pinned.kind, pinned: true, label: pinned.label };
+  const scene = shownScenePicture(snapshot);
+  if (scene && !broken.has(scene.imageId)) return { imageId: scene.imageId, kind: scene.kind ?? 'place', pinned: false, label: null };
+  return null;
 }

@@ -129,14 +129,14 @@ describe('player seat', () => {
     expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('Hello Mara');
   });
 
-  it('does not tie leftover say words to an old turn after an action is sent', async () => {
+  it('does not tie leftover say words to an old turn after a private note is sent', async () => {
     const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
     await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
-    await click(w, 'Do something');
+    await click(w, 'Ask the director privately');
     expect(w.find('[data-testid="review-current-input"]').exists()).toBe(false);
-    await w.get('[data-testid="action-input"]').setValue('Open the door');
+    await w.get('[data-testid="note-input"]').setValue('Open the door?');
     await submit(w);
-    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-a', expectedInputEpoch: 0 }));
+    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'ooc', contextBeatId: 'beat-a', expectedInputEpoch: 0 }));
     await refreshTo(snapshot({ activeBeat: beat('beat-b', 'conversation', { inputEpoch: 1 }), history: [publishedMarker('p1')] }, {}, { inputEpoch: 1 }));
     expect(pressed(w, 'Say something')).toBe('true');
     expect((w.get('[data-testid="speech-input"]').element as HTMLTextAreaElement).value).toBe('Hello Mara');
@@ -146,8 +146,14 @@ describe('player seat', () => {
     expect(w.text()).not.toContain('Not sent yet');
     await refreshTo(snapshot({ activeBeat: beat('beat-c', 'action', { inputEpoch: 2 }), history: [publishedMarker('p1')] }, {}, { inputEpoch: 2 }));
     await w.get('[data-testid="action-input"]').setValue('Pick the lock');
+    expect(w.get('button.send').text()).toBe('Send both');
+    await click(w, 'Say something');
+    expect(w.get('button.send').text()).toBe('Send both anyway');
+    await click(w, 'Yes, they still fit');
+    await click(w, 'Do something');
+    expect(w.get('button.send').text()).toBe('Send both');
     await submit(w);
-    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-c', expectedInputEpoch: 2 }));
+    expect(transport.command.mock.calls.slice(-2).map(call => [call[1].kind, call[1].contextBeatId, call[1].expectedInputEpoch])).toEqual([['say', 'beat-c', 2], ['act', 'beat-c', 2]]);
   });
 
   it('keeps a note left by Cancel from blocking the next turn', async () => {
@@ -422,6 +428,27 @@ describe('player seat', () => {
       const portrait = w.get('details.card img.own-portrait');
       expect(portrait.attributes('alt')).toBe('Portrait of Skooty');
       expect(portrait.attributes('src')).toContain('/images/22222222-2222-4222-8222-222222222222');
+    });
+
+    it('shows a pinned picture in the heading over the scene picture and returns on Release', async () => {
+      const pin = { imageId: '44444444-4444-4444-8444-444444444444', kind: 'place', label: 'The old map' };
+      const w = await mountSeat(snapshot({ ...shown, pinnedPicture: pin }, {}));
+      const img = w.get('img.seat-scene-picture');
+      expect(img.attributes('src')).toContain(pin.imageId);
+      expect(img.attributes('alt')).toBe('The old map');
+      expect(img.classes()).not.toContain('fit-whole');
+      await img.trigger('error');
+      expect(w.get('img.seat-scene-picture').attributes('src')).toContain('11111111-1111-4111-8111-111111111111');
+      await refreshTo(snapshot(shown, {}));
+      expect(w.get('img.seat-scene-picture').attributes('alt')).toBe('The Velvet Static');
+    });
+
+    it('shows a pinned portrait whole and nothing pinned with pictures off', async () => {
+      const pin = { imageId: '44444444-4444-4444-8444-444444444444', kind: 'portrait', label: 'Portrait of Skooty' };
+      const w = await mountSeat(snapshot({ ...shown, pinnedPicture: pin }, {}));
+      expect(w.get('img.seat-scene-picture').classes()).toContain('fit-whole');
+      const off = await mountSeat(snapshot({ picturesEnabled: false, pinnedPicture: pin }, {}));
+      expect(off.find('img.seat-scene-picture').exists()).toBe(false);
     });
 
     it('shows neither when the picture is hidden, for another scene, or pictures are off', async () => {
@@ -711,5 +738,222 @@ describe('the story on the seat', () => {
       await submit(w);
       expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ type: 'save_submission', kind: 'say', text: '[warmly] Hello friend.' }));
     });
+  });
+});
+
+describe('sending a Say line and a Do line together', () => {
+  const fillBoth = async (w: VueWrapper) => {
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
+    await click(w, 'Say something');
+  };
+  const sentKinds = () => transport.command.mock.calls.map(call => call[1].kind);
+  const refuse = (message: string, status = 409) => Object.assign(new Error(message), { status });
+
+  it('reads Send both, sends the Say line then the Do line, and clears both boxes', async () => {
+    const w = await mountSeat(snapshot());
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    expect(w.get('button.send').text()).toBe('Send');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
+    expect(w.get('button.send').text()).toBe('Send both');
+    await click(w, 'Say something');
+    expect(w.get('button.send').text()).toBe('Send both');
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(transport.command.mock.calls[0]![1]).toEqual(expect.objectContaining({ type: 'save_submission', kind: 'say', text: 'Hello Mara', intent: '', approach: '', alreadySpokenAloud: true }));
+    expect(transport.command.mock.calls[1]![1]).toEqual(expect.objectContaining({ type: 'save_submission', kind: 'act', text: '', intent: 'Climb the fire escape', approach: 'Climb the fire escape' }));
+    expect(transport.command.mock.calls[0]![1].commandId).not.toBe(transport.command.mock.calls[1]![1].commandId);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has both lines.');
+    expect(value(w, 'speech-input')).toBe('');
+    await click(w, 'Do something');
+    expect(value(w, 'action-input')).toBe('');
+  });
+
+  it('sends from the Do box too, still Say first', async () => {
+    const w = await mountSeat(snapshot());
+    await fillBoth(w);
+    await click(w, 'Do something');
+    expect(w.get('button.send').text()).toBe('Send both');
+    await submit(w);
+    expect(sentKinds()).toEqual(['say', 'act']);
+  });
+
+  it('sends one line when only the visible box holds words, even with a blank-looking other box', async () => {
+    const w = await mountSeat(snapshot());
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb');
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('   ');
+    expect(w.get('button.send').text()).toBe('Send');
+    await click(w, 'Do something');
+    expect(w.get('button.send').text()).toBe('Send');
+    await submit(w);
+    expect(sentKinds()).toEqual(['act']);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('says both lines wait when the round stopped collecting', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'stakes_review', stakes: [] }) }));
+    await fillBoth(w);
+    await submit(w);
+    expect(sentKinds()).toEqual(['say', 'act']);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Both lines wait for the next turn.');
+  });
+
+  it('opens a round quietly for both boxes and retries nothing visible', async () => {
+    const w = await mountSeat(snapshot());
+    await fillBoth(w);
+    await refreshTo(snapshot({ activeBeat: beat('beat-b', 'conversation') }, {}, { inputEpoch: 1 }));
+    expect(w.get('button.send').text()).toBe('Send both');
+    await submit(w);
+    expect(transport.command.mock.calls.map(call => [call[1].kind, call[1].contextBeatId, call[1].expectedInputEpoch])).toEqual([['say', 'beat-b', 1], ['act', 'beat-b', 1]]);
+    expect(w.find('[data-testid="send-refused"]').exists()).toBe(false);
+  });
+
+  it('keeps the Say box with its reason when only the Say line is refused, and sends the Do line', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await fillBoth(w);
+    transport.command.mockRejectedValueOnce(refuse('The addressed NPC is unavailable.'));
+    await submit(w);
+    expect(sentKinds()).toEqual(['say', 'act']);
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('The addressed NPC is unavailable.');
+    expect(value(w, 'speech-input')).toBe('Hello Mara');
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+    expect(pressed(w, 'Say something')).toBe('true');
+    expect(w.get('button.send').text()).toBe('Send it anyway');
+    await click(w, 'Do something');
+    expect(value(w, 'action-input')).toBe('');
+  });
+
+  it('keeps the Do box and shows it when only the Do line is refused, and the Say line still goes', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await fillBoth(w);
+    transport.command.mockResolvedValueOnce({});
+    transport.command.mockRejectedValueOnce(refuse('This beat is locked or no longer active. Queue the line for the next beat.'));
+    await submit(w);
+    expect(sentKinds()).toEqual(['say', 'act']);
+    expect(pressed(w, 'Do something')).toBe('true');
+    expect(value(w, 'action-input')).toBe('Climb the fire escape');
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('This beat is locked or no longer active. Queue the line for the next beat.');
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+    await click(w, 'Say something');
+    expect(value(w, 'speech-input')).toBe('');
+  });
+
+  it('keeps both boxes and shows the visible box when both lines are refused', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await fillBoth(w);
+    transport.command.mockRejectedValue(refuse('The input window changed.'));
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(pressed(w, 'Say something')).toBe('true');
+    expect(value(w, 'speech-input')).toBe('Hello Mara');
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('The input window changed.');
+    expect(w.find('[role="status"]').exists()).toBe(false);
+    await click(w, 'Do something');
+    expect(value(w, 'action-input')).toBe('Climb the fire escape');
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('The input window changed.');
+  });
+
+  it('lets a failure that is not a refusal keep its box while the other line goes', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+    await fillBoth(w);
+    transport.command.mockRejectedValueOnce(new Error('Could not reach the show.'));
+    await submit(w);
+    expect(sentKinds()).toEqual(['say', 'act']);
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('Could not reach the show.');
+    expect(value(w, 'speech-input')).toBe('Hello Mara');
+    expect(w.find('.error').exists()).toBe(false);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('keeps the Do box when the server refuses a second line past its limit', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }, {}, {}));
+    await fillBoth(w);
+    transport.command.mockResolvedValueOnce({});
+    transport.command.mockRejectedValueOnce(refuse('You can only send two lines a round.', 400));
+    await submit(w);
+    expect(pressed(w, 'Do something')).toBe('true');
+    expect(w.get('[data-testid="send-refused"]').text()).toBe('You can only send two lines a round.');
+    expect(value(w, 'action-input')).toBe('Climb the fire escape');
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  describe('when the story moved on', () => {
+    const moveOn = () => refreshTo(snapshot({ activeBeat: beat('beat-b', 'conversation', { inputEpoch: 3 }), history: [publishedMarker('p1')] }, {}, { inputEpoch: 3 }));
+    const serverFor = (epoch: number) => transport.command.mockImplementation(async (_id: string, command: { expectedInputEpoch: number }) => {
+      if (command.expectedInputEpoch !== epoch) throw refuse('The input window changed. Review your input before submitting again.');
+      return {};
+    });
+
+    it('reads Send both anyway, restamps the visible box and sends the hidden box on its old stamp, which the server refuses', async () => {
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+      await fillBoth(w);
+      await moveOn();
+      expect(w.get('button.send').text()).toBe('Send both anyway');
+      serverFor(3);
+      await submit(w);
+      expect(transport.command).toHaveBeenCalledTimes(2);
+      expect(transport.command.mock.calls[0]![1]).toEqual(expect.objectContaining({ kind: 'say', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
+      expect(transport.command.mock.calls[1]![1]).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-a', expectedInputEpoch: 0 }));
+      expect(pressed(w, 'Do something')).toBe('true');
+      expect(value(w, 'action-input')).toBe('Climb the fire escape');
+      expect(w.get('[data-testid="send-refused"]').text()).toContain('The input window changed.');
+      expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+    });
+
+    it('does not restamp a hidden box silently: the player must see its notice and press Yes, they still fit', async () => {
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+      await fillBoth(w);
+      await moveOn();
+      serverFor(3);
+      await submit(w);
+      expect(transport.command.mock.calls.every(call => call[1].kind !== 'act' || call[1].expectedInputEpoch === 0)).toBe(true);
+      expect(w.get('[data-testid="review-current-input"]').element.parentElement!.textContent).toContain('The story moved on while you were typing.');
+      await click(w, 'Yes, they still fit');
+      expect(w.get('button.send').text()).toBe('Send');
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
+    });
+  });
+
+  it('still sends one line when changing a sent line, and keeps the other box aside', async () => {
+    const say = line({ kind: 'say', text: 'Who sent you?' });
+    const w = await mountSeat(snapshot({ submissions: [say] }));
+    await w.get('[data-testid="speech-input"]').setValue('Fresh follow-up');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb');
+    await changeLine(w);
+    expect(w.get('button.send').text()).toBe('Save changes');
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(1);
+    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', submissionId: 's1' }));
+  });
+
+  it('sends a private note on its own', async () => {
+    const w = await mountSeat(snapshot());
+    await fillBoth(w);
+    await click(w, 'Ask the director privately');
+    await w.get('[data-testid="note-input"]').setValue('Is the guard bribed?');
+    expect(w.get('button.send').text()).toBe('Send privately');
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(1);
+    expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'ooc', text: 'Is the guard bribed?' }));
+    expect(w.get('[role="status"]').text()).toBe('Saved. Only the director sees your note.');
+  });
+
+  it('keeps saving both boxes as one draft and brings them back', async () => {
+    const w = await mountSeat(snapshot());
+    await fillBoth(w);
+    w.unmount();
+    wrapper = undefined;
+    const again = await mountSeat(snapshot());
+    expect(again.get('button.send').text()).toBe('Send both');
+    expect(value(again, 'speech-input')).toBe('Hello Mara');
+    await click(again, 'Do something');
+    expect(value(again, 'action-input')).toBe('Climb the fire escape');
   });
 });

@@ -50,9 +50,10 @@ describe('help page', () => {
       'No beat has been published in this scene yet.',
       'Pictures of a beat use FLUX 3 Klein when anyone in them has a portrait, because it is the only model that can draw your cast from their portraits.',
       'Painterly digital illustration, rich color, cinematic lighting',
-      'Making the picture for this action round. Viewers and players see it when you publish the round.',
-      'The picture for this action round is ready. Viewers and players see it when you publish the round.',
-      'The picture for this action round could not be made. You can still publish the round, and the stream keeps the picture it has now.',
+      'Making this beat\'s picture. Viewers and players see it when you publish the beat.',
+      'This beat\'s picture is ready. Viewers and players see it when you publish the beat.',
+      'This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now.',
+      'Your pinned picture is on the stream and the player seats instead. Press Release to show this one.',
       'Pictures are busy right now. Try again in a minute.',
       'The picture limit for this hour is used up. Try again in 12 minutes.',
     ]) expect(text).toContain(label);
@@ -429,12 +430,12 @@ describe('help page', () => {
     expect(section.paragraphs?.join(' ')).not.toMatch(/\b(120|200|10)\b/);
   });
 
-  it('keeps the newest-moment rule and the action round sentence in the pictures help', () => {
+  it('keeps the newest-moment rule and the beat sentence in the pictures help', () => {
     const topic = topics.find(item => item.id === 'pictures-and-portraits')!;
     const text = topic.sections.flatMap(item => item.paragraphs ?? []).join(' ');
-    expect(text).toContain('Each action round gets its own picture too, as long as its script has narration.');
-    expect(text).toContain('The stream always shows the newest moment, so when you publish a round that has its own picture, a Draw the place picture still being made is dropped, because the round is newer.');
-    expect(text).toContain('The picture service would not draw this round. You can still publish it.');
+    expect(text).toContain('Every beat with narration gets its own picture, conversations included.');
+    expect(text).toContain('The stream always shows the newest moment, so when you publish a beat that has its own picture, a Draw the place picture still being made is dropped, because the beat is newer.');
+    expect(text).toContain('The picture service would not draw this beat. You can still publish it.');
   });
 
   it('explains the picture buttons, drawing without cancelling, the settings fold-out, timing and the model choice', () => {

@@ -25,6 +25,7 @@ const scene = ref({ title: '', description: '', locationKind: 'existing', locati
 const titleTouched = ref(false);
 // The same for the description and the ticked characters: a pick fills them until the director changes them.
 const descriptionTouched = ref(false);
+const openedDescription = ref('');
 const castTouched = ref(false);
 const npcId = ref('');
 const npcVersion = ref(0);
@@ -45,7 +46,7 @@ onMounted(async () => {
 const currentPlaceName = computed(() => locations.value.find(location => location.id === props.snapshot.session.scene.locationId)?.title ?? props.snapshot.session.scene.title);
 const placeChanged = computed(() => scene.value.locationKind === 'new' ? Boolean(scene.value.locationTitle.trim()) : scene.value.locationId !== props.snapshot.session.scene.locationId);
 const descriptionStale = computed(() => operation.value === 'scene' && placeChanged.value && scene.value.description === props.snapshot.session.scene.description);
-const movingNames = computed(() => props.snapshot.npcDetails.filter(npc => scene.value.presentNpcIds.includes(npc.id)).map(npc => npc.displayName).join(', ') || 'no one');
+const movingNames = computed(() => props.snapshot.npcDetails.filter(npc => scene.value.presentNpcIds.includes(npc.id) && (scene.value.locationKind === 'new' || npc.locationId !== scene.value.locationId)).map(npc => npc.displayName).join(', ') || 'no one');
 const voicePick = computed(() => profile.value ? npcVoicePick(profile.value.voiceProfileId) : null);
 const setVoice = (pick: string | null) => { if (profile.value) profile.value.voiceProfileId = npcVoiceValue(pick, profile.value.voiceProfileId); };
 const chosenNpc = computed(() => props.snapshot.npcDetails.find(npc => npc.id === npcId.value));
@@ -94,13 +95,14 @@ function begin(next: Operation) {
   if (locked.value) return;
   operation.value = next; capture();
   if (next === 'scene') { titleTouched.value = false; descriptionTouched.value = false; castTouched.value = false; }
+  if (next === 'scene') openedDescription.value = props.snapshot.session.scene.description;
   if (next === 'scene') scene.value = { title: props.snapshot.session.scene.title, description: props.snapshot.session.scene.description, locationKind: 'existing', locationId: props.snapshot.session.scene.locationId, locationTitle: '', locationDescription: '', presentNpcIds: witnesses.value.map(npc => npc.id) };
   if (next === 'npc') { npcId.value = ''; loadNpc(); }
   if (next === 'reveal') { revealNpcId.value = ''; loadReveal(); }
 }
 // The place's title and arrival text are copied into the public scene until the director edits them; the arrival text goes public on save.
 function followPlaceTitle(title: string | undefined) { if (!titleTouched.value && title) scene.value.title = title; }
-function followPlaceDescription(text: string | undefined) { if (!descriptionTouched.value && text?.trim()) scene.value.description = text; }
+function followPlaceDescription(text: string | undefined) { if (!descriptionTouched.value) scene.value.description = text?.trim() ? text : openedDescription.value; }
 function followPlaceCast(destinationId: string | null) {
   if (castTouched.value) return;
   const ids = witnesses.value.map(npc => npc.id);

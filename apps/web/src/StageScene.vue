@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { STRAIN_MAX } from '@rpg/contracts';
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
-import { portraitAlt, pictureUrl, portraitIdFor, shownScenePicture } from './pictures';
+import { portraitAlt, pictureUrl, displayedPicture, portraitIdFor, shownScenePicture } from './pictures';
 import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
 
 const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null }>();
@@ -45,16 +45,18 @@ const crowded = computed(() => characters.value.length > 5);
 const REVEAL_HOLD_MS = 4000;
 const REVEAL_SHRINK_MS = 900;
 const broken = ref(new Set<string>());
-const picture = computed(() => shownScenePicture(props.snapshot));
+const picture = computed(() => displayedPicture(props.snapshot, broken.value));
 const pictureSrc = computed(() => {
   const shown = picture.value;
-  return shown && !broken.value.has(shown.imageId) ? pictureUrl({ kind: 'session', sessionId: session.value.id }, shown.imageId) : null;
+  return shown ? pictureUrl({ kind: 'session', sessionId: session.value.id }, shown.imageId) : null;
 });
-const shownPictureId = computed(() => (pictureSrc.value ? picture.value?.imageId ?? null : null));
+const pictureAlt = computed(() => picture.value?.label ?? session.value.scene.title);
+const shownPictureKey = computed(() => (picture.value ? `${picture.value.pinned ? 'pin' : 'scene'}:${picture.value.imageId}` : null));
 // Every picture this stage may show right now; a failure is remembered only while the snapshot keeps showing that picture.
 const shownIds = computed(() => {
   const ids: string[] = [];
-  const scene = picture.value?.imageId;
+  if (props.snapshot.picturesEnabled === true && props.snapshot.pinnedPicture) ids.push(props.snapshot.pinnedPicture.imageId);
+  const scene = shownScenePicture(props.snapshot)?.imageId;
   if (scene) ids.push(scene);
   for (const entity of [...characters.value, ...(props.snapshot.npcs ?? [])]) {
     const imageId = portraitIdFor(props.snapshot, entity.id);
@@ -92,14 +94,20 @@ function stopReveal() {
 function markBroken(imageId: string) {
   broken.value = new Set(broken.value).add(imageId);
 }
-// A picture already seen here (on mount, reload, reconnect, or shown again after hiding) goes straight to the panel.
-watch(shownPictureId, (imageId, previous) => {
-  if (!imageId) { stopReveal(); return; }
+// Only a new place plays the full-screen reveal. A beat picture swaps in quietly, a pin or a release never reveals,
+// and a picture already seen here (on mount, reload, reconnect, or shown again after hiding) goes straight to the panel.
+let wasPinned = false;
+watch(shownPictureKey, (key, previous) => {
+  const shown = picture.value;
+  const pinned = shown?.pinned ?? false;
+  const afterPin = wasPinned || pinned || !!props.snapshot.pinnedPicture;
+  wasPinned = pinned;
+  if (!shown || !key) { stopReveal(); return; }
   const first = previous === undefined;
-  if (seenPictures.has(imageId)) return;
-  seenPictures.add(imageId);
-  if (first) return;
   stopReveal();
+  if (seenPictures.has(shown.imageId)) return;
+  seenPictures.add(shown.imageId);
+  if (first || afterPin || shown.kind !== 'place') return;
   revealing.value = true;
   revealTimers = [
     setTimeout(() => { shrinking.value = true; }, REVEAL_HOLD_MS),
@@ -444,8 +452,8 @@ onBeforeUnmount(() => {
       <span class="correction-text" data-testid="published-correction">{{ correction.publicText }}</span>
     </section>
 
-    <figure v-if="pictureSrc && picture" class="scene-picture" :class="{ revealing: revealing && !shrinking, shrinking }">
-      <img :src="pictureSrc" :alt="session.scene.title" @error="markBroken(picture.imageId)">
+    <figure v-if="pictureSrc && picture" class="scene-picture" :class="{ revealing: revealing && !shrinking, shrinking, 'fit-whole': picture.pinned && picture.kind === 'portrait' }">
+      <img :src="pictureSrc" :alt="pictureAlt" @error="markBroken(picture.imageId)">
     </figure>
     <div v-if="pictureSrc && revealing && !shrinking" class="scene-reveal-titles">
       <p class="reveal-show">{{ session.title }}</p>
@@ -637,6 +645,7 @@ onBeforeUnmount(() => {
 
 .scene-picture { position: absolute; left: 1360px; top: 170px; width: 464px; height: 265px; margin: 0; z-index: 5; overflow: hidden; background: var(--night); clip-path: var(--cut-1); transform-origin: 0 0; }
 .scene-picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.scene-picture.fit-whole img { object-fit: contain; background: var(--void); }
 .scene-picture::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: var(--canvas-frame-window); }
 .scene-picture.revealing { z-index: 30; clip-path: none; transform: translate(-1360px, -170px) scale(4.138); }
 .scene-picture.revealing::after { display: none; }

@@ -1283,3 +1283,58 @@ describe('beat panel own pending flag', () => {
     wrapper.unmount();
   });
 });
+
+describe('beat panel when the AI work is thrown away', () => {
+  const SERVER_WORDS = 'The generation was superseded. Its result was discarded.';
+  const PAUSED_PLAN = "You paused, so the AI's work on this round was thrown away. Press Plan again when you resume.";
+  const PAUSED_SCRIPT = "You paused, so the AI's work on this round was thrown away. Press Draft the scene again when you resume.";
+  const CHANGED = 'The show changed while the AI was working, so its work was thrown away. Try again.';
+  const lines = { submissions: [line('say-1')] };
+  const errorOf = (wrapper: VueWrapper) => bar(wrapper).get('[data-testid="beat-error"]').text();
+  // Holds the command open so the show can change before the refusal arrives.
+  const refuseLater = (message: string) => {
+    let refuse: () => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = () => reject(new Error(message)); }));
+    return async () => { refuse(); await flushPromises(); };
+  };
+  const pauseShow = async (state: ReturnType<typeof snapshot>) => { transport.snapshot.mockResolvedValue(state); await table.refresh(); await flushPromises(); };
+
+  it('says the plan was thrown away because of the pause', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const refuse = refuseLater(SERVER_WORDS);
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    await pauseShow(snapshot(beat({ classification: null }), 'paused', lines));
+    await refuse();
+    expect(errorOf(wrapper)).toBe(PAUSED_PLAN);
+    expect(wrapper.text()).not.toContain('superseded');
+    wrapper.unmount();
+  });
+
+  it('says the script was thrown away because of the pause', async () => {
+    const wrapper = await mountPanel(snapshot(locked()), []);
+    const refuse = refuseLater(SERVER_WORDS);
+    await wrapper.get('[data-testid="render"]').trigger('click'); await flushPromises();
+    await pauseShow(snapshot(locked(), 'paused'));
+    await refuse();
+    expect(errorOf(wrapper)).toBe(PAUSED_SCRIPT);
+    expect(wrapper.text()).not.toContain('superseded');
+    wrapper.unmount();
+  });
+
+  it('says the show changed when the show is not paused', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    transport.command.mockRejectedValueOnce(new Error(SERVER_WORDS));
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    expect(errorOf(wrapper)).toBe(CHANGED);
+    expect(wrapper.text()).not.toContain('superseded');
+    wrapper.unmount();
+  });
+
+  it('shows other errors as they are', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    transport.command.mockRejectedValueOnce(new Error('The planner timed out.'));
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    expect(errorOf(wrapper)).toBe('The planner timed out.');
+    wrapper.unmount();
+  });
+});

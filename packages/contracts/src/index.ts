@@ -8,7 +8,7 @@ export * from './playback';
 export * from './voices';
 import type { VoiceChoice } from './voices';
 import { VoiceRefSchema, elevenVoiceId, voicedWords } from './voices';
-import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
+import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PinnedPictureSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
 import { GalleryStatusSchema } from './gallery';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
 import { FieldGenerationCharacterContextSchema, FieldGenerationRequestSchema, MAX_FIELD_GENERATION_REQUEST_BYTES } from './field-generation';
@@ -433,6 +433,7 @@ const snapshotBase = {
   characters: z.array(PublicCharacterSchema), npcs: z.array(PublicNpcSchema), tracks: z.array(PublicTrackSchema),
   facts: z.array(PublicFactSchema), history: z.array(PublishedBeatSchema), corrections: z.array(PublicCorrectionSchema).default([]),
   picturesEnabled: z.boolean().default(false), scenePicture: ScenePictureSchema.nullable().default(null),
+  pinnedPicture: PinnedPictureSchema.optional(),
 };
 const uniqueNpcIds = z.array(IdSchema).max(50).refine(ids => new Set(ids).size === ids.length, 'Choose each character once.');
 export const GuidanceSchema = z.strictObject({
@@ -481,9 +482,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
     source: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('secret'), index: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal('identity') })]),
     publicText: z.string().trim().min(1).max(6000), witnessNpcIds: uniqueNpcIds }),
   z.strictObject({ type: z.literal('set_cast'), ...commandBase, expectedStateRevision: RevisionSchema, presentNpcIds: uniqueNpcIds }),
-  z.strictObject({ type: z.literal('rest'), ...commandBase, expectedStateRevision: RevisionSchema,
-    rests: z.array(z.strictObject({ characterId: IdSchema, amount: z.number().int().min(1).max(STRAIN_MAX) })).min(1).max(6)
-      .refine(rests => new Set(rests.map(rest => rest.characterId)).size === rests.length, 'Choose each character once.') }),
+  z.strictObject({ type: z.literal('rest'), ...commandBase, expectedStateRevision: RevisionSchema }),
   z.strictObject({ type: z.literal('save_character'), ...commandBase, expectedCharacterRevision: RevisionSchema, card: CharacterCardDefinitionSchema, characterId: IdSchema.optional() }),
   z.strictObject({ type: z.literal('remove_seat'), ...commandBase, expectedStateRevision: RevisionSchema, characterId: IdSchema }),
   z.strictObject({ type: z.literal('approve_character'), ...commandBase, characterId: IdSchema, expectedCharacterRevision: RevisionSchema }),

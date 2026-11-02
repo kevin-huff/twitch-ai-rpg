@@ -20,7 +20,7 @@ const selected = computed(() => props.selected);
 const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
 
-const { sessionId, stage, snapshot, busy, beatBusy, director, work, beatWork, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
+const { sessionId, stage, snapshot, busy, beatBusy, director, beatWork, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
 
 const MAX_PLANNED_LINES = 12;
 const beat = computed(() => director.value?.activeBeat ?? null);
@@ -94,7 +94,13 @@ watch(() => Boolean(working.value), active => {
   ticker = setInterval(() => { now.value = Date.now(); }, 1000);
 }, { immediate: true });
 onUnmounted(() => { if (ticker) clearInterval(ticker); });
-const errorText = computed(() => barError.value || (!idle.value && beat.value?.lastError) || '');
+const SUPERSEDED_BY_SERVER = 'The generation was superseded. Its result was discarded.';
+const failedStep = ref<'plan' | 'render'>('plan');
+const supersededText = computed(() => {
+  if (!paused.value) return 'The show changed while the AI was working, so its work was thrown away. Try again.';
+  return `You paused, so the AI's work on this round was thrown away. Press ${failedStep.value === 'plan' ? 'Plan again' : 'Draft the scene again'} when you resume.`;
+});
+const errorText = computed(() => (barError.value === SUPERSEDED_BY_SERVER ? supersededText.value : barError.value) || (!idle.value && beat.value?.lastError) || '');
 
 const needsLines = computed(() => ['answer', 'plan'].includes(gold.value));
 const MAX_ROLLS_PER_ROUND = 12;
@@ -174,11 +180,11 @@ function reached(beatId: string, phase: Beat['phase']) {
 }
 async function planStep(submissionIds: string[]) {
   running.value = { task: 'plan', since: Date.now() };
-  try { await send({ type: 'plan_beat', ...beatMeta(), submissionIds }); } finally { running.value = null; }
+  try { await send({ type: 'plan_beat', ...beatMeta(), submissionIds }); } catch (cause) { failedStep.value = 'plan'; throw cause; } finally { running.value = null; }
 }
 async function renderStep() {
   running.value = { task: 'render', since: Date.now() };
-  try { await send({ type: 'render_beat', ...beatMeta() }); } finally { running.value = null; }
+  try { await send({ type: 'render_beat', ...beatMeta() }); } catch (cause) { failedStep.value = 'render'; throw cause; } finally { running.value = null; }
 }
 async function lockAndDraftSteps(beatId: string) {
   await send({ type: 'approve_stakes', ...beatMeta(), classification: 'ordinary', contracts: [] });

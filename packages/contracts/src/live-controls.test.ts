@@ -47,16 +47,13 @@ describe('live director control contracts', () => {
 
   it('parses set_cast and rest and refuses bad shapes', () => {
     const cast = { type: 'set_cast', commandId: 'c', expectedStateRevision: 2, presentNpcIds: ['a', 'b'] };
-    const rest = { type: 'rest', commandId: 'r', expectedStateRevision: 2, rests: [{ characterId: 'x', amount: 2 }] };
+    const rest = { type: 'rest', commandId: 'r', expectedStateRevision: 2 };
     expect(CommandSchema.safeParse(cast).success).toBe(true);
     expect(CommandSchema.safeParse({ ...cast, presentNpcIds: [] }).success).toBe(true);
     expect(CommandSchema.safeParse(rest).success).toBe(true);
-    const seven = Array.from({ length: 7 }, (_, i) => ({ characterId: `c${i}`, amount: 1 }));
     for (const bad of [
       { ...cast, presentNpcIds: ['a', 'a'] }, { ...cast, reason: 'because' },
-      { ...rest, rests: [] }, { ...rest, rests: seven },
-      { ...rest, rests: [{ characterId: 'x', amount: 0 }] }, { ...rest, rests: [{ characterId: 'x', amount: 9 }] },
-      { ...rest, rests: [{ characterId: 'x', amount: 1 }, { characterId: 'x', amount: 2 }] },
+      { ...rest, rests: [{ characterId: 'x', amount: 2 }] }, { ...rest, rests: [] },
       { ...rest, reason: 'because' }, { ...rest, discardQueuedInput: true },
     ]) expect(CommandSchema.safeParse(bad).success).toBe(false);
   });

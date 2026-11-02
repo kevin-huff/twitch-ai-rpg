@@ -184,8 +184,11 @@ async function prepareMoment(context: ImageJobContext, row: ImageRow, moment: Pi
   return saved.rowCount ? { prompt, model, references } : null;
 }
 
-function pictureTitle(row: ImageRow): string {
-  if (row.beat_id) return 'Action picture';
+async function pictureTitle(pool: Pool, row: ImageRow): Promise<string> {
+  if (row.beat_id) {
+    const kind = (await pool.query<{ kind: string }>('SELECT kind FROM beats WHERE id=$1', [row.beat_id]).catch(() => null))?.rows[0]?.kind;
+    return kind && kind !== 'action' ? 'Beat picture' : 'Action picture';
+  }
   if (row.moment) return 'Beat picture';
   return row.purpose === 'scene' ? 'Scene picture' : 'Portrait';
 }
@@ -233,7 +236,7 @@ export async function runImageJob(context: ImageJobContext, imageId: string, sig
     if (!started.rowCount) return { status: 'skipped' };
     const result = await context.provider.generate({
       prompt: drawing.prompt, negativePrompt: PICTURE_NEGATIVE_PROMPT, width: row.width, height: row.height, requestId: row.id, model: drawing.model,
-      title: pictureTitle(row), signal, ...(drawing.references.length > 0 ? { references: drawing.references } : {}),
+      title: await pictureTitle(context.pool, row), signal, ...(drawing.references.length > 0 ? { references: drawing.references } : {}),
     });
     const file = await storeImage(context.assetDir, result.bytes);
     return await finishReady(context, row, file, result.workflowId) ? { status: 'ready' } : { status: 'skipped' };

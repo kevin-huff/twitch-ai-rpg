@@ -20,6 +20,8 @@ export function createTable() {
   const loading = ref(true);
   const busy = ref(false);
   const beatBusy = ref(false);
+  const aiWorking = ref(false);
+  let aiRequests = 0;
   const connected = ref(false);
   const director = computed<DirectorSnapshot | null>(() => !stage && snapshot.value?.role === 'director' ? snapshot.value : null);
   const player = computed<PlayerSnapshot | null>(() => !stage && snapshot.value?.role === 'player' ? snapshot.value : null);
@@ -75,7 +77,11 @@ export function createTable() {
   }
 
   async function send(command: Command) {
-    const result = await api.command(sessionId, command) as { snapshot?: SessionSnapshot } | null | undefined;
+    const aiWork = command.type === 'plan_beat' || command.type === 'render_beat';
+    if (aiWork) { aiRequests++; aiWorking.value = true; }
+    let result: { snapshot?: SessionSnapshot } | null | undefined;
+    try { result = await api.command(sessionId, command) as { snapshot?: SessionSnapshot } | null | undefined; }
+    finally { if (aiWork) { aiRequests--; aiWorking.value = aiRequests > 0; } }
     const returned = result?.snapshot;
     if (returned && testCharacterId === null && returned.role === snapshot.value?.role) {
       refreshSequence++;
@@ -115,7 +121,7 @@ export function createTable() {
 
   return {
     path, sessionId, view, stage, inviteToken, testCharacterId,
-    snapshot, error, notice, loading, busy, beatBusy, connected,
+    snapshot, error, notice, loading, busy, beatBusy, aiWorking, connected,
     director, player, setup, latestHistory,
     refresh, work, beatWork, send, restoreSession, dispose, onSnapshot,
     requestPause, setStatus,

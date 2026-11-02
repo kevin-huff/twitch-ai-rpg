@@ -66,7 +66,7 @@ export const PictureIdResponseSchema = z.strictObject({ imageId: ImageIdSchema }
 export type PictureIdResponse = z.infer<typeof PictureIdResponseSchema>;
 
 // Public: the shown scene picture (ready, not hidden, current scene).
-export const ScenePictureSchema = z.strictObject({ imageId: ImageIdSchema, sceneId: id });
+export const ScenePictureSchema = z.strictObject({ imageId: ImageIdSchema, sceneId: id, kind: z.enum(['place', 'beat']).optional() });   // a missing kind means a place
 export type ScenePicture = z.infer<typeof ScenePictureSchema>;
 // Director only.
 export const ScenePictureStatusSchema = z.strictObject({
@@ -78,7 +78,7 @@ export const ScenePictureStatusSchema = z.strictObject({
   drawing: z.enum(['place', 'beat']).nullable().default(null),   // what the picture being made shows; null unless state is 'making'
 });
 export type ScenePictureStatus = z.infer<typeof ScenePictureStatusSchema>;
-// Director only: the picture of the active action round's newest script, held back until the round is published.
+// Director only: the picture of the active beat's newest script, held back until the beat is published.
 export const ActionPictureStatusSchema = z.strictObject({
   beatId: id,
   state: z.enum(['making', 'ready', 'failed']),
@@ -140,3 +140,22 @@ export interface ImageProvider {
   // One entry per input, in input order; null means draw that person from words. Rejects only when the signal aborts or the input is invalid.
   prepareReferences?(images: Uint8Array[], options: { requestId: string; signal?: AbortSignal }): Promise<(ImageReference | null)[]>;
 }
+
+export const PictureKindSchema = z.enum(['place', 'beat', 'portrait']);
+export type PictureKind = z.infer<typeof PictureKindSchema>;
+// The picture the director pinned: shown on the stream and the seats in place of the newest scene picture.
+export const PinnedPictureSchema = z.strictObject({ imageId: ImageIdSchema, kind: PictureKindSchema, label: z.string().min(1).max(200) });
+export type PinnedPicture = z.infer<typeof PinnedPictureSchema>;
+// Director only: one row of the picture shelf.
+export const ShelfPictureSchema = z.strictObject({
+  imageId: ImageIdSchema, kind: PictureKindSchema, label: z.string().min(1).max(200), scene: z.string().max(160).nullable(),
+  status: z.enum(['making', 'ready', 'failed']), message: z.string().max(300).nullable(),
+  onStream: z.boolean(), pinned: z.boolean(), held: z.boolean(), shelfOnly: z.boolean(), beatId: id.nullable(), createdAt: z.string(),
+});
+export type ShelfPicture = z.infer<typeof ShelfPictureSchema>;
+export const ShelfPicturesSchema = z.strictObject({ pictures: z.array(ShelfPictureSchema) });
+export type ShelfPictures = z.infer<typeof ShelfPicturesSchema>;
+export const PinPictureRequestSchema = z.strictObject({ imageId: ImageIdSchema });
+export type PinPictureRequest = z.infer<typeof PinPictureRequestSchema>;
+export const BeatPictureRequestSchema = z.strictObject({ beatId: id.optional() });
+export type BeatPictureRequest = z.infer<typeof BeatPictureRequestSchema>;

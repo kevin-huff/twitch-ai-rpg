@@ -26,6 +26,7 @@ function moment(lines: { kind: 'narration' | 'npc_dialogue' | 'player_dialogue' 
 
 const published = new Map<string, PublishedBeat>([
   ['round-1', beat('round-1', [{ kind: 'npc_dialogue', text: 'Hello there.' }, { kind: 'narration', text: 'The gate creaks open. Then silence.' }], { beatNumber: 3, actionRoundNumber: 2 })],
+  ['talk-1', { ...beat('talk-1', [{ kind: 'narration', text: 'The cellar door creaks. Dust falls.' }], { beatNumber: 5, actionRoundNumber: 0 }), kind: 'conversation' } as PublishedBeat],
   ['beat-7', beat('beat-7', [{ kind: 'player_dialogue', text: 'We go now!' }], { beatNumber: 7, actionRoundNumber: 0 })],
 ]);
 
@@ -94,6 +95,21 @@ describe('sceneCaption', () => {
   it('step 6: the place, and a hidden place', () => {
     expect(sceneCaption(row(), published)).toEqual({ label: 'The place', line: null, tag: null });
     expect(sceneCaption(row({ hidden: true }), published)).toEqual({ label: 'The place', line: null, tag: 'Hidden' });
+  });
+
+  it('labels a published conversation beat picture Beat N, and its earlier draft Earlier draft of beat N', () => {
+    const released = new Date('2026-10-25T01:00:00Z');
+    expect(sceneCaption(row({ beat_id: 'talk-1', released_at: released }), published)).toEqual({ label: 'Beat 5', line: 'The cellar door creaks.', tag: null });
+    expect(sceneCaption(row({ beat_id: 'talk-1', released_at: released, hidden: true }), published)).toEqual({ label: 'Beat 5', line: 'The cellar door creaks.', tag: 'Hidden' });
+    expect(sceneCaption(row({ beat_id: 'talk-1', released_at: null }), published)).toEqual({ label: 'Beat 5', line: 'The cellar door creaks.', tag: 'Not shown on stream' });
+    expect(sceneCaption(row({ status: 'cancelled', beat_id: 'talk-1', released_at: released }), published)).toEqual({
+      label: 'Earlier draft of beat 5', line: 'The cellar door creaks.', tag: 'Not shown on stream',
+    });
+  });
+
+  it('keeps the action round labels for action rounds', () => {
+    expect(sceneCaption(row({ beat_id: 'round-1', released_at: new Date() }), published).label).toBe('Action round 2');
+    expect(sceneCaption(row({ status: 'cancelled', beat_id: 'round-1' }), published).label).toBe('Earlier draft of action round 2');
   });
 
   it('a beat_id match wins over shows_beat_id and moment', () => {

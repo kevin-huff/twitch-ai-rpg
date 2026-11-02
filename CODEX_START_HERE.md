@@ -25,6 +25,51 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## October 31 update (evening): pictures for every beat, the shelf and pinning
+
+Nine picture tasks from the Story Table board (349, 347, 348, 350, 351, 352, 353, 354, 355), a simpler Rest, a way to send a Say line and a Do line together, and the ten follow-ups found by the last review were built on the evening of October 31 and November 2.
+
+What changed:
+
+- Contracts and migration 017 (`packages/contracts/src/images.ts`, `packages/contracts/src/index.ts`, `migrations/017_picture_shelf.sql`): the public scene picture gains an optional `kind` (`place` or `beat`; missing means place). New schemas cover the pinned picture, the director's picture list and the pin and redraw requests. Every snapshot (director, player and stage) may carry an optional `pinnedPicture`. The `rest` command is now just a command ID and the expected state revision. The migration adds `sessions.pinned_image_id` (cleared if the image is deleted) and `images.shelf_only`, with a check that only scene pictures with no beat can be shelf-only.
+- Server pictures (`images.ts`, `commands.ts`, `image-jobs.ts`, `gallery-model.ts`): every beat whose script has narration, conversations included, reserves one held picture when its narration first appears or changes and releases it when the beat is published. Each picture still asks the AI for one description and keeps the words-only fallback when that call fails; it is never retried. Conversation pictures read "Beat N" in the gallery and are titled "Beat picture"; action rounds are unchanged.
+- Server list and pin (`picture-list.ts`, `shelf-routes.ts`, `picture-views.ts`, `repository.ts`): `GET /api/sessions/:id/pictures` is host-only and lists every picture, newest first, with label, status, on-stream and pinned flags. `POST /api/sessions/:id/pinned-picture` pins a ready picture of the show (held pictures and other shows' pictures are refused) and `POST /api/sessions/:id/pinned-picture/release` lets go. Seats and stage links can fetch the pinned image. The list stays out of the snapshot.
+- Draw again (`picture-routes.ts`): the beat-picture route takes an optional `beatId` of any published beat. That redraw is shelf-only: it copies the beat's scene words, lands on the shelf and never replaces the stream picture. Hide also releases the pin.
+- Rest (`commands.ts`): one press sets every character's strain to 0. It keeps all lines and the input stamp, refuses with "Nobody has strain to rest." when nobody has strain, and keeps the old safety checks (live or paused show, no AI work running, no round past taking lines, show unchanged since the panel loaded).
+- Director page: new picture shelf (`PictureShelf.vue`) below the picture panel with Show on stream and Draw again, a "Pinned: label, Release" line in the status strip, and Rest everyone with a confirmation. Who is here and Rest read "Waiting for the AI to finish" while the AI works and "Saving..." only during their own save. The scene picture panel talks about this beat's picture.
+- Stream pages and seats: the stage scene, the overlay and the seat heading pick their picture through one helper, `displayedPicture` in `pictures.ts`, so the pin wins over the newest scene picture. Beat pictures swap in quietly; only places play the 4-second reveal, and nothing reveals while a picture is pinned. Pinned portraits fit whole. A broken file falls back to the scene picture. The stage layouts were not split.
+- Seat (`PlayerSeat.vue`): when both the Say and Do boxes hold words, Send both sends two separate lines (Say, then Do). If one is refused, the other still goes and the refused box keeps its words and its reason.
+- Help (`apps/web/src/help/content.ts`): entries for the shelf, Show on stream, Release, Draw again, the pinned line and Send both; pictures-on-every-beat, reveal and Rest entries corrected.
+
+Kevin's decisions:
+
+- 282: every beat with narration gets a picture drawn while the script is drafted and shown at publish.
+- 283: a pinned picture replaces the shown picture on stream and seats until Release, survives scene changes, and Hide releases it. Redraws go to the shelf.
+- 294: one OBS link per piece is a later sprint with board 358, so the layouts were not split.
+- Rest sets every character's strain to 0.
+- 449: Say and Do stay separate lines, and one press can send both.
+
+Sprint 1 follow-ups fixed:
+
+1. The scene form puts back the description it opened with when a newly picked place has no arrival text and the director has not edited it, so the warning shows.
+2. Who is here and Rest say they are waiting for the AI instead of "Saving...".
+3. After Pause anyway, the beat panel says in plain words that the AI's work was thrown away, with no red server message.
+4. The pause confirmation row shows only while a plan or script request runs and closes when it ends.
+5. Who is here treats a changed show as stale on its own, so Start over and Save work after the ticks are set back.
+6. Help for Who is here and Rest says they work between rounds or while a round is taking lines and nothing is planned yet; the take-back entry no longer says the director can refuse a line.
+7. This file and `docs/ARCHITECTURE.md` now say the quiet send holds for boxes stamped before the round opened.
+8. "Moving with the party" lists only characters who move.
+9. `BeatPanel.vue` no longer takes an unused `work`.
+10. A browser spec (`tests/browser/cast-and-rest.spec.ts`) opens Who is here and Rest at 390px and 1280px, saves a cast change and a Rest, and checks that waiting lines stay.
+
+Deploy notes: `017_picture_shelf.sql` runs at start-up. Reload every OBS browser source and every stream tab, because the stage pages changed. Every beat now asks the AI for a picture description, with the words-only fallback when that fails, so expect more picture work per show.
+
+Known leftovers: a Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. Publishing a beat replaces older pictures of the scene that are still being drawn. The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
+
+How it was checked: the baseline at ee39f62 was typecheck clean; `npm test` 2,893 passed and 825 skipped; database suite 1,267 passed in 99 files; browser suite 52 of 52. Final counts, after the main agent's fix below: the typecheck reports no errors; `npm test` 2,991 passed and 889 skipped (the database tests) in 125 files; database suite 1,333 passed in 103 files; browser suite 53 of 53.
+
+Fixed after the final review (main agent): a beat's held picture that failed before the beat was published used to stay listed as "The beat in progress" with no Draw again for the rest of the show, because publishing releases only a picture still being drawn or ready. `picture-list.ts` now counts a picture as held only while its beat is unpublished, so that picture is listed under its beat ("Beat N" or "Action round N") with Draw again, and `shelf-routes.ts` refuses to pin any beat picture that publishing never released, matching what the stream will show.
+
 ## October 31 update: lines, scenes and strain
 
 Ten tasks from the Story Table board were built on October 31, following Kevin's decisions from that day. Players' waiting lines now survive the director's live changes, the director can change who is here or let characters rest without touching the queue, the beat panel is the only part of the director page that waits for the AI, the scene form fills itself from the chosen place, the seat stops asking again when only a round opened, and strain runs to one shared maximum of 8 that the AI has rules for.
@@ -35,7 +80,7 @@ What changed:
 - Server (`apps/server/src/commands.ts`): corrections, scene changes, character saves and reveals cancel nothing. Ticked lines go back to the queue, and the audit event lists them as `keptSubmissionIds`. These four still raise the state revision and the input stamp by one. Abandoning a round puts its rolled lines back in the queue with no beat and drops that round's dice. `set_cast` and `rest` are director-only, work while paused, raise only the state revision, and write before and after in the audit row. They refuse during a round past collecting and while an AI job is queued or running, because any state change throws away a running plan's result.
 - AI (`packages/providers/src/index.ts`, `apps/server/src/fake-provider.ts`): the plan prompt and `validatePlan` use the shared maximum and say "full strain". The planner now gets strain costs by risk, recovery lines that roll (clean -2, costly -1, setback 0), relief as a negative strain change, overflow past 8 sent to an enabled public danger track or a story cost, no character taken out or killed, and no countdown change in a conversation round. The test AI follows the same rules.
 - Director page: `table.ts` has a separate `beatBusy` flag, so only the beat panel waits while the AI plans or writes. Pausing during that work asks first ("Pause anyway" or "Keep going"). Lines that were waiting before a correction, scene change, character save or reveal come back unticked. Show tools gains Who is here (`CastPresence.vue`) and Rest (`RestControls.vue`). The scene form fills the public description from the place's arrival text unless the director edited it, says the description goes public on save, and ticks everyone here now plus the place's residents. Place notes read "What the party sees on arrival" in the scene form and the library. The correction form lost its discard checkbox.
-- Seat: a line that missed the round says "Not in this round. It waits for the next turn.", one line in a round invites "You can send one more line.", and a taken-back line says "Taken back. Send it again if you still want it." Each line box also stamps the newest published beat, the scene, the correction count and the public fact count. When only a round opened (or a pause, a character save or an abandoned round happened), Send takes a fresh stamp without asking, and a quiet 409 is retried once. A publish, correction, scene change or reveal still shows Send it anyway.
+- Seat: a line that missed the round says "Not in this round. It waits for the next turn.", one line in a round invites "You can send one more line.", and a taken-back line says "Taken back. Send it again if you still want it." Each line box also stamps the newest published beat, the scene, the correction count and the public fact count. When only a round opened (or a pause or a character save happened), Send takes a fresh stamp without asking. After an abandoned round the quiet send holds only for boxes stamped before that round opened; a box stamped during the abandoned round still shows "This turn is locked..." and Send it anyway until the next round opens, and a quiet 409 is retried once. A publish, correction, scene change or reveal still shows Send it anyway.
 - Stream pages: the stage scene and overlay draw 8 strain pips and show "Needs help" at full strain. The director's cast panel reads "Strain n/8".
 - Help (`apps/web/src/help/content.ts`): new entries for Who is here and Rest, and rewritten entries for kept lines, the removed checkbox, strain out of 8 and the full-strain rule.
 - Docs and browser specs: `docs/ARCHITECTURE.md` describes kept lines, the two new commands, abandoned rounds, the seat's quiet re-stamp and the planner's strain rules. The live-controls, director-tools and field-generation browser specs no longer tick a discard box, expect earlier lines to stay queued, and expect a returning place's residents to be ticked.
@@ -49,9 +94,9 @@ Kevin's decisions (October 31):
 - 286: picking a place fills the description from the place's notes, shown before saving, and ticks the people who live there.
 - 288: a line typed between turns joins without asking when only a round opened, and asks again after a publish, correction or scene change.
 
-Rest's default of 2 per character (or the character's whole strain when it is below 2) is a placeholder until Kevin answers how big a rest should be. The director can set each amount from 0 up to the character's current strain.
+Rest no longer has per-character amounts or a placeholder: see the October 31 update (evening) above for the new Rest, which sets everyone's strain to 0.
 
-Still open: decision 296, what can die (no danger setting exists, so the AI keeps today's rule that nobody is out or dead); the size of a rest; and whether corrections may happen during a round.
+Still open: decision 296, what can die (no danger setting exists, so the AI keeps today's rule that nobody is out or dead); and whether corrections may happen during a round.
 
 Where the build differs from the board:
 

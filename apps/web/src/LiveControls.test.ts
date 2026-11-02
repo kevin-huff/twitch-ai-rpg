@@ -591,9 +591,9 @@ describe('scene title follows the chosen place', () => {
   it('names who moves with the party and emits the new title in the scene change', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     await begin(wrapper, 'scene'); await acknowledge(wrapper);
-    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Mara');
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: no one');
     await wrapper.get(field('present-dax')).setValue(true);
-    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Mara, Dax');
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Dax');
     await wrapper.get(field('scene-location')).setValue('tower');
     await wrapper.get(field('scene-description')).setValue('Wind and stone.');
     await wrapper.get('form').trigger('submit');
@@ -620,7 +620,7 @@ describe('scene form fills from the chosen place', () => {
     expect(description(wrapper)).toBe('High above.');
     expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
     await wrapper.get(field('scene-location')).setValue('bar');
-    expect(description(wrapper)).toBe('High above.');
+    expect(description(wrapper)).toBe('A quiet place.');
     wrapper.unmount();
   });
   it('keeps a description the director edited, whether typed or applied from the generator', async () => {
@@ -636,7 +636,7 @@ describe('scene form fills from the chosen place', () => {
     expect(description(wrapper)).toBe('Generated words.');
     wrapper.unmount();
   });
-  it('leaves the description alone when the place has no arrival text', async () => {
+  it('puts back the opened description when the place has no arrival text', async () => {
     const blank = snapshot(); blank.locations = [{ id: 'bar', title: 'The bar', description: '' }, { id: 'tower', title: 'The tower', description: '' }];
     const wrapper = mount(LiveControls, { props: { snapshot: blank, busy: false } });
     await begin(wrapper, 'scene');
@@ -662,9 +662,36 @@ describe('scene form fills from the chosen place', () => {
     await wrapper.get(field('scene-location-kind')).setValue('new');
     await wrapper.get(field('location-description')).setValue('Fog rolls over the pier.');
     await wrapper.get(field('scene-location-kind')).setValue('existing');
-    expect(description(wrapper)).toBe('Fog rolls over the pier.');
+    expect(description(wrapper)).toBe('A quiet place.');
     await wrapper.get(field('scene-location')).setValue('tower');
     expect(description(wrapper)).toBe('High above.');
+    wrapper.unmount();
+  });
+  it('never sends the first place\'s text when a second place has no arrival text', async () => {
+    const snap = snapshot(); snap.locations = [{ id: 'bar', title: 'The bar', description: '' }, { id: 'tower', title: 'The tower', description: 'High above.' }, { id: 'cellar', title: 'The cellar', description: '' }];
+    const wrapper = mount(LiveControls, { props: { snapshot: snap, busy: false } });
+    await begin(wrapper, 'scene'); await acknowledge(wrapper);
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('High above.');
+    await wrapper.get(field('scene-location')).setValue('cellar');
+    expect(description(wrapper)).toBe('A quiet place.');
+    expect(wrapper.find(field('scene-description-stale')).exists()).toBe(true);
+    await acknowledge(wrapper);
+    await wrapper.get('form').trigger('submit');
+    expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', title: 'The cellar', description: 'A quiet place.' }));
+    wrapper.unmount();
+  });
+  it('does not list residents of the destination as moving', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(ticked(wrapper)).toEqual(['mara', 'dax']);
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Mara');
+    await wrapper.get(field('present-mara')).setValue(false);
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: no one');
+    await wrapper.get(field('scene-location-kind')).setValue('new');
+    await wrapper.get(field('present-dax')).setValue(true);
+    expect(wrapper.get(field('scene-movers')).text()).toBe('Moving with the party: Dax');
     wrapper.unmount();
   });
   it('ticks everyone here plus the characters who live at the destination', async () => {

@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
 import type { SessionSnapshot, Submission } from '@rpg/contracts';
 import { identityPath } from './identity';
-import { pictureUrl, portraitAlt, shownScenePicture } from './pictures';
+import { displayedPicture, pictureUrl, portraitAlt, shownScenePicture } from './pictures';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { playerStatus } from './player-status';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
@@ -68,19 +68,32 @@ const card = computed(() => {
   return rows.map(([label, value]) => ({ label, value: (value ?? '').trim() })).filter(row => row.value);
 });
 
-const scenePictureSrc = computed(() => {
-  const picture = snapshot.value ? shownScenePicture(snapshot.value) : null;
-  return picture ? pictureUrl({ kind: 'session', sessionId }, picture.imageId) : null;
+const brokenPictures = ref<string[]>([]);
+const brokenIds = computed(() => {
+  const ids = new Set<string>();
+  const current = snapshot.value;
+  if (!current) return ids;
+  for (const id of [current.pinnedPicture?.imageId, shownScenePicture(current)?.imageId]) {
+    if (id && brokenPictures.value.includes(pictureUrl({ kind: 'session', sessionId }, id))) ids.add(id);
+  }
+  return ids;
 });
+const seatPicture = computed(() => snapshot.value ? displayedPicture(snapshot.value, brokenIds.value) : null);
+const scenePictureSrc = computed(() => seatPicture.value ? pictureUrl({ kind: 'session', sessionId }, seatPicture.value.imageId) : null);
+const seatPictureAlt = computed(() => seatPicture.value?.pinned ? seatPicture.value.label ?? snapshot.value?.session.scene.title ?? '' : snapshot.value?.session.scene.title ?? '');
 const ownPortraitSrc = computed(() => {
   const portraitId = snapshot.value?.picturesEnabled === true ? player.value?.ownCharacter?.portraitId : null;
   return portraitId ? pictureUrl({ kind: 'session', sessionId }, portraitId) : null;
 });
-const brokenPictures = ref<string[]>([]);
 const showable = (src: string | null) => (src && !brokenPictures.value.includes(src) ? src : null);
 const pictureFailed = (src: string | null) => { if (src && !brokenPictures.value.includes(src)) brokenPictures.value = [...brokenPictures.value, src]; };
 // A failure is remembered only while that same picture stays shown; when it reappears it gets one fresh try.
-watch([scenePictureSrc, ownPortraitSrc], shown => {
+const shownSources = computed(() => {
+  const current = snapshot.value;
+  const ids = current ? [current.pinnedPicture?.imageId, shownScenePicture(current)?.imageId] : [];
+  return [...ids.filter((id): id is string => !!id).map(id => pictureUrl({ kind: 'session', sessionId }, id)), ownPortraitSrc.value].filter((src): src is string => !!src);
+});
+watch(shownSources, shown => {
   const kept = brokenPictures.value.filter(src => shown.includes(src));
   if (kept.length !== brokenPictures.value.length) brokenPictures.value = kept;
 });
@@ -144,7 +157,10 @@ const moved = computed(() => movedSince(activeContext.value));
 const quietChange = computed(() => quietSince(activeContext.value));
 const turnLocked = computed(() => turnLockedSince(activeContext.value));
 const stale = computed(() => Boolean(activeContext.value) && ((moved.value && !quietChange.value) || Boolean(refusal.value)));
-const submitLabel = computed(() => busy.value ? 'Sending…' : stale.value ? (editing.value ? 'Save changes anyway' : 'Send it anyway') : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
+// Say and Do boxes both holding words go together on one press, as two separate lines.
+const sendingBoth = computed(() => !editing.value && (kind.value === 'say' || kind.value === 'act') && Boolean(sayText.value.trim()) && Boolean(actionText.value.trim()));
+
+const submitLabel = computed(() => busy.value ? 'Sending…' : sendingBoth.value ? (stale.value ? 'Send both anyway' : 'Send both') : stale.value ? (editing.value ? 'Save changes anyway' : 'Send it anyway') : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
 
 function defaultRecipient(next: SessionSnapshot) {
   const present = next.npcs.filter(npc => npc.status === 'present');
@@ -168,28 +184,59 @@ function linePayload(lineKind: LineKind) {
   return { kind: 'ooc' as const, text: noteText.value, intent: '', approach: '', recipientNpcIds: [], stageDirection: '' };
 }
 
-function saveSubmission() { return work(async () => {
-  receipt.value = ''; receiptFor.value = null;
-  const lineKind = kind.value;
-  // Pressing Send it anyway is the player's say-so that the words still fit, so a stale box takes a fresh stamp, as Yes, they still fit does.
-  // A quiet change (only a round opened) takes one silently.
-  let captured = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
-  const editedId = editing.value?.id ?? null;
-  const before = ownIds();
-  const pastCollecting = Boolean(player.value?.activeBeat) && player.value?.activeBeat?.phase !== 'collecting';
+// Sends one line. A 409 refusal gets one quiet retry; every refusal leaves the reason on that box and keeps its words.
+// With tolerant set (Send both) any failure is kept on its box instead of thrown, so the other line can still go.
+async function postLine(lineKind: LineKind, start: InputContext, tolerant: boolean): Promise<boolean> {
+  let captured = start;
   let retried = false;
   for (;;) {
     try {
       await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
-      break;
+      return true;
     } catch (cause) {
-      if ((cause as { status?: number }).status !== 409) throw cause;
+      const status = (cause as { status?: number }).status;
+      const reason = cause instanceof Error && cause.message ? cause.message : '';
+      if (status !== 409) {
+        if (!tolerant) throw cause;
+        refusals.value[lineKind] = reason || 'This line could not be sent. Press Send it anyway to try again.';
+        return false;
+      }
       await table.refresh();
       if (!retried && quietSince(contexts.value[lineKind])) { retried = true; captured = stampNow(); continue; }
-      refusals.value[lineKind] = cause instanceof Error && cause.message ? cause.message : 'The story moved on. Press Send it anyway to send your words now.';
-      return;
+      refusals.value[lineKind] = reason || 'The story moved on. Press Send it anyway to send your words now.';
+      return false;
     }
   }
+}
+
+function saveSubmission() { return work(async () => {
+  receipt.value = ''; receiptFor.value = null;
+  const lineKind = kind.value;
+  const editedId = editing.value?.id ?? null;
+  const before = ownIds();
+  const pastCollecting = Boolean(player.value?.activeBeat) && player.value?.activeBeat?.phase !== 'collecting';
+  if (sendingBoth.value) {
+    // The visible box follows the usual rules. The other box only takes a fresh stamp for a quiet change, so a box whose story moved is refused with its words kept.
+    const visibleStart = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
+    const hiddenKind: LineKind = lineKind === 'say' ? 'act' : 'say';
+    const hiddenStart = quietSince(contexts.value[hiddenKind]) ? stampNow() : contexts.value[hiddenKind] ?? stampNow();
+    const starts: Record<string, InputContext> = { [lineKind]: visibleStart, [hiddenKind]: hiddenStart };
+    const sent: LineKind[] = [];
+    const kept: LineKind[] = [];
+    for (const each of ['say', 'act'] as const) {
+      if (await postLine(each, starts[each]!, true)) { finishLine(each); sent.push(each); } else kept.push(each);
+    }
+    if (kept.length && !kept.includes(kind.value)) kind.value = kept[0]!;
+    if (sent.length) {
+      receipt.value = sent.length === 2 ? (pastCollecting ? 'Saved. Both lines wait for the next turn.' : 'Saved. The director has both lines.') : pastCollecting ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
+      receiptFor.value = newOwnId(before);
+    }
+    return;
+  }
+  // Pressing Send it anyway is the player's say-so that the words still fit, so a stale box takes a fresh stamp, as Yes, they still fit does.
+  // A quiet change (only a round opened) takes one silently.
+  const start = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
+  if (!await postLine(lineKind, start, false)) return;
   finishLine(lineKind);
   receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : pastCollecting ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
   receiptFor.value = editedId ?? newOwnId(before);
@@ -282,7 +329,7 @@ async function askPrivately() {
   <template v-if="snapshot && player">
     <div class="seat">
       <header class="seat-heading" :class="{ 'with-picture': showable(scenePictureSrc) }">
-        <img v-if="showable(scenePictureSrc)" class="seat-scene-picture" :src="scenePictureSrc!" :alt="snapshot.session.scene.title" @error="pictureFailed(scenePictureSrc)">
+        <img v-if="showable(scenePictureSrc)" class="seat-scene-picture" :class="{ 'fit-whole': seatPicture?.pinned && seatPicture.kind === 'portrait' }" :src="scenePictureSrc!" :alt="seatPictureAlt" @error="pictureFailed(scenePictureSrc)">
         <div v-if="showable(scenePictureSrc)"><p class="eyebrow">{{ snapshot.session.title }}</p><h1>{{ snapshot.session.scene.title }}</h1></div>
         <template v-else><p class="eyebrow">{{ snapshot.session.title }}</p><h1>{{ snapshot.session.scene.title }}</h1></template>
       </header>
@@ -331,6 +378,7 @@ async function askPrivately() {
 .seat-heading .eyebrow { margin-bottom: 8px; }
 .seat-heading h1 { margin: 0; overflow-wrap: anywhere; }
 .seat-heading.with-picture { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; }
+.seat-scene-picture.fit-whole { object-fit: contain; }
 .seat-scene-picture { width: 180px; aspect-ratio: 1344 / 768; object-fit: cover; padding: 2px; background: var(--void); clip-path: var(--cut-1); }
 .own-portrait { float: right; width: 120px; height: 120px; object-fit: cover; padding: 2px; background: var(--void); clip-path: var(--cut-1); margin: 8px 0 8px 16px; }
 .character .playing { color: var(--dust); margin: 0 0 4px; }

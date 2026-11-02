@@ -6,7 +6,7 @@ import type { Command, DirectorSnapshot } from '@rpg/contracts';
 const helpPrefix = useId();
 const helpId = (npcId: string) => `${helpPrefix}-help-${encodeURIComponent(npcId)}`;
 
-const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
+const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean; aiBusy: boolean }>();
 const emit = defineEmits<{ command: [command: Command, onSaved: () => void] }>();
 
 const open = ref(false);
@@ -15,6 +15,7 @@ const baseline = ref<string[]>([]);
 const ticked = ref<string[]>([]);
 const error = ref('');
 const savedNotice = ref('');
+const saving = ref(false);
 
 const hereIds = computed(() => props.snapshot.npcDetails
   .filter(npc => npc.status === 'present' && npc.locationId === props.snapshot.session.scene.locationId)
@@ -28,10 +29,11 @@ const gate = computed(() => {
   if (props.snapshot.activeBeat && props.snapshot.activeBeat.phase !== 'collecting') return 'Publish or abandon this round first.';
   return '';
 });
-const locked = computed(() => props.busy || Boolean(gate.value));
+const locked = computed(() => props.busy || props.aiBusy || Boolean(gate.value));
 const unchanged = computed(() => sameSet(ticked.value, hereIds.value));
 const edited = computed(() => !sameSet(ticked.value, baseline.value));
 const stale = computed(() => open.value && revision.value !== props.snapshot.session.stateRevision);
+const saveLabel = computed(() => (saving.value ? 'Saving…' : props.aiBusy ? 'Waiting for the AI to finish' : 'Save who is here'));
 const canSave = computed(() => !locked.value && !stale.value && !unchanged.value);
 
 function load() {
@@ -42,18 +44,21 @@ function load() {
 }
 function begin() {
   if (locked.value) return;
+  saving.value = false;
   savedNotice.value = '';
   load();
   open.value = true;
 }
 function cancel() { open.value = false; error.value = ''; }
 watch(() => props.snapshot.session.stateRevision, () => { if (open.value && !edited.value) load(); });
+watch(() => props.busy, busy => { if (!busy) saving.value = false; });
 function save() {
   if (!canSave.value) return;
   const parsed = CommandSchema.safeParse({ type: 'set_cast', commandId: crypto.randomUUID(), expectedStateRevision: revision.value, presentNpcIds: [...ticked.value] });
   if (!parsed.success) { error.value = parsed.error.issues[0]?.message ?? 'Check who is here and try again.'; return; }
   error.value = '';
-  emit('command', parsed.data, () => { open.value = false; savedNotice.value = 'Saved who is here.'; });
+  saving.value = true;
+  emit('command', parsed.data, () => { saving.value = false; open.value = false; savedNotice.value = 'Saved who is here.'; });
 }
 </script>
 
@@ -66,7 +71,7 @@ function save() {
     <p class="muted" data-testid="cast-here-now">{{ hereNames.length ? `Here now: ${hereNames.join(', ')}` : 'Nobody else is here.' }}</p>
     <div class="actions"><button type="button" class="secondary" data-testid="begin-cast" :disabled="locked" :aria-pressed="open" @click="begin">Change who is here</button></div>
     <form v-if="open" @submit.prevent="save">
-      <p v-if="stale && edited" class="notice">The show changed while you were choosing. Press Start over to see who is here now.<button type="button" class="quiet" data-testid="cast-reset" @click="load">Start over</button></p>
+      <p v-if="stale" class="notice">The show changed while you were choosing. Press Start over to see who is here now.<button type="button" class="quiet" data-testid="cast-reset" @click="load">Start over</button></p>
       <fieldset :disabled="locked">
         <div v-for="npc in snapshot.npcDetails" :key="npc.id">
           <label class="check"><input v-model="ticked" type="checkbox" :value="npc.id" :data-testid="`here-${npc.id}`" :aria-describedby="helpId(npc.id)">{{ npc.displayName }}</label>
@@ -74,7 +79,7 @@ function save() {
         </div>
         <p v-if="error" role="alert" class="notice error">{{ error }}</p>
         <div class="actions">
-          <button type="submit" data-testid="save-cast" :disabled="!canSave">{{ busy ? 'Saving…' : 'Save who is here' }}</button>
+          <button type="submit" data-testid="save-cast" :disabled="!canSave">{{ saveLabel }}</button>
           <button type="button" class="secondary" data-testid="cancel-cast" @click="cancel">Cancel</button>
         </div>
       </fieldset>

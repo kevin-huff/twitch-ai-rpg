@@ -18,7 +18,7 @@ const messages = {
   stale: 'The show changed. Look again, then save.',
   unknownNpc: 'A chosen character is not in this show.',
   noChange: 'Nobody changed. Tick or untick someone first.',
-  unknownCharacter: 'That character is not in this show.',
+  nobodyStrained: 'Nobody has strain to rest.',
 };
 
 suite('who is here and rest', () => {
@@ -50,7 +50,7 @@ suite('who is here and rest', () => {
   }
   const beatCommand = (type: string, value: Record<string, unknown> = {}) => ({ type, beatId: snapshot.activeBeat!.id, expectedBeatRevision: snapshot.activeBeat!.revision, ...value });
   const cast = (ids: string[], value: Record<string, unknown> = {}) => ({ type: 'set_cast', expectedStateRevision: snapshot.session.stateRevision, presentNpcIds: ids, ...value });
-  const rest = (rests: { characterId: string; amount: number }[], value: Record<string, unknown> = {}) => ({ type: 'rest', expectedStateRevision: snapshot.session.stateRevision, rests, ...value });
+  const rest = (value: Record<string, unknown> = {}) => ({ type: 'rest', expectedStateRevision: snapshot.session.stateRevision, ...value });
   const characterId = () => snapshot.characterDetails[0]!.id;
   const strain = () => snapshot.characters.find((item) => item.id === characterId())!.strain;
   const hereNow = () => snapshot.npcDetails.filter((npc) => npc.status === 'present' && npc.locationId === snapshot.session.scene.locationId).map((npc) => npc.id).sort();
@@ -169,7 +169,7 @@ suite('who is here and rest', () => {
     await ok(beatCommand('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat!.contracts }));
     await ok(beatCommand('lock_beat'));
     await refused(cast([away]), 409, messages.rolled);
-    await refused(rest([{ characterId: characterId(), amount: 1 }]), 409, messages.rolled);
+    await refused(rest(), 409, messages.rolled);
     await ok(beatCommand('render_beat'));
     await refused(cast([away]), 409, messages.rolled);
     expect(hereNow()).toEqual([here]);
@@ -187,7 +187,7 @@ suite('who is here and rest', () => {
     expect(started).toBeDefined();
     const response = await refused(cast([away]), 409, messages.running);
     expect(response.json().recoverable).toBe(true);
-    await refused(rest([{ characterId: characterId(), amount: 1 }]), 409, messages.running);
+    await refused(rest(), 409, messages.running);
     finish(await fake.plan(started!));
     expect((await pending).statusCode).toBe(200);
     await refresh();
@@ -202,7 +202,7 @@ suite('who is here and rest', () => {
   it('refuses players and stream pages for both commands and writes no audit row', async () => {
     for (const credential of [player, stage]) {
       expect((await command(cast([away]), credential)).statusCode).toBe(403);
-      expect((await command(rest([{ characterId: characterId(), amount: 1 }]), credential)).statusCode).toBe(403);
+      expect((await command(rest(), credential)).statusCode).toBe(403);
     }
     expect((await command(cast([away]), '')).statusCode).toBe(401);
     await refresh();
@@ -212,70 +212,63 @@ suite('who is here and rest', () => {
     expect(await auditCount('rest')).toBe(0);
   });
 
-  it('lowers strain by the given amounts and keeps the lines, the epoch and the scene', async () => {
+  it('sets everyone\'s strain to 0 and keeps the lines, the epoch and the scene', async () => {
     await line('say');
     const before = snapshot;
-    const response = await ok(rest([{ characterId: characterId(), amount: 2 }]));
-    expect(strain()).toBe(1);
+    const response = await ok(rest());
+    expect(strain()).toBe(0);
+    for (const item of snapshot.characters) expect(item.strain).toBe(0);
     expect(snapshot.session.stateRevision).toBe(before.session.stateRevision + 1);
     expect(snapshot.session.inputEpoch).toBe(before.session.inputEpoch);
     expect(snapshot.session.scene.id).toBe(before.session.scene.id);
     expect(snapshot.submissions).toEqual(before.submissions);
     const rows = await auditRows(response.json().commandId);
     expect(rows).toHaveLength(1); expect(rows[0].kind).toBe('rest');
-    expect(rows[0].data).toEqual({ before: [{ characterId: characterId(), strain: 3 }], after: [{ characterId: characterId(), strain: 1 }] });
-    await ok(rest([{ characterId: characterId(), amount: 1 }]));
-    expect(strain()).toBe(0);
+    expect(rows[0].data).toEqual({ before: [{ characterId: characterId(), strain: 3 }], after: [{ characterId: characterId(), strain: 0 }] });
   });
 
-  it('rests several characters at once and leaves the others alone', async () => {
+  it('rests several characters at once, lists only those who rested and leaves the strain-free alone', async () => {
     const ids = snapshot.characters.map((item) => item.id);
     if (ids.length < 2) return;
     await mutate((state) => { state.characters[1]!.strain = 4; });
-    const other = snapshot.characters[1]!;
-    await ok(rest([{ characterId: ids[0]!, amount: 3 }, { characterId: other.id, amount: 1 }]));
-    expect(snapshot.characters[0]!.strain).toBe(0);
-    expect(snapshot.characters[1]!.strain).toBe(3);
-    for (const item of snapshot.characters.slice(2)) expect(item.strain).toBe(0);
+    const response = await ok(rest());
+    for (const item of snapshot.characters) expect(item.strain).toBe(0);
+    const rows = await auditRows(response.json().commandId);
+    expect(rows[0].data).toEqual({
+      before: [{ characterId: ids[0], strain: 3 }, { characterId: ids[1], strain: 4 }],
+      after: [{ characterId: ids[0], strain: 0 }, { characterId: ids[1], strain: 0 }],
+    });
   });
 
   it('works while paused and while a round is collecting', async () => {
     await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
     await line('act');
     const collecting = snapshot;
-    await ok(rest([{ characterId: characterId(), amount: 1 }]));
+    await ok(rest());
     expect(snapshot.activeBeat).toEqual(collecting.activeBeat);
     expect(snapshot.submissions).toEqual(collecting.submissions);
     expect(snapshot.session.inputEpoch).toBe(collecting.session.inputEpoch);
+    await mutate((state) => { state.characters[0]!.strain = 2; });
     await ok({ type: 'set_status', status: 'paused', expectedStateRevision: snapshot.session.stateRevision });
-    await ok(rest([{ characterId: characterId(), amount: 1 }]));
+    await ok(rest());
     expect(snapshot.session.status).toBe('paused');
-    expect(strain()).toBe(1);
+    expect(strain()).toBe(0);
   });
 
-  it('refuses more than the current strain, an unknown character, a stale revision and the lobby with the exact texts', async () => {
+  it('refuses when nobody has strain, a stale revision, an old body shape and the lobby with the exact texts', async () => {
     const before = snapshot;
-    const name = snapshot.characterDetails[0]!.displayName;
-    await refused(rest([{ characterId: characterId(), amount: 4 }]), 409, `${name} has only 3 strain to rest.`);
-    await refused(rest([{ characterId: randomUUID(), amount: 1 }]), 409, messages.unknownCharacter);
-    await refused(rest([{ characterId: characterId(), amount: 1 }], { expectedStateRevision: before.session.stateRevision - 1 }), 409, messages.stale);
-    await refused(rest([]), 400);
-    await refused(rest([{ characterId: characterId(), amount: 0 }]), 400);
-    await refused(rest([{ characterId: characterId(), amount: 1 }, { characterId: characterId(), amount: 1 }]), 400);
+    await refused(rest({ expectedStateRevision: before.session.stateRevision - 1 }), 409, messages.stale);
+    await refused(rest({ rests: [{ characterId: characterId(), amount: 1 }] }), 400);
+    await refused(rest({ reason: 'tired' }), 400);
+    await refused(rest({ discardQueuedInput: true }), 400);
     await refresh();
     expect(strain()).toBe(3);
     expect(snapshot.session.stateRevision).toBe(before.session.stateRevision);
     expect(await auditCount('rest')).toBe(0);
+    await ok(rest());
+    await refused(rest(), 409, messages.nobodyStrained);
+    expect(await auditCount('rest')).toBe(1);
     await pool.query("UPDATE sessions SET setup=NULL,status='lobby' WHERE id=$1", [sessionId]);
-    await refused(rest([{ characterId: characterId(), amount: 1 }]), 409, messages.restLobby);
-  });
-
-  it('refuses a whole rest when one amount is too large and changes nobody', async () => {
-    const ids = snapshot.characters.map((item) => item.id);
-    if (ids.length < 2) return;
-    await mutate((state) => { state.characters[1]!.strain = 1; });
-    await refused(rest([{ characterId: ids[0]!, amount: 1 }, { characterId: ids[1]!, amount: 2 }]), 409);
-    expect(snapshot.characters[0]!.strain).toBe(3);
-    expect(snapshot.characters[1]!.strain).toBe(1);
+    await refused(rest(), 409, messages.restLobby);
   });
 });

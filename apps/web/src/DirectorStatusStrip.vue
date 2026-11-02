@@ -13,6 +13,8 @@ const STUCK_AFTER_MS = 60000;
 
 const audio = ref<AudioState>('checking');
 const now = ref(Date.now());
+const releasing = ref(false);
+const releaseError = ref('');
 const firstSeen = new Map<string, number>();
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
@@ -72,14 +74,33 @@ const stuckSeconds = computed(() => {
   }
   return longest > STUCK_AFTER_MS ? Math.floor(longest / 1000) : null;
 });
+const pinned = computed(() => props.snapshot.pinnedPicture ?? null);
+
+async function release() {
+  if (releasing.value) return;
+  releasing.value = true;
+  releaseError.value = '';
+  try {
+    await api.releasePicture(props.sessionId);
+  } catch (cause) {
+    if (alive) releaseError.value = cause instanceof Error && cause.message ? cause.message : 'The picture could not be released.';
+  } finally {
+    releasing.value = false;
+  }
+}
 const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unknown' || stuckSeconds.value !== null);
 </script>
 
 <template>
-  <ul v-if="hasWarning" class="status-strip" aria-label="Show warnings">
+  <ul v-if="hasWarning || pinned" class="status-strip" aria-label="Show warnings">
     <li v-if="audio === 'none'" class="chip" data-testid="warning-no-audio">No show audio · <a :href="identityPath(`/sessions/${sessionId}/lobby#stage-links`)">Stream this show</a></li>
     <li v-if="audio === 'unknown'" class="chip" data-testid="warning-audio-unknown">Can't check the show audio</li>
     <li v-if="stuckSeconds !== null" class="chip" data-testid="warning-stuck" aria-live="polite">The AI is taking longer than usual ({{ stuckSeconds }} s)</li>
+    <li v-if="pinned" class="chip" data-testid="pinned-line">
+      Pinned: {{ pinned.label }}
+      <button type="button" class="secondary" data-testid="release-pinned" :disabled="releasing" @click="release">Release</button>
+      <span v-if="releaseError" class="notice error" role="alert" data-testid="release-error">{{ releaseError }}</span>
+    </li>
   </ul>
 </template>
 

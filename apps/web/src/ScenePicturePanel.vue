@@ -38,15 +38,15 @@ const actionSrc = computed(() => {
 const actionDrawn = computed(() => action.value?.state === 'making' || action.value?.state === 'ready');
 const actionLine = computed(() => {
   if (!action.value) return '';
-  if (action.value.state === 'failed') return action.value.message || 'The picture for this action round could not be made. You can still publish the round, and the stream keeps the picture it has now.';
+  if (action.value.state === 'failed') return action.value.message || 'This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now.';
   if (action.value.state === 'ready') {
     return hidden.value
-      ? 'The picture for this action round is ready. It stays hidden until you press Show picture.'
-      : 'The picture for this action round is ready. Viewers and players see it when you publish the round.';
+      ? 'This beat\'s picture is ready. It stays hidden until you press Show picture.'
+      : 'This beat\'s picture is ready. Viewers and players see it when you publish the beat.';
   }
   return hidden.value
-    ? 'Making the picture for this action round. It stays hidden until you press Show picture.'
-    : 'Making the picture for this action round. Viewers and players see it when you publish the round.';
+    ? 'Making this beat\'s picture. It stays hidden until you press Show picture.'
+    : 'Making this beat\'s picture. Viewers and players see it when you publish the beat.';
 });
 
 const line = computed(() => {
@@ -61,6 +61,7 @@ const line = computed(() => {
     const base = props.snapshot.session.status === 'ended' ? FAILED_ENDED : (status.value?.message || FAILED_DEFAULT);
     return hidden.value ? base + HIDDEN_SUFFIX : base;
   }
+  if (!hidden.value && props.snapshot.pinnedPicture) return 'Your pinned picture is on the stream and the player seats instead. Press Release to show this one.';
   return hidden.value
     ? 'This picture is hidden. Viewers and players do not see it. Press Show picture to put it back.'
     : 'This picture is on the stream and the player seats.';
@@ -78,7 +79,7 @@ const settingsDisabled = computed(() => props.busy || props.snapshot.session.sta
     <img v-if="enabled && previewSrc" class="scene-picture-preview" :src="previewSrc" :alt="snapshot.session.scene.title" @error="broken = imageId" />
     <p role="status" class="scene-picture-status" data-testid="scene-picture-status">{{ line }}</p>
     <div v-if="action" class="action-picture" data-testid="action-picture">
-      <img v-if="actionSrc" class="action-picture-preview" data-testid="action-picture-preview" :src="actionSrc" alt="Picture for this action round" @error="actionBroken = action?.imageId ?? null" />
+      <img v-if="actionSrc" class="action-picture-preview" data-testid="action-picture-preview" :src="actionSrc" alt="Picture for this beat" @error="actionBroken = action?.imageId ?? null" />
       <p role="status" class="action-picture-status" data-testid="action-picture-status">{{ actionLine }}</p>
     </div>
     <template v-if="enabled">

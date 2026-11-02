@@ -680,6 +680,7 @@ describe('StageScene', () => {
   describe('scene picture', () => {
     const IMAGE = '0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e';
     const OTHER = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+    const THIRD = '2b3c4d5e-6f70-4b8c-9dae-1f2a3b4c5d6e';
     const withPicture = (imageId: string | null, extra: Record<string, unknown> = {}) =>
       snapshot({ picturesEnabled: true, scenePicture: imageId ? { imageId, sceneId: 'bar' } : null, ...extra });
     const titles = (wrapper: ReturnType<typeof mountScene>) => wrapper.find('.scene-reveal-titles');
@@ -782,6 +783,95 @@ describe('StageScene', () => {
       expect(wrapper.get('.rail').classes()).not.toContain('with-picture');
       expect(wrapper.get('.about').text()).toContain('Find the missing ledger.');
       expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('swaps a beat picture in quietly and still reveals a place, with or without a kind', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const beat = (imageId: string) => snapshot({ picturesEnabled: true, scenePicture: { imageId, sceneId: 'bar', kind: 'beat' } });
+      const place = (imageId: string) => snapshot({ picturesEnabled: true, scenePicture: { imageId, sceneId: 'bar', kind: 'place' } });
+      const wrapper = mountScene(withPicture(IMAGE));
+      await wrapper.setProps({ snapshot: beat(OTHER) });
+      expect(panel(wrapper).exists()).toBe(true);
+      expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${OTHER}`);
+      expect(panel(wrapper).classes()).not.toContain('revealing');
+      expect(titles(wrapper).exists()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      await wrapper.setProps({ snapshot: place(THIRD) });
+      expect(panel(wrapper).classes()).toContain('revealing');
+      await wrapper.setProps({ snapshot: withPicture(OTHER) });
+      expect(panel(wrapper).classes()).not.toContain('revealing');
+    });
+
+    describe('pinned picture', () => {
+      const PIN = '3a3b3c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+      const pin = (kind: 'place' | 'beat' | 'portrait' = 'place') => ({ imageId: PIN, kind, label: 'Mara at the door' });
+      const pinned = (sceneImage: string | null, kind: 'place' | 'beat' | 'portrait' = 'place') => withPicture(sceneImage, { pinnedPicture: pin(kind) });
+
+      it('shows the pin with no reveal, using its label as the alt text', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const wrapper = mountScene(withPicture(IMAGE));
+        await wrapper.setProps({ snapshot: pinned(IMAGE) });
+        const img = wrapper.get('.scene-picture img');
+        expect(img.attributes('src')).toBe(`/api/sessions/show/images/${PIN}`);
+        expect(img.attributes('alt')).toBe('Mara at the door');
+        expect(panel(wrapper).classes()).not.toContain('revealing');
+        expect(titles(wrapper).exists()).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('keeps the pin while new scene pictures finish, and Release returns with no reveal', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const wrapper = mountScene(withPicture(IMAGE));
+        await wrapper.setProps({ snapshot: pinned(IMAGE) });
+        await wrapper.setProps({ snapshot: pinned(OTHER) });
+        await wrapper.setProps({ snapshot: pinned(THIRD) });
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${PIN}`);
+        expect(panel(wrapper).classes()).not.toContain('revealing');
+        await wrapper.setProps({ snapshot: withPicture(THIRD) });
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${THIRD}`);
+        expect(panel(wrapper).classes()).not.toContain('revealing');
+        expect(titles(wrapper).exists()).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('pins over a running reveal without leaving the timers behind', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const wrapper = mountScene(withPicture(null));
+        await wrapper.setProps({ snapshot: withPicture(IMAGE) });
+        expect(panel(wrapper).classes()).toContain('revealing');
+        await wrapper.setProps({ snapshot: pinned(IMAGE) });
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${PIN}`);
+        expect(panel(wrapper).classes()).not.toContain('revealing');
+        expect(titles(wrapper).exists()).toBe(false);
+      });
+
+      it('shows a pin when the scene has no picture, and keeps showing it through a scene change', async () => {
+        const wrapper = mountScene(pinned(null));
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${PIN}`);
+        await wrapper.setProps({ snapshot: pinned(IMAGE, 'place') });
+        await wrapper.setProps({ snapshot: { ...pinned(IMAGE), session: { ...snapshot().session, scene: { ...snapshot().session.scene, id: 'cellar', title: 'The Cellar' } } } as SessionSnapshot });
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${PIN}`);
+      });
+
+      it('falls back to the scene picture when the pinned file is broken, with no reveal', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const wrapper = mountScene(withPicture(IMAGE));
+        await wrapper.setProps({ snapshot: pinned(OTHER) });
+        await wrapper.get('.scene-picture img').trigger('error');
+        expect(wrapper.get('.scene-picture img').attributes('src')).toBe(`/api/sessions/show/images/${OTHER}`);
+        expect(panel(wrapper).classes()).not.toContain('revealing');
+        expect(titles(wrapper).exists()).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('shows a pinned portrait whole, and a scene picture or pinned place in the usual crop', async () => {
+        const wrapper = mountScene(pinned(IMAGE, 'portrait'));
+        expect(panel(wrapper).classes()).toContain('fit-whole');
+        await wrapper.setProps({ snapshot: pinned(IMAGE, 'beat') });
+        expect(panel(wrapper).classes()).not.toContain('fit-whole');
+        await wrapper.setProps({ snapshot: withPicture(IMAGE) });
+        expect(panel(wrapper).classes()).not.toContain('fit-whole');
+      });
     });
 
     it('clears the reveal timers when the stage goes away', async () => {

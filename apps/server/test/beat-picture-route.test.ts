@@ -205,7 +205,7 @@ suite('the Draw the last beat route', () => {
       expect(refused.statusCode, refused.body).toBe(409);
       expect(refused.json()).toMatchObject({ code: 'conflict', message: NO_BEAT });
       await waitFor(async () => (await rows(show)).every(row => row.status !== 'making'), 'the new scene picture');
-      expect((await rows(show)).filter(row => row.moment !== null)).toEqual([]);
+      expect((await rows(show)).filter(row => row.moment !== null && row.beat_id === null)).toEqual([]);
     });
   });
 
@@ -301,7 +301,7 @@ suite('the Draw the last beat route', () => {
     await publishConversation(show);
     hold();
     const drafted = await draftRound(show, 'action');
-    const heldBefore = (await rows(show)).filter(row => row.beat_id !== null);
+    const heldBefore = (await rows(show)).filter(row => row.beat_id === drafted.activeBeat!.id);
     expect(heldBefore).toHaveLength(1);
     const held = heldBefore[0]!;
     expect(held).toMatchObject({ beat_id: drafted.activeBeat!.id, status: 'making' });
@@ -334,7 +334,7 @@ suite('the Draw the last beat route', () => {
     expect(row.prompt).toMatch(/^Ink wash\. /);
     expect(row.model).toBe(chosen);
     expect(row.model).not.toBe(MOMENT_MODEL);
-    expect(provider!.requests.find(item => item.title === 'Beat picture')).toMatchObject({ model: chosen });
+    expect(provider!.requests.find(item => item.requestId === imageId)).toMatchObject({ model: chosen });
   });
 
   beforeAll(async () => {

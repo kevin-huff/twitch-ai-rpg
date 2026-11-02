@@ -171,8 +171,8 @@ suite('scene pictures through commands and routes', () => {
     await waitForStatus(show, row!.id, 'ready');
     const stage = await stageView(show);
     expect(stage.picturesEnabled).toBe(true);
-    expect(stage.scenePicture).toEqual({ imageId: row!.id, sceneId: sceneOf(before) });
-    expect((await playerView(show)).scenePicture).toEqual({ imageId: row!.id, sceneId: sceneOf(before) });
+    expect(stage.scenePicture).toMatchObject({ imageId: row!.id, sceneId: sceneOf(before) });
+    expect((await playerView(show)).scenePicture).toMatchObject({ imageId: row!.id, sceneId: sceneOf(before) });
 
     // The picture never changed the revision or any character's version.
     const after = await director(show);
@@ -225,7 +225,7 @@ suite('scene pictures through commands and routes', () => {
 
     release();
     await waitForStatus(show, second.id, 'ready');
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: second.id, sceneId: sceneOf(view) });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: second.id, sceneId: sceneOf(view) });
     expect(second.id).not.toBe(first.id);
   });
 
@@ -347,7 +347,7 @@ suite('scene pictures through commands and routes', () => {
 
       release();
       await waitForStatus(show, imageId, 'ready');
-      expect((await stageView(show)).scenePicture).toEqual({ imageId, sceneId: first.subject_id });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId, sceneId: first.subject_id });
       expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId, message: null });
     });
 
@@ -406,12 +406,12 @@ suite('scene pictures through commands and routes', () => {
       const shown = await picturePost(show, '/show');
       expect(shown.statusCode, shown.body).toBe(200);
       expect(shown.json()).toEqual({ ok: true });
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: first.id, sceneId: first.subject_id });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId: first.subject_id });
       expect((await director(show)).scenePictureStatus).toMatchObject({ imageId: first.id, hidden: false });
       expect((await request(imageUrl, undefined, show.stage)).statusCode).toBe(200);
       const kinds = await pool.query("SELECT kind, data FROM audit_events WHERE session_id=$1 AND kind IN ('picture.hidden','picture.shown') ORDER BY sequence", [show.sessionId]);
       expect(kinds.rows.map(row => row.kind)).toEqual(['picture.hidden', 'picture.hidden', 'picture.shown']);
-      expect(kinds.rows[0].data).toEqual({ sceneId: first.subject_id, hidden: true });
+      expect(kinds.rows[0].data).toEqual({ sceneId: first.subject_id, hidden: true, unpinnedImageId: null });
     });
 
     it('keeps a new picture hidden until the director shows it', async () => {
@@ -427,7 +427,7 @@ suite('scene pictures through commands and routes', () => {
       expect((await rows(show)).every(row => row.hidden)).toBe(true);
 
       expect((await picturePost(show, '/show')).statusCode).toBe(200);
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: second, sceneId: first.subject_id });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: second, sceneId: first.subject_id });
     });
 
     it('turns the director away when the scene has no picture yet', async () => {
@@ -475,7 +475,7 @@ suite('scene pictures through commands and routes', () => {
       expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', hidden: true });
       const shown = await picturePost(show, '/show');
       expect(shown.statusCode, shown.body).toBe(200);
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: only!.id, sceneId: only!.subject_id });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: only!.id, sceneId: only!.subject_id });
     });
 
     it('lets the director show a hidden scene whose only picture failed, and the next new picture is not hidden', async () => {
@@ -499,7 +499,7 @@ suite('scene pictures through commands and routes', () => {
       const next = pressed.json().imageId as string;
       await waitForStatus(show, next, 'ready');
       expect((await rows(show)).find(row => row.id === next)!.hidden).toBe(false);
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: next, sceneId: only!.subject_id });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: next, sceneId: only!.subject_id });
     });
 
     it('hides a ready picture while a newer one is being made, and marks both rows', async () => {
@@ -584,8 +584,8 @@ suite('scene pictures through commands and routes', () => {
       expect(ready.actionPicture).toEqual({ beatId: drafted.activeBeat!.id, state: 'ready', imageId: held!.id, message: null });
       const sceneId = sceneOf(ready);
       const releasedBefore = { imageId: pressed.json().imageId, sceneId };
-      expect((await stageView(show)).scenePicture).toEqual(releasedBefore);
-      expect((await playerView(show)).scenePicture).toEqual(releasedBefore);
+      expect((await stageView(show)).scenePicture).toMatchObject(releasedBefore);
+      expect((await playerView(show)).scenePicture).toMatchObject(releasedBefore);
       expect((await imageGet(show, held!.id, show.stage)).statusCode).toBe(404);
       expect((await imageGet(show, held!.id, show.player)).statusCode).toBe(404);
       expect((await imageGet(show, held!.id, host)).statusCode).toBe(200);
@@ -594,8 +594,8 @@ suite('scene pictures through commands and routes', () => {
       expect(published.actionPicture).toBeNull();
       expect((await heldRows(show))[0]!.released_at).not.toBeNull();
       const shown = { imageId: held!.id, sceneId };
-      expect((await stageView(show)).scenePicture).toEqual(shown);
-      expect((await playerView(show)).scenePicture).toEqual(shown);
+      expect((await stageView(show)).scenePicture).toMatchObject(shown);
+      expect((await playerView(show)).scenePicture).toMatchObject(shown);
       expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: held!.id });
       expect((await imageGet(show, held!.id, show.stage)).statusCode).toBe(200);
     });
@@ -611,31 +611,31 @@ suite('scene pictures through commands and routes', () => {
       const published = await publishRound(show, drafted);
       expect(published.actionPicture).toBeNull();
       const sceneId = sceneOf(published);
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
-      expect((await playerView(show)).scenePicture).toEqual({ imageId: first.id, sceneId });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
+      expect((await playerView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId });
       expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'making' });
 
       release();
       await waitForStatus(show, held!.id, 'ready');
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: held!.id, sceneId });
-      expect((await playerView(show)).scenePicture).toEqual({ imageId: held!.id, sceneId });
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: held!.id, sceneId });
+      expect((await playerView(show)).scenePicture).toMatchObject({ imageId: held!.id, sceneId });
       expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: held!.id });
       expect((await imageGet(show, held!.id, show.player)).statusCode).toBe(200);
     });
 
-    it('makes no picture for a conversation round', async () => {
+    it('holds one picture for a conversation round and shows it at publish', async () => {
       const images = await boot();
       const { show, first } = await liveWithPicture();
       const before = images!.requests.length;
       const drafted = await draftRound(show, 'conversation');
-      expect(drafted.actionPicture).toBeNull();
+      expect(drafted.actionPicture).not.toBeNull();
+      const held = (await heldRows(show))[0]!;
+      await waitForStatus(show, held.id, 'ready');
+      expect(images!.requests.length).toBeGreaterThan(before);
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: first.id, sceneId: sceneOf(drafted) });
       const published = await publishRound(show, drafted);
-      expect(published.actionPicture).toBeNull();
-      await new Promise(resolve => setTimeout(resolve, 100));
-      expect(await heldRows(show)).toEqual([]);
-      expect((await rows(show)).map(row => row.id)).toEqual([first.id]);
-      expect(images!.requests).toHaveLength(before);
-      expect((await stageView(show)).scenePicture).toEqual({ imageId: first.id, sceneId: sceneOf(published) });
+      expect((await heldRows(show)).filter(row => row.released_at !== null)).toHaveLength(1);
+      expect((await stageView(show)).scenePicture).toMatchObject({ imageId: held.id, sceneId: sceneOf(published) });
     });
   });
 

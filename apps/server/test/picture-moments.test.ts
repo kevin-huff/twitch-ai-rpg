@@ -158,7 +158,7 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     const second = await actionRow(show);
     expect(second.id).not.toBe(first.id);
     const sceneId = (await director(show)).session.scene.id;
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: second.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: second.id, sceneId });
 
     // Round 1's picture is stopped when round 2 is published; opening its gate afterwards changes nothing.
     const firstCall = images.calls.find(call => call.title === 'Action picture')!;
@@ -169,7 +169,7 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     const after = await rows(show);
     expect(after.find(row => row.id === first.id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
     expect(after.find(row => row.id === second.id)).toMatchObject({ status: 'ready' });
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: second.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: second.id, sceneId });
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: second.id });
   });
 
@@ -193,7 +193,7 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     await waitFor(() => openingCall.signal?.aborted === true, 'the opening job to be stopped');
     const sceneId = (await director(show)).session.scene.id;
     expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: action.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
     const status = (await director(show)).scenePictureStatus;
     expect(status).toMatchObject({ imageId: action.id });
     expect(status?.state).not.toBe('making');
@@ -201,7 +201,7 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     openScene();
     await waitFor(() => images.calls.every(call => call.settled), 'the opening job to settle');
     expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
-    expect((await stageView(show)).scenePicture).toEqual({ imageId: action.id, sceneId });
+    expect((await stageView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: action.id });
   });
 });

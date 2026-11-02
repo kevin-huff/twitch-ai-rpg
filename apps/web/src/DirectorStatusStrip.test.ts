@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorSnapshot } from '@rpg/contracts';
 
-const transport = vi.hoisted(() => ({ playback: vi.fn() }));
+const transport = vi.hoisted(() => ({ playback: vi.fn(), releasePicture: vi.fn() }));
 vi.mock('./api', () => ({ api: transport }));
 
 import DirectorStatusStrip from './DirectorStatusStrip.vue';
@@ -20,7 +20,7 @@ const mountStrip = (patch: Record<string, unknown> = {}) => mount(DirectorStatus
 const audioEvents = (wrapper: ReturnType<typeof mountStrip>) => (wrapper.emitted('audio') ?? []).map(args => args[0]);
 
 describe('DirectorStatusStrip', () => {
-  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); transport.playback.mockReset(); transport.playback.mockResolvedValue(playback(true)); });
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); transport.playback.mockReset(); transport.releasePicture.mockReset(); transport.releasePicture.mockResolvedValue({ ok: true }); transport.playback.mockResolvedValue(playback(true)); });
   afterEach(() => { vi.useRealTimers(); });
 
   it('renders nothing when all is well', async () => {
@@ -120,5 +120,30 @@ describe('DirectorStatusStrip', () => {
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(60000);
     expect(transport.playback).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the pinned line with Release only while a picture is pinned', async () => {
+    const plain = mountStrip();
+    await flushPromises();
+    expect(plain.find('[data-testid="pinned-line"]').exists()).toBe(false);
+    plain.unmount();
+    const wrapper = mountStrip({ pinnedPicture: { imageId: 'i', kind: 'beat', label: 'Beat 3' } });
+    await flushPromises();
+    expect(wrapper.get('[data-testid="pinned-line"]').text()).toContain('Pinned: Beat 3');
+    await wrapper.get('[data-testid="release-pinned"]').trigger('click');
+    await flushPromises();
+    expect(transport.releasePicture).toHaveBeenCalledWith('show one');
+    wrapper.unmount();
+  });
+
+  it('shows a refused release inline', async () => {
+    transport.releasePicture.mockRejectedValue(new Error('No picture is pinned right now.'));
+    const wrapper = mountStrip({ pinnedPicture: { imageId: 'i', kind: 'beat', label: 'Beat 3' } });
+    await flushPromises();
+    await wrapper.get('[data-testid="release-pinned"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-testid="release-error"]').text()).toBe('No picture is pinned right now.');
+    expect(wrapper.get('[data-testid="release-pinned"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
   });
 });

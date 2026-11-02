@@ -6,6 +6,7 @@ import {
   ImageIdSchema, MOMENT_MODEL, MOMENT_PORTRAIT_MAX, MOMENT_PROMPT_MAX, PICTURE_LIMITS, PICTURE_MODELS, PICTURE_PROMPT_MAX,
   PICTURE_NEGATIVE_PROMPT, PICTURE_STYLE_MAX, PictureDescriptionRequestSchema, PictureLineSchema, PictureModelIdSchema, PictureMomentSchema,
   PicturePersonSchema, PictureSceneSchema, PictureSettingsSchema,
+  BeatPictureRequestSchema, PictureKindSchema, PinPictureRequestSchema, PinnedPictureSchema, ShelfPictureSchema, ShelfPicturesSchema,
   imageTypeOf,
 } from './index.js';
 import type { ImageProvider, ImageReference, ImageRequest } from './index.js';
@@ -330,5 +331,45 @@ describe('image provider shapes', () => {
     };
     expect(await provider.prepareReferences?.([Uint8Array.of(1)], { requestId: request.requestId })).toEqual([handle]);
     expect(ImageIdSchema.safeParse(request.requestId).success).toBe(true);
+  });
+});
+
+describe('picture shelf and pinning schemas', () => {
+  const pinned = { imageId: uuid, kind: 'beat', label: 'Beat 3' };
+  const shelf = { imageId: uuid, kind: 'place', label: 'The bar', scene: 'The bar', status: 'ready', message: null, onStream: true, pinned: false, held: false, shelfOnly: false, beatId: null, createdAt: '2026-11-02T10:00:00Z' };
+  it('accepts a scene picture with and without a kind', () => {
+    expect(ScenePictureSchema.safeParse({ imageId: uuid, sceneId: 'scene' }).success).toBe(true);
+    expect(ScenePictureSchema.safeParse({ imageId: uuid, sceneId: 'scene', kind: 'beat' }).success).toBe(true);
+    expect(ScenePictureSchema.safeParse({ imageId: uuid, sceneId: 'scene', kind: 'portrait' }).success).toBe(false);
+  });
+  it('parses kinds, pinned pictures and shelf rows strictly', () => {
+    expect(PictureKindSchema.safeParse('portrait').success).toBe(true);
+    expect(PictureKindSchema.safeParse('other').success).toBe(false);
+    expect(PinnedPictureSchema.safeParse(pinned).success).toBe(true);
+    expect(PinnedPictureSchema.safeParse({ ...pinned, extra: 1 }).success).toBe(false);
+    expect(PinnedPictureSchema.safeParse({ ...pinned, label: '' }).success).toBe(false);
+    expect(ShelfPictureSchema.safeParse(shelf).success).toBe(true);
+    expect(ShelfPictureSchema.safeParse({ ...shelf, extra: 1 }).success).toBe(false);
+    expect(ShelfPictureSchema.safeParse({ ...shelf, status: 'cancelled' }).success).toBe(false);
+    expect(ShelfPicturesSchema.safeParse({ pictures: [shelf, { ...shelf, beatId: 'b1', held: true }] }).success).toBe(true);
+    expect(ShelfPicturesSchema.safeParse({ pictures: [], extra: 1 }).success).toBe(false);
+  });
+  it('parses the pin and redraw requests strictly', () => {
+    expect(PinPictureRequestSchema.safeParse({ imageId: uuid }).success).toBe(true);
+    expect(PinPictureRequestSchema.safeParse({ imageId: 'x' }).success).toBe(false);
+    expect(PinPictureRequestSchema.safeParse({ imageId: uuid, extra: 1 }).success).toBe(false);
+    expect(BeatPictureRequestSchema.safeParse({}).success).toBe(true);
+    expect(BeatPictureRequestSchema.safeParse({ beatId: 'b1' }).success).toBe(true);
+    expect(BeatPictureRequestSchema.safeParse({ beatId: '' }).success).toBe(false);
+    expect(BeatPictureRequestSchema.safeParse({ other: 1 }).success).toBe(false);
+  });
+  it('parses every snapshot role with and without a pinned picture', () => {
+    for (const snapshot of [director, player, stage]) {
+      const without = (snapshot.role === 'director' ? DirectorSnapshotSchema : snapshot.role === 'player' ? PlayerSnapshotSchema : StageSnapshotSchema).parse(snapshot);
+      expect(without.pinnedPicture).toBeUndefined();
+      const schema = snapshot.role === 'director' ? DirectorSnapshotSchema : snapshot.role === 'player' ? PlayerSnapshotSchema : StageSnapshotSchema;
+      expect(schema.parse({ ...snapshot, pinnedPicture: pinned }).pinnedPicture).toEqual(pinned);
+      expect(schema.safeParse({ ...snapshot, pinnedPicture: { ...pinned, extra: 1 } }).success).toBe(false);
+    }
   });
 });

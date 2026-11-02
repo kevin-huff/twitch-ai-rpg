@@ -797,6 +797,27 @@ describe('StageOverlay', () => {
       expect(wrapper.find('.line img').exists()).toBe(false);
     });
 
+    it('shows a pinned picture over a newer scene picture, falls back when it breaks, and returns on Release', async () => {
+      const pin = { imageId: 'pin1', kind: 'place', label: 'The old map' };
+      const wrapper = mount(StageOverlay, { props: { snapshot: withPictures({ pinnedPicture: pin }), connected: true } });
+      expect(wrapper.get('img.scene-corner').attributes('src')).toContain('/images/pin1');
+      expect(wrapper.get('img.scene-corner').attributes('alt')).toBe('The old map');
+      expect(wrapper.get('img.scene-corner').classes()).not.toContain('fit-whole');
+      await wrapper.get('img.scene-corner').trigger('error');
+      expect(wrapper.get('img.scene-corner').attributes('src')).toContain('/images/sp1');
+      await wrapper.setProps({ snapshot: withPictures() });
+      expect(wrapper.get('img.scene-corner').attributes('src')).toContain('/images/sp1');
+      expect(wrapper.get('img.scene-corner').attributes('alt')).toBe('The Salt Bar');
+    });
+
+    it('shows a pinned portrait whole and shows nothing pinned with pictures off', () => {
+      const pin = { imageId: 'pin2', kind: 'portrait', label: 'Portrait of Mara Vale' };
+      const wrapper = mount(StageOverlay, { props: { snapshot: withPictures({ pinnedPicture: pin }), connected: true } });
+      expect(wrapper.get('img.scene-corner').classes()).toContain('fit-whole');
+      const off = mount(StageOverlay, { props: { snapshot: withPictures({ pinnedPicture: pin, picturesEnabled: false }), connected: true } });
+      expect(off.find('img.scene-corner').exists()).toBe(false);
+    });
+
     it('falls back to initials and hides the corner picture when an image fails', async () => {
       const wrapper = mount(StageOverlay, { props: { snapshot: withPictures(), connected: true } });
       await wrapper.get('img.chip-portrait').trigger('error');

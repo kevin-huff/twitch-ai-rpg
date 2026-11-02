@@ -519,15 +519,29 @@ suite('command hooks for pictures', () => {
     expect((await heldRows())[0].released_at).toBeNull();
   });
 
-  it('never reserves or releases for a conversation round', async () => {
+  it('holds one picture for a conversation round from its script and releases it at publish', async () => {
     await lockedRound('conversation');
     const rendered = await beatCommand('render_beat');
+    const beatId = rendered.activeBeat!.id;
     expect(rendered.activeBeat!.kind).toBe('conversation');
+    expect(pictures.calls).toEqual([{ kind: 'action', beatId, narration: draftNarration(rendered.activeBeat!.draft) }]);
+    expect(await heldRows()).toMatchObject([{ beat_id: beatId, status: 'making', released_at: null }]);
     const edited = await beatCommand('edit_script', { segments: [{ kind: 'narration', text: 'A quiet word is shared.', delivery: 'neutral', recipientCharacterIds: [] }] });
+    expect(pictures.calls).toHaveLength(2);
     await publish(edited);
-    expect(pictures.calls).toEqual([]);
-    expect(pictures.runs).toEqual([]);
-    expect(await heldRows()).toEqual([]);
+    expect(pictures.calls.at(-1)).toMatchObject({ kind: 'release', beatId, publishedInside: 1 });
+    const rows = await heldRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter(row => row.released_at !== null)).toHaveLength(1);
+  });
+
+  it('holds a picture for a Narrate the scene beat', async () => {
+    const started = await goLive();
+    await run({ type: 'narrate_scene', expectedInputEpoch: started.session.inputEpoch });
+    const rendered = await beatCommand('render_beat');
+    expect(rendered.activeBeat!.kind).toBe('conversation');
+    expect(pictures.calls).toEqual([{ kind: 'action', beatId: rendered.activeBeat!.id, narration: draftNarration(rendered.activeBeat!.draft) }]);
+    expect(await heldRows()).toMatchObject([{ beat_id: rendered.activeBeat!.id, status: 'making', released_at: null }]);
   });
 
   it('makes no picture calls for an action round without a pictures dependency', async () => {

@@ -39,10 +39,10 @@ const RELEASE_NEWEST = `WITH newest AS (SELECT id, status FROM images WHERE sess
   UPDATE images SET released_at=clock_timestamp() FROM newest WHERE images.id=newest.id AND newest.status IN ('making','ready') RETURNING images.id, images.subject_id`;
 // Every other picture of the scene still being made for the stream shows an older moment than the round just released.
 const RETIRE_OUTRANKED = `UPDATE images SET status='cancelled', message=$4, finished_at=COALESCE(finished_at, clock_timestamp())
-  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) AND id<>$3 RETURNING id`;
+  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) AND NOT shelf_only AND id<>$3 RETURNING id`;
 // Pressing a draw button again replaces a picture of this scene that is still on its way to the stream; a held action picture is not on its way yet.
 const START_OVER = `UPDATE images SET status='cancelled', message=$3, finished_at=COALESCE(finished_at, clock_timestamp())
-  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) RETURNING id`;
+  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) AND NOT shelf_only RETURNING id`;
 const requestedBy = (actor: Actor) => ({ actor_id: actor.actor_id, producer_grant_id: actor.producer_grant_id ?? null });
 
 // Reserves picture rows inside the caller's transaction and runs them in the background once that transaction has committed.
@@ -98,10 +98,9 @@ export class ImageService implements PictureEngine {
     });
   }
 
-  // An action round's picture, held for the director until the round is published.
+  // A beat's picture, held for the director until the beat is published.
   reserveActionPicture(client: PoolClient, state: SessionState, beat: Beat, actor: Actor, mode: Mode = 'automatic'): Promise<string | null> {
     return this.guarded(client, mode, async () => {
-      if (beat.kind !== 'action') return null;
       const { id: sessionId, scene } = state.session;
       await client.query('SELECT 1 FROM sessions WHERE id=$1 FOR UPDATE', [sessionId]);
       await client.query(RETIRE_HELD, [sessionId, beat.id, PICTURE_MESSAGES.actionSuperseded]);
@@ -117,17 +116,24 @@ export class ImageService implements PictureEngine {
   }
 
   // A picture of a beat the director asked for with the button; it has no round tag, so it ranks from the moment it was asked for.
-  reserveBeatPicture(client: PoolClient, state: SessionState, beatId: string, actor: Actor): Promise<string | null> {
+  // With shelfOnly (Draw again) it goes on the shelf and keeps the words of the scene the beat was played in; it never becomes the stream picture by itself.
+  reserveBeatPicture(client: PoolClient, state: SessionState, beatId: string, actor: Actor, options: { shelfOnly?: boolean } = {}): Promise<string | null> {
+    const shelfOnly = options.shelfOnly === true;
     return this.guarded(client, 'request', async () => {
       const { id: sessionId, scene } = state.session;
       const beat = (await client.query<{ data: Beat }>('SELECT data FROM beats WHERE session_id=$1 AND id=$2', [sessionId, beatId])).rows[0]?.data;
       const published = (await client.query<{ data: PublishedBeat }>('SELECT data FROM published_beats WHERE session_id=$1 AND id=$2', [sessionId, beatId])).rows[0]?.data;
       if (!beat || !published) throw new AppError(409, 'conflict', 'No beat has been published in this scene yet.');
       const settings = await pictureSettingsOf(client, state, this.defaultModel!);
-      const { moment, prompt, model } = await this.momentReservation(client, state, { beat, published }, settings);
+      const earlier = shelfOnly
+        ? (await client.query<{ scene: PictureMoment['scene'] }>(
+          "SELECT moment->'scene' AS scene FROM images WHERE session_id=$1 AND (beat_id=$2 OR shows_beat_id=$2) AND moment IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+          [sessionId, beatId])).rows[0]?.scene
+        : undefined;
+      const { moment, prompt, model } = await this.momentReservation(client, state, { beat, published }, settings, earlier);
       return this.insert(client, {
         ownerId: await this.ownerOf(client, sessionId), sessionId, builderId: null,
-        purpose: 'scene', subjectId: scene.id, beatId: null, showsBeatId: beatId, limitKey: `scene:${sessionId}`, attach: false,
+        purpose: 'scene', subjectId: scene.id, beatId: null, showsBeatId: beatId, shelfOnly, limitKey: `scene:${sessionId}`, attach: false,
         prompt, model, moment, ...SCENE_PICTURE_SIZE, requestedBy: requestedBy(actor),
       }, 'request');
     });
@@ -142,6 +148,13 @@ export class ImageService implements PictureEngine {
       if (rows.length && !this.closed) void this.stopWhenCommitted(rows.map(row => row.id));
       return released.id;
     });
+  }
+
+  // Abandoning a beat retires its held pictures; their calls stop only once the caller's transaction has committed.
+  async retireHeldPictures(client: PoolClient, sessionId: string, beatId: string): Promise<void> {
+    if (!this.context || this.closed) return;
+    const { rows } = await client.query<{ id: string }>(`${RETIRE_HELD} RETURNING id`, [sessionId, beatId, PICTURE_MESSAGES.actionSuperseded]);
+    if (rows.length) void this.stopWhenCommitted(rows.map(row => row.id));
   }
 
   // Cancels this scene's pictures still on their way to the stream; their calls stop only once the caller's transaction has committed.
@@ -257,23 +270,24 @@ export class ImageService implements PictureEngine {
     const id = randomUUID();
     await client.query(
       `INSERT INTO images(id, owner_id, session_id, builder_id, purpose, subject_id, limit_key, attach, status, hidden, prompt, width, height,
-         provider, model, requested_by, producer_grant_id, message, beat_id, moment, shows_beat_id, finished_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb, $21, CASE WHEN $9='failed' THEN clock_timestamp() END)`,
+         provider, model, requested_by, producer_grant_id, message, beat_id, moment, shows_beat_id, shelf_only, finished_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb, $21, $22, CASE WHEN $9='failed' THEN clock_timestamp() END)`,
       [id, input.ownerId, input.sessionId, input.builderId, input.purpose, input.subjectId, input.limitKey, input.attach,
         limited ? 'failed' : 'making', hidden, input.prompt, input.width, input.height, provider.name, input.model ?? provider.model,
         input.requestedBy.actor_id, input.requestedBy.producer_grant_id ?? null, limited, input.beatId ?? null,
-        input.moment ? JSON.stringify(input.moment) : null, input.showsBeatId ?? null]);
+        input.moment ? JSON.stringify(input.moment) : null, input.showsBeatId ?? null, input.shelfOnly === true]);
     // A limit failure stays on record so the director can see why no picture came; it never counts toward a limit.
     return limited ? null : id;
   }
 
   // The moment with its provisional image numbers, the fallback prompt written as if every portrait uploads, and the model that draws it.
-  private async momentReservation(client: PoolClient, state: SessionState, source: BeatPictureSource, settings: PictureSettings): Promise<{ moment: PictureMoment; prompt: string; model: string }> {
+  private async momentReservation(client: PoolClient, state: SessionState, source: BeatPictureSource, settings: PictureSettings, scene?: PictureMoment['scene']): Promise<{ moment: PictureMoment; prompt: string; model: string }> {
     const portraitIds = [...new Set(pictureCast(state, source).flatMap(person => (person.portraitId && UUID.test(person.portraitId) ? [person.portraitId] : [])))];
     const ready = portraitIds.length
       ? (await client.query<{ id: string }>("SELECT id FROM images WHERE id=ANY($1::uuid[]) AND status='ready' AND file_hash IS NOT NULL", [portraitIds])).rows.map(row => row.id)
       : [];
-    const moment = buildPictureMoment(state, source, settings, new Set(ready));
+    const built = buildPictureMoment(state, source, settings, new Set(ready));
+    const moment = scene ? { ...built, scene } : built;
     const withReferences = moment.cast.some(person => person.imageNumber !== null);
     const changed = changedLookNumbers(moment.cast);
     const prompt = momentPrompt(settings.style, fallbackDescription(moment, descriptionBudget(settings.style, withReferences, changed)), withReferences, changed);

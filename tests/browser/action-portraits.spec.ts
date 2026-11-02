@@ -14,6 +14,26 @@ async function api(page: Page, path: string, body?: unknown, identityOverride?: 
   return result.data;
 }
 
+// Records every full-frame reveal that starts on the stream page after this call, so a quiet swap can be checked
+// over the whole reveal window rather than after it has already ended.
+async function recordReveals(stream: Page) {
+  await expect(stream.locator('.scene-picture.revealing, .scene-picture.shrinking, .scene-reveal-titles')).toHaveCount(0, { timeout: 15000 });
+  await stream.evaluate(() => {
+    const seen: string[] = [];
+    (window as unknown as { __reveals: string[] }).__reveals = seen;
+    const check = () => {
+      if (document.querySelector('.scene-picture.revealing')) seen.push('revealing');
+      if (document.querySelector('.scene-picture.shrinking')) seen.push('shrinking');
+      if (document.querySelector('.scene-reveal-titles')) seen.push('titles');
+    };
+    new MutationObserver(check).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+async function revealsSeen(stream: Page): Promise<string[]> {
+  return stream.evaluate(() => [...new Set((window as unknown as { __reveals: string[] }).__reveals)]);
+}
+
 async function status(page: Page, path: string) {
   return page.evaluate(async (path) => {
     const identity = new URL(location.href).searchParams.get('identity');
@@ -28,7 +48,7 @@ async function openStream(context: BrowserContext, url: string) {
   return page;
 }
 
-test('an action round with portrait-bearing characters stays off the stream until publish, then gets the full reveal', async ({ page, context }) => {
+test('an action round with portrait-bearing characters stays off the stream until publish, then swaps in quietly', async ({ page, context }) => {
   await page.goto('/');
   await page.getByLabel('Host access token').fill('browser-test-host-credential-not-for-deployment');
   await page.getByRole('button', { name: 'Sign in as host' }).click();
@@ -121,19 +141,21 @@ test('an action round with portrait-bearing characters stays off the stream unti
 
   const director = await context.newPage();
   await director.goto(`/sessions/${sessionId}/director${hostIdentity ? `?identity=${hostIdentity}` : ''}`);
-  await expect(director.getByTestId('action-picture-status')).toHaveText('The picture for this action round is ready. Viewers and players see it when you publish the round.');
+  await expect(director.getByTestId('action-picture-status')).toHaveText('This beat\'s picture is ready. Viewers and players see it when you publish the beat.');
   await expect(director.getByTestId('action-picture-preview')).toHaveAttribute('src', new RegExp(actionId));
+  await expect(stream.locator('.scene-picture.revealing')).toHaveCount(0);
   await expect(stream.locator(`img[src*="${actionId}"]`)).toHaveCount(0);
   await stream.waitForTimeout(2000);
   await expect(stream.locator(`img[src*="${actionId}"]`)).toHaveCount(0);
 
   if (state.activeBeat.draft?.continuity?.length) await beat({ type: 'approve_continuity', updates: state.activeBeat.draft.continuity });
+  await recordReveals(stream);
   await beat({ type: 'publish_beat', expectedStateRevision: state.session.stateRevision, draftRevision: state.activeBeat.draftRevision, textOnly: true });
 
-  const revealing = stream.locator('.scene-picture.revealing');
-  await expect(revealing).toBeVisible({ timeout: 15000 });
-  await expect(revealing.locator('img')).toHaveAttribute('src', new RegExp(actionId));
-  await expect(stream.locator('.scene-picture:not(.revealing)')).toBeVisible({ timeout: 8000 });
-  await expect(stream.locator('.scene-picture img')).toHaveAttribute('src', new RegExp(actionId));
+  // The round's picture swaps in quietly at publish: the image changes and no full-frame reveal plays for it.
+  await expect(stream.locator('.scene-picture img')).toHaveAttribute('src', new RegExp(actionId), { timeout: 15000 });
+  await expect(stream.locator('.scene-picture:not(.revealing)')).toBeVisible({ timeout: 1000 });
+  await stream.waitForTimeout(1500);
+  expect(await revealsSeen(stream)).toEqual([]);
   await expect(director.getByTestId('action-picture')).toHaveCount(0);
 });

@@ -29,6 +29,7 @@ import { registerDraftAudio } from './draft-audio';
 import { registerPlayback } from './playback';
 import { ImageService, PICTURE_MESSAGES } from './images';
 import { registerPictureRoutes } from './picture-routes';
+import { registerShelfRoutes } from './shelf-routes';
 import { registerPortraitRoutes } from './portrait-routes';
 import { GalleryService, galleryUrl } from './galleries';
 import { registerGalleryRoutes } from './gallery-routes';
@@ -243,6 +244,7 @@ export async function buildApp(options: AppOptions) {
   registerOperations(app, { pool, authenticate, speechConfigured: Boolean(options.speech), model: options.speechModel ?? '', voiceId: options.speechVoiceId ?? '', voices: options.speechVoices });
   registerPlayback(app, { pool, authenticate });
   registerPictureRoutes(app, { pool, authenticate, images, gallery });
+  registerShelfRoutes(app, { pool, authenticate, images, gallery });
   registerPortraitRoutes(app, { pool, authenticate, images, assetDir });
   if (options.assetDir !== undefined) await gallery.start();
   await registerGalleryRoutes(app, { pool, authenticate, gallery, assetDir });
