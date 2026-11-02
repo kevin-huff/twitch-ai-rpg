@@ -33,7 +33,6 @@ test('directs recurring characters and deliberate reveals across scenes without 
   async function save(reason: string) {
     const before = (await api(page, `/sessions/${sessionId}`)).session.stateRevision;
     await controls.getByTestId('live-reason').fill(reason);
-    await controls.getByTestId('discard-input').check();
     await controls.getByTestId('save-live').click();
     await expect.poll(async () => (await api(page, `/sessions/${sessionId}`)).session.stateRevision).toBe(before + 1);
     await expect(controls.getByTestId('save-live')).toHaveCount(0);
@@ -85,7 +84,7 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await save('The cast follows the messenger.');
   await expect(player.getByRole('heading', { name: 'Midnight on the platform', exact: true })).toBeVisible();
   snapshot = await api(page, `/sessions/${sessionId}`);
-  expect(snapshot.submissions.find((input: { text: string }) => input.text === 'A question for the old scene.').status).toBe('cancelled');
+  expect(snapshot.submissions.find((input: { text: string }) => input.text === 'A question for the old scene.').status).toBe('queued');
   expect(snapshot.npcDetails.find((npc: { id: string }) => npc.id === courier.id)).toMatchObject({ id: courier.id, voiceProfileId: courier.voiceProfileId, knowledge: memory, status: 'present', locationId: snapshot.session.scene.locationId });
   expect(snapshot.npcDetails.filter((npc: { id: string }) => npc.id !== courier.id).every((npc: { status: string }) => npc.status === 'offstage')).toBe(true);
   const publicState = await api(page, `/sessions/${sessionId}?view=stage`);
@@ -104,6 +103,7 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await page.reload();
   snapshot = await api(page, `/sessions/${sessionId}`);
   expect(snapshot.npcDetails.find((npc: { id: string }) => npc.id === courier.id)).toMatchObject({ displayName: 'Courier Ren', voiceProfileId: courier.voiceProfileId, knowledge: memory, locationId: originalLocation });
+  expect(snapshot.npcDetails.filter((npc: { locationId: string | null }) => npc.locationId === originalLocation).every((npc: { status: string }) => npc.status === 'present')).toBe(true);
   await openFold(page, 'beat-more');
   await page.getByTestId('open-conversation').click();
   await expect(page.getByRole('heading', { name: 'Collecting input', exact: true })).toBeVisible();
@@ -114,8 +114,9 @@ test('directs recurring characters and deliberate reveals across scenes without 
   await player.getByTestId('speech-input').fill('Will you show us the key, Ren?');
   await player.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(player.getByRole('status')).toContainText('Saved');
-  await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(1);
-  await expect(page.locator('.queue-item input[type=checkbox]')).toBeChecked();
+  await expect(page.locator('.queue-item input[type=checkbox]')).toHaveCount(2);
+  await expect(page.locator('.queue-item').filter({ hasText: 'Will you show us the key, Ren?' }).locator('input[type=checkbox]')).toBeChecked();
+  await expect(page.locator('.queue-item').filter({ hasText: 'A question for the old scene.' }).locator('input[type=checkbox]')).not.toBeChecked();
   await page.getByTestId('plan').click();
   await expect(page.getByTestId('stakes-cards')).toBeVisible();
   await page.getByTestId('approve-and-roll').click();

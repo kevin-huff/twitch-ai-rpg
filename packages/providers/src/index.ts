@@ -9,7 +9,7 @@ import {
   type ImageResult, type LineAssistInput, type LineAssistResponse, type Npc, type PlanResult, type ProviderContext, type VoiceChoice, type VoiceList, type VoiceOption, type VoiceSource,
   VoiceRefSchema,
   type FieldGenerationRequest, type FieldGenerationResponse, type PictureDescriptionRequest, type ScenarioDraft, type ScenarioDraftNpc, type ScenarioGenerationRequest,
-  type ScenarioSize,
+  STRAIN_MAX, type ScenarioSize,
 } from '@rpg/contracts';
 import { MAX_ROLLS_PER_ROUND, validateContracts } from '@rpg/rules';
 
@@ -205,7 +205,7 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
   };
   return {
     task, rulesVersion: context.state.rulesVersion,
-    rules: '2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character\'s contract. A character helps at most one contract per round, and never one they lead. Strain 4 prevents another risky action, never speech.',
+    rules: `2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character's contract. A character helps at most one contract per round, and never one they lead. Strain runs from 0 to ${STRAIN_MAX}. At ${STRAIN_MAX}, full strain, a character cannot lead a risky action from a Do line but can always speak.`,
     scene: { id: scene.id, title: scene.title, ...(context.place ? { place: context.place } : {}), description: scene.description, locationId: scene.locationId },
     ...(brief ? { scenario: { premise: brief.premise, genre: brief.genre, tone: brief.tone,
       objectives: brief.objectives, playerHooks: brief.playerHooks,
@@ -307,8 +307,8 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
       if (!contract.outcomes.critical?.publicText.trim()) return `${name} is a "check" without outcomes.critical. Every check needs a critical outcome: the worst plausible turn of that action, a clear step beyond its setback, with its own effects.`;
       const actor = context.state.characters.find((character) => character.id === contract.actorCharacterId)!;
       const own = submissions.filter((submission) => contract.submissionIds.includes(submission.id) && submission.characterId === contract.actorCharacterId);
-      if (actor.strain >= 4 && own.some((submission) => submission.kind !== 'say')) {
-        return `${name} lets ${actor.displayName}, who is at 4 strain, lead a "check" from a Do line. Strain 4 stops risky actions, never speech: mark that Do line "blocked" or have it help another contract, and let only Say lines lead a check.`;
+      if (actor.strain >= STRAIN_MAX && own.some((submission) => submission.kind !== 'say')) {
+        return `${name} lets ${actor.displayName}, who is at full strain (${STRAIN_MAX}), lead a "check" from a Do line. Full strain stops risky actions, never speech: mark that Do line "blocked" or have it help another contract, and let only Say lines lead a check.`;
       }
     }
     if (contract.prerequisites.some((prerequisite) => !contractIds.has(prerequisite.contractId))) return `${name} has a prerequisite that is not a contract in this plan.`;
@@ -595,7 +595,11 @@ export class ClewdrAiProvider implements AiProvider {
       'Only supplied participating NPC IDs can speak. NPCs know their own sourced knowledge and what these accepted submissions tell them, not unrelated world events.',
       'Current state and each NPC\'s current sourced knowledge take precedence over recentNpcDialogue, which preserves historical speech and may have been corrected. A retained belief is not a fact; an NPC may still hold it without making it true. Correction notices identify amended historical beats and confer no knowledge. Neither correction notices nor directorSteering are evidence for continuity.',
       task === 'plan' ? 'Viewers read every action contract on stream before the roll. Write each contract intent as one plain sentence of at most 90 characters, and each outcome publicText as one short sentence of at most 110 characters that tells the audience what happens. Save detail for the narration.' : '',
-      task === 'plan' ? 'Every selected line, Say or Do, in any round gets a roll: write one contract with ruling "check", led by that line\'s character, unless the line helps another contract, which then cites it. Use ruling "blocked" only for a line that cannot happen. Never use ruling "no_check". The classification is always "action". The Do line of a character at strain 4 is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.' : '',
+      task === 'plan' ? `Every selected line, Say or Do, in any round gets a roll: write one contract with ruling "check", led by that line's character, unless the line helps another contract, which then cites it. Use ruling "blocked" only for a line that cannot happen. Never use ruling "no_check". The classification is always "action". The Do line of a character at full strain (strain ${STRAIN_MAX}) is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.` : '',
+      task === 'plan' ? 'A cost paid in strain is a strain_delta on the character who pays it, sized by the contract\'s risk. Costly: low risk costs no strain (use a small complication instead), normal 1, high 2. Setback: low 1, normal 2, high 3. Critical: at most one more than the setback. A clean result costs no strain.' : '',
+      task === 'plan' ? 'A line meant to ease strain (rest, first aid, medicine, a calming word) rolls like any other line. Its relief is a negative strain_delta on the character it helps: clean -2, costly -1 with the price paid another way and never more strain on that character, setback 0, critical 0 with a small complication. Whenever an outcome describes relief, it carries that negative strain_delta.' : '',
+      task === 'plan' ? `Never push a character past strain ${STRAIN_MAX}. When a strain cost would go past it, put the rest on an enabled public danger track if one exists, otherwise make it a story cost such as something lost, broken or newly in the way. No outcome takes a character out of the story or kills them.` : '',
+      task === 'plan' ? 'When beat.kind is "conversation", no outcome changes a countdown track.' : '',
       task === 'plan' ? 'Set the stakes of each roll from the action itself and the moment, and keep them local to that action instead of moving the plot. Small talk or a trivial action gets light, often funny stakes (a pratfall, an awkward silence, a joke that lands wrong) and risk "low". A tense moment gets humiliating or costly stakes (the insult lands, the NPC turns cold, something is dropped or broken) and risk "normal". Danger only when the scene is dangerous (the NPC wants to fight, a fall that hurts, the alarm goes off) and risk "high". For a Say line, clean means it lands as meant, costly means it lands with a price, setback means it comes across wrong, and critical means it comes across as badly as it possibly could. Never write or rewrite a player\'s words.' : '',
       task === 'plan' ? 'Every "check" contract carries a fourth outcome, "critical", used when both dice show 1: the worst plausible turn of that same action, a clear step beyond its setback, scaled to the moment, as one short sentence of at most 110 characters, with its own effects.' : '',
       task === 'plan' ? 'Never copy square-bracket tags from player lines into contract intents or outcomes.' : '',

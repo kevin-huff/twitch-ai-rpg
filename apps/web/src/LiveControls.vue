@@ -18,12 +18,14 @@ const operation = ref<Operation | null>(null);
 const revision = ref(0);
 const draftEpoch = ref(0);
 const reason = ref('');
-const acknowledged = ref(false);
 const error = ref('');
 const savedNotice = ref('');
 const scene = ref({ title: '', description: '', locationKind: 'existing', locationId: '', locationTitle: '', locationDescription: '', presentNpcIds: [] as string[] });
 // Once the director edits the title, choosing a place stops rewriting it.
 const titleTouched = ref(false);
+// The same for the description and the ticked characters: a pick fills them until the director changes them.
+const descriptionTouched = ref(false);
+const castTouched = ref(false);
 const npcId = ref('');
 const npcVersion = ref(0);
 const profile = ref<LiveNpcProfile | null>(null);
@@ -60,12 +62,12 @@ const gate = computed(() => {
 });
 const stale = computed(() => operation.value !== null && (revision.value !== props.snapshot.session.stateRevision || (operation.value === 'npc' && Boolean(npcId.value) && chosenNpc.value?.version !== npcVersion.value) || (operation.value === 'reveal' && Boolean(revealNpcId.value) && revealNpc.value?.version !== revealVersion.value)));
 const locked = computed(() => props.busy || Boolean(gate.value));
-const canSave = computed(() => !locked.value && !stale.value && acknowledged.value && Boolean(reason.value.trim()) && reason.value.length <= 1000);
+const canSave = computed(() => !locked.value && !stale.value && Boolean(reason.value.trim()) && reason.value.length <= 1000);
 const listFields = [{ key: 'aliases', field: 'npc.alias', label: 'Private aliases', max: 80 }, { key: 'personality', field: 'npc.personalityItem', label: 'Personality', max: 500 }, { key: 'limits', field: 'npc.limit', label: 'Limits', max: 500 }, { key: 'dialogueExamples', field: 'npc.dialogueExample', label: 'Dialogue examples', max: 1000 }, { key: 'secrets', field: 'npc.secret', label: 'Private secrets and reveal conditions', max: 2000 }] as const;
 const listHelp = {"aliases": "Private alternate names for reference; these are not automatically included in AI dialogue prompts.", "personality": "Private personality guidance included in AI dialogue prompts.", "limits": "Private boundaries included as guidance in AI dialogue prompts; these are not automatic enforcement rules.", "dialogueExamples": "Private examples of this character’s speech, included in AI dialogue prompts.", "secrets": "Private secret and reveal-condition notes for reference and later reveals; conditions do not trigger automatic reveals or enter AI dialogue prompts."};
 const generationContext = computed(() => JSON.stringify([props.snapshot.session.id, props.snapshot.session.stateRevision, draftEpoch.value, operation.value, npcId.value, chosenNpc.value?.version, revealNpcId.value, revealNpc.value?.version, revealSource.value, scene.value.locationKind, scene.value.locationId]));
 
-function capture() { draftEpoch.value++; revision.value = props.snapshot.session.stateRevision; reason.value = ''; acknowledged.value = false; error.value = ''; savedNotice.value = ''; }
+function capture() { draftEpoch.value++; revision.value = props.snapshot.session.stateRevision; reason.value = ''; error.value = ''; savedNotice.value = ''; }
 function addEntry(key: typeof listFields[number]['key']) {
   if (locked.value || !profile.value || profile.value[key].length >= 10) return;
   draftEpoch.value++; profile.value[key].push('');
@@ -91,23 +93,38 @@ function loadReveal() {
 function begin(next: Operation) {
   if (locked.value) return;
   operation.value = next; capture();
-  if (next === 'scene') titleTouched.value = false;
+  if (next === 'scene') { titleTouched.value = false; descriptionTouched.value = false; castTouched.value = false; }
   if (next === 'scene') scene.value = { title: props.snapshot.session.scene.title, description: props.snapshot.session.scene.description, locationKind: 'existing', locationId: props.snapshot.session.scene.locationId, locationTitle: '', locationDescription: '', presentNpcIds: witnesses.value.map(npc => npc.id) };
   if (next === 'npc') { npcId.value = ''; loadNpc(); }
   if (next === 'reveal') { revealNpcId.value = ''; loadReveal(); }
 }
-// Only the place's title is copied; its private notes never reach the public scene.
+// The place's title and arrival text are copied into the public scene until the director edits them; the arrival text goes public on save.
 function followPlaceTitle(title: string | undefined) { if (!titleTouched.value && title) scene.value.title = title; }
-function pickPlace(event: Event) { followPlaceTitle(locations.value.find(location => location.id === (event.target as HTMLSelectElement).value)?.title); }
+function followPlaceDescription(text: string | undefined) { if (!descriptionTouched.value && text?.trim()) scene.value.description = text; }
+function followPlaceCast(destinationId: string | null) {
+  if (castTouched.value) return;
+  const ids = witnesses.value.map(npc => npc.id);
+  if (destinationId) for (const npc of props.snapshot.npcDetails) if (npc.locationId === destinationId && !ids.includes(npc.id)) ids.push(npc.id);
+  scene.value.presentNpcIds = ids;
+}
+function followExisting(locationId: string) {
+  const place = locations.value.find(location => location.id === locationId);
+  followPlaceTitle(place?.title); followPlaceDescription(place?.description); followPlaceCast(place ? place.id : null);
+}
+function pickPlace(event: Event) { followExisting((event.target as HTMLSelectElement).value); }
 function typePlace(event: Event) { followPlaceTitle((event.target as HTMLInputElement).value.trim()); }
-function pickKind(event: Event) { if ((event.target as HTMLSelectElement).value === 'new') followPlaceTitle(scene.value.locationTitle.trim()); else followPlaceTitle(locations.value.find(location => location.id === scene.value.locationId)?.title); }
+function typeArrival(text: string) { followPlaceDescription(text); }
+function pickKind(event: Event) {
+  if ((event.target as HTMLSelectElement).value === 'new') { followPlaceTitle(scene.value.locationTitle.trim()); followPlaceDescription(scene.value.locationDescription); followPlaceCast(null); }
+  else followExisting(scene.value.locationId);
+}
 function reload() {
   if (locked.value || !operation.value) return;
   if (operation.value === 'npc') loadNpc(); else if (operation.value === 'reveal') loadReveal(); else begin('scene');
 }
 function save() {
   if (!canSave.value) return;
-  const common = { commandId: crypto.randomUUID(), expectedStateRevision: revision.value, reason: reason.value, discardQueuedInput: true };
+  const common = { commandId: crypto.randomUUID(), expectedStateRevision: revision.value, reason: reason.value };
   let candidate: unknown;
   if (operation.value === 'scene') candidate = { ...common, type: 'change_scene', title: scene.value.title, description: scene.value.description, location: scene.value.locationKind === 'new' ? { kind: 'new', title: scene.value.locationTitle, description: scene.value.locationDescription } : { kind: 'existing', locationId: scene.value.locationId }, presentNpcIds: scene.value.presentNpcIds };
   if (operation.value === 'npc' && profile.value) candidate = { ...common, type: 'save_npc', ...(npcId.value ? { npcId: npcId.value } : {}), expectedNpcVersion: npcVersion.value, profile: { ...profile.value, hiddenIdentity: profile.value.hiddenIdentity || null, communicationChannel: profile.value.communicationChannel || null } };
@@ -120,7 +137,7 @@ function save() {
   error.value = '';
   const savedOperation = operation.value;
   emit('command', parsed.data, () => {
-    operation.value = null; acknowledged.value = false;
+    operation.value = null;
     savedNotice.value = savedOperation === 'scene' ? 'Scene changed.' : savedOperation === 'npc' ? 'Character saved.' : 'Reveal published to the party and stage.';
   });
 }
@@ -140,10 +157,10 @@ function save() {
           <h3>Change the scene</h3>
           <label>Destination<select v-model="scene.locationKind" data-testid="scene-location-kind" @change="pickKind" :aria-describedby="helpId('scene-location-kind')"><option value="existing">Existing location</option><option value="new">New location</option></select></label><p class="field-help" :id="helpId('scene-location-kind')">Choose a saved location or add a new location for this scene.</p>
           <div v-if="scene.locationKind === 'existing'"><label>Location<select v-model="scene.locationId" data-testid="scene-location" @change="pickPlace" :aria-describedby="helpId('scene-location')"><option v-for="location in locations" :key="location.id" :value="location.id">{{ location.title }}</option></select></label><p class="field-help" :id="helpId('scene-location')">Sets the destination for this scene and its selected characters.</p></div>
-          <template v-else><div class="generated-field"><label><span class="field-label">Location name</span><input v-model="scene.locationTitle" data-testid="location-title" @input="typePlace" :aria-describedby="helpId('location-title')" required maxlength="160"></label><p class="field-help" :id="helpId('location-title')">Names the new location added to the location catalog.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="location.title" v-model="scene.locationTitle" :context-key="generationContext" :disabled="locked || stale" /></div><div class="generated-field"><label><span class="field-label">Private location notes</span><textarea v-model="scene.locationDescription" data-testid="location-description" :aria-describedby="helpId('location-description')" maxlength="4000" rows="3" /></label><p class="field-help" :id="helpId('location-description')">Private catalog notes for the director; these do not become the public scene description.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="location.description" v-model="scene.locationDescription" :context-key="generationContext" :disabled="locked || stale" /></div></template>
+          <template v-else><div class="generated-field"><label><span class="field-label">Location name</span><input v-model="scene.locationTitle" data-testid="location-title" @input="typePlace" :aria-describedby="helpId('location-title')" required maxlength="160"></label><p class="field-help" :id="helpId('location-title')">Names the new location added to the location catalog.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="location.title" v-model="scene.locationTitle" :context-key="generationContext" :disabled="locked || stale" /></div><div class="generated-field"><label><span class="field-label">What the party sees on arrival</span><textarea v-model="scene.locationDescription" data-testid="location-description" @input="typeArrival(scene.locationDescription)" :aria-describedby="helpId('location-description')" maxlength="4000" rows="3" /></label><p class="field-help" :id="helpId('location-description')">What the party sees when they arrive here. It fills the public scene description below, which you can edit before saving.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="location.description" v-model="scene.locationDescription" @update:model-value="typeArrival($event)" :context-key="generationContext" :disabled="locked || stale" /></div></template>
           <div class="generated-field"><label><span class="field-label">Public scene title</span><input v-model="scene.title" data-testid="scene-title" @input="titleTouched = true" :aria-describedby="helpId('scene-title')" required maxlength="160"></label><p class="field-help" :id="helpId('scene-title')">Names the scene shown to the party and stage after saving.</p><p class="muted" data-testid="scene-title-public">The title becomes public when you save.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="scene.title" v-model="scene.title" @update:model-value="titleTouched = true" :context-key="generationContext" :disabled="locked || stale" /></div>
-          <div class="generated-field"><label><span class="field-label">Public scene description</span><textarea v-model="scene.description" data-testid="scene-description" :aria-describedby="helpId('scene-description')" maxlength="6000" rows="4" /></label><p class="field-help" :id="helpId('scene-description')">Describes the current scene publicly to the party and stage.</p><p v-if="descriptionStale" class="notice" data-testid="scene-description-stale">The description still describes {{ currentPlaceName }}. Update it so the stream, players and AI see the new place.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="scene.description" v-model="scene.description" :context-key="generationContext" :disabled="locked || stale" /></div>
-          <h4>Characters present in the new scene</h4><div v-for="npc in snapshot.npcDetails" :key="npc.id"><label class="check"><input v-model="scene.presentNpcIds" type="checkbox" :aria-describedby="helpId('present', npc.id)" :value="npc.id" :data-testid="`present-${npc.id}`">{{ npc.displayName }}</label><p class="field-help" :id="helpId('present', npc.id)">Moves this character to the new scene when selected; unselected characters go offstage.</p></div><p class="muted">Selected characters move here. Everyone else goes offstage.</p>
+          <div class="generated-field"><label><span class="field-label">Public scene description</span><textarea v-model="scene.description" data-testid="scene-description" @input="descriptionTouched = true" :aria-describedby="helpId('scene-description')" maxlength="6000" rows="4" /></label><p class="field-help" :id="helpId('scene-description')">Describes the current scene publicly to the party and stage.</p><p class="muted" data-testid="scene-description-public">The description becomes public when you save.</p><p v-if="descriptionStale" class="notice" data-testid="scene-description-stale">The description still describes {{ currentPlaceName }}. Update it so the stream, players and AI see the new place.</p><FieldGenerator class="field-ai" :premise="snapshot.session.brief?.premise" :premise-label="`Show scenario: ${snapshot.session.title}`" field="scene.description" v-model="scene.description" @update:model-value="descriptionTouched = true" :context-key="generationContext" :disabled="locked || stale" /></div>
+          <h4>Characters present in the new scene</h4><div v-for="npc in snapshot.npcDetails" :key="npc.id"><label class="check"><input v-model="scene.presentNpcIds" type="checkbox" @change="castTouched = true" :aria-describedby="helpId('present', npc.id)" :value="npc.id" :data-testid="`present-${npc.id}`">{{ npc.displayName }}</label><p class="field-help" :id="helpId('present', npc.id)">Moves this character to the new scene when selected; unselected characters go offstage.</p></div><p class="muted">Selected characters move here. Everyone else goes offstage.</p>
         </template>
         <template v-else-if="operation === 'npc' && profile">
           <h3>Create or edit a non-player character</h3>
@@ -175,7 +192,6 @@ function save() {
           <h4>Non-player witnesses</h4><p class="muted">Only characters present in this location can witness this reveal.</p><div v-for="npc in witnesses" :key="npc.id"><label class="check"><input v-model="witnessNpcIds" type="checkbox" :aria-describedby="helpId('witness', npc.id)" :value="npc.id" :data-testid="`witness-${npc.id}`">{{ npc.displayName }}</label><p class="field-help" :id="helpId('witness', npc.id)">Gives this present character a memory of the public wording when selected.</p></div>
         </template>
         <label>Private reason for this change<textarea v-model="reason" data-testid="live-reason" :aria-describedby="helpId('live-reason')" required maxlength="1000" rows="2" /></label><p class="field-help" :id="helpId('live-reason')">Private audit note explaining why you made this change.</p>
-        <label class="check notice"><input v-model="acknowledged" data-testid="discard-input" :aria-describedby="helpId('discard-input')" type="checkbox">I understand this cancels all queued or selected in-character dialogue and actions. Players must submit them again for the changed situation. Out-of-character questions stay.</label><p class="field-help" :id="helpId('discard-input')">Confirms cancellation of queued or selected in-character dialogue and actions. Out-of-character questions stay.</p>
         <p v-if="operation === 'scene'" class="muted" data-testid="scene-movers">Moving with the party: {{ movingNames }}</p>
         <p v-if="error" role="alert" class="notice error">{{ error }}</p>
         <button data-testid="save-live" :disabled="!canSave">{{ busy ? 'Saving…' : operation === 'scene' ? 'Change scene' : operation === 'npc' ? 'Save character' : 'Publish reveal' }}</button>

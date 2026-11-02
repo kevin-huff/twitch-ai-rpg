@@ -19,6 +19,7 @@ export function createTable() {
   const notice = ref('');
   const loading = ref(true);
   const busy = ref(false);
+  const beatBusy = ref(false);
   const connected = ref(false);
   const director = computed<DirectorSnapshot | null>(() => !stage && snapshot.value?.role === 'director' ? snapshot.value : null);
   const player = computed<PlayerSnapshot | null>(() => !stage && snapshot.value?.role === 'player' ? snapshot.value : null);
@@ -66,6 +67,13 @@ export function createTable() {
     finally { busy.value = false; }
   }
 
+  async function beatWork(task: () => Promise<void>) {
+    if (beatBusy.value) return;
+    beatBusy.value = true; error.value = ''; notice.value = '';
+    try { await task(); } catch (cause) { error.value = cause instanceof Error ? cause.message : 'The request could not be completed.'; }
+    finally { beatBusy.value = false; }
+  }
+
   async function send(command: Command) {
     const result = await api.command(sessionId, command) as { snapshot?: SessionSnapshot } | null | undefined;
     const returned = result?.snapshot;
@@ -107,9 +115,9 @@ export function createTable() {
 
   return {
     path, sessionId, view, stage, inviteToken, testCharacterId,
-    snapshot, error, notice, loading, busy, connected,
+    snapshot, error, notice, loading, busy, beatBusy, connected,
     director, player, setup, latestHistory,
-    refresh, work, send, restoreSession, dispose, onSnapshot,
+    refresh, work, beatWork, send, restoreSession, dispose, onSnapshot,
     requestPause, setStatus,
     nameOf, initials, phaseName, effectLabel, inputContext,
   };

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { PublicNpc, Submission } from '@rpg/contracts';
+import type { PublicBeat, PublicNpc, Submission } from '@rpg/contracts';
 
-const props = defineProps<{ submissions: Submission[]; npcs: PublicNpc[]; busy: boolean }>();
+const props = withDefaults(defineProps<{ submissions: Submission[]; npcs: PublicNpc[]; busy: boolean; beat?: PublicBeat | null }>(), { beat: null });
 const emit = defineEmits<{ edit: [item: Submission]; withdraw: [item: Submission] }>();
 
 // The director never picks private notes, so they stay queued. Show only the newest note, beside the newest
@@ -29,9 +29,16 @@ const sentences: Record<Submission['status'], string> = {
   selected: 'Picked by the director. You can still change it.',
   locked: 'Locked in. Watch the stream to see what happens.',
   published: 'This is in the story now.',
-  cancelled: 'Not used. You took it back, or the story moved on. Send it again if it still fits.',
+  cancelled: 'Taken back. Send it again if you still want it.',
 };
-const sentence = (item: Submission) => item.kind === 'ooc' && item.status === 'queued' ? 'Sent. Only the director sees it.' : sentences[item.status];
+const pastCollecting = computed(() => props.beat?.phase === 'stakes_review' || props.beat?.phase === 'locked' || props.beat?.phase === 'draft_review');
+const waiting = computed(() => props.submissions.filter(item => item.kind !== 'ooc' && (item.status === 'queued' || item.status === 'selected')));
+const oneMore = computed(() => waiting.value.length === 1 && !pastCollecting.value);
+const sentence = (item: Submission) => {
+  if (item.kind === 'ooc' && item.status === 'queued') return 'Sent. Only the director sees it.';
+  if (item.kind !== 'ooc' && item.status === 'queued' && pastCollecting.value) return 'Not in this round. It waits for the next turn.';
+  return sentences[item.status];
+};
 const canChange = (item: Submission) => item.status === 'queued' || item.status === 'selected';
 const label = (item: Submission) => {
   if (item.kind === 'act') return 'You tried';
@@ -48,6 +55,7 @@ const extraApproach = (item: Submission) => {
 <template>
   <section v-if="visible.length" class="panel sub-list">
     <p class="eyebrow">What you sent</p>
+    <p v-if="oneMore" class="muted" data-testid="one-more-line">You can send one more line.</p>
     <article v-for="item in visible" :key="item.id" class="sub-item" :data-status="item.status">
       <strong class="sub-label">{{ label(item) }}</strong>
       <template v-if="item.kind === 'act'">

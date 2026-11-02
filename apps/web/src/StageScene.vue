@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { STRAIN_MAX } from '@rpg/contracts';
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
 import { portraitAlt, pictureUrl, portraitIdFor, shownScenePicture } from './pictures';
@@ -429,10 +430,10 @@ onBeforeUnmount(() => {
         <span class="party-text">
           <span class="party-name">{{ character.displayName }}</span>
           <span v-if="!crowded" class="party-strain">
-            <span class="pips" role="img" :aria-label="`Strain ${character.strain} of 4`">
-              <span v-for="pip in 4" :key="pip" class="pip" :class="{ filled: pip <= character.strain }"></span>
+            <span class="pips" role="img" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`">
+              <span v-for="pip in STRAIN_MAX" :key="pip" class="pip" :class="{ filled: pip <= character.strain }"></span>
             </span>
-            <span v-if="character.strain === 4" class="needs-help">Needs help</span>
+            <span v-if="character.strain >= STRAIN_MAX" class="needs-help">Needs help</span>
           </span>
         </span>
       </div>

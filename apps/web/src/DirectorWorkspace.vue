@@ -2,11 +2,14 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { identityPath } from './identity';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
+import { STRAIN_MAX, type Command } from '@rpg/contracts';
 import Story from './Story.vue';
 import AudioPanel from './AudioPanel.vue';
 import OperationsPanel from './OperationsPanel.vue';
 import LiveControls from './LiveControls.vue';
 import CorrectionControls from './CorrectionControls.vue';
+import CastPresence from './CastPresence.vue';
+import RestControls from './RestControls.vue';
 import BeatSteering from './BeatSteering.vue';
 import BeatPanel from './BeatPanel.vue';
 import DirectorQueue from './DirectorQueue.vue';
@@ -20,7 +23,7 @@ import { api } from './api';
 import { pictureUrl } from './pictures';
 
 
-const { sessionId, stage, snapshot, busy, error, director, setup, latestHistory, work, send, refresh, onSnapshot, setStatus, nameOf } = useTable();
+const { sessionId, stage, snapshot, busy, beatBusy, error, director, setup, latestHistory, work, send, refresh, onSnapshot, setStatus, nameOf } = useTable();
 
 const beat = computed(() => director.value?.activeBeat ?? null);
 const pending = computed(() => director.value?.submissions.filter(item => ['queued', 'selected'].includes(item.status)) ?? []);
@@ -76,6 +79,11 @@ const confirmingEnd = ref(false);
 const endError = ref('');
 const askToEnd = () => { endError.value = ''; confirmingEnd.value = true; };
 const keepGoing = () => { confirmingEnd.value = false; endError.value = ''; };
+const confirmingPause = ref(false);
+const askToPause = () => { if (beatBusy.value) confirmingPause.value = true; else setStatus('paused'); };
+const pauseAnyway = () => { confirmingPause.value = false; return setStatus('paused'); };
+const keepGoingPause = () => { confirmingPause.value = false; };
+watch([paused, ended], ([isPaused, isEnded]) => { if (isPaused || isEnded) confirmingPause.value = false; });
 const endShow = () => work(async () => {
   endError.value = '';
   try {
@@ -85,6 +93,15 @@ const endShow = () => work(async () => {
     endError.value = cause instanceof Error ? cause.message : 'The show could not be ended.';
   }
 });
+
+const changesTheStory = ['record_correction', 'change_scene', 'save_npc', 'reveal_npc'];
+const sendAndUntick = (command: Command, onSaved: () => void) => work(async () => {
+  const waiting = pending.value.filter(item => item.kind !== 'ooc').map(item => item.id);
+  await send(command);
+  if (changesTheStory.includes(command.type)) selected.value = selected.value.filter(id => !waiting.includes(id));
+  onSaved();
+});
+const sendOnly = (command: Command, onSaved: () => void) => work(async () => { await send(command); onSaved(); });
 
 const seen = new Set<string>();
 const untickedKey = `story-table-unticked:${sessionId}`;
@@ -127,7 +144,7 @@ onUnmounted(stopListening);
         <span class="lines-waiting" data-testid="lines-waiting">{{ linesWaitingText }}</span>
         <span class="show-bar-spacer"></span>
         <template v-if="!ended">
-          <button :class="{ secondary: !paused }" data-testid="top-pause" :disabled="busy || Boolean(setup && !setup.started)" @click="setStatus(paused ? 'live' : 'paused')">{{ paused ? 'Resume show' : 'Pause show' }}</button>
+          <button :class="{ secondary: !paused }" data-testid="top-pause" :disabled="busy || Boolean(setup && !setup.started)" @click="paused ? setStatus('live') : askToPause()">{{ paused ? 'Resume show' : 'Pause show' }}</button>
           <button class="secondary" data-testid="end-show" :disabled="busy || confirmingEnd" @click="askToEnd">End show</button>
         </template>
         <a class="quiet" :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a>
@@ -137,13 +154,17 @@ onUnmounted(stopListening);
         <span>End the show? Players will see that it's over, and it can't be restarted.</span>
         <span class="actions"><button data-testid="end-show-confirm" :disabled="busy" @click="endShow">End show</button><button class="quiet" data-testid="end-show-keep" @click="keepGoing">Keep going</button></span>
       </div>
+      <div v-if="confirmingPause && !paused && !ended" class="end-confirm" data-testid="pause-confirm-row">
+        <span>The AI is still working on this round. Pausing now throws that work away.</span>
+        <span class="actions"><button data-testid="pause-anyway" :disabled="busy" @click="pauseAnyway">Pause anyway</button><button class="quiet" data-testid="pause-keep-going" @click="keepGoingPause">Keep going</button></span>
+      </div>
       <p v-if="endError" class="end-error" role="alert" data-testid="end-show-error">{{ endError }}</p>
     </section>
     <div v-if="ended" class="ended-gallery" data-testid="ended-gallery"><GalleryPanel :status="director.gallery ?? null" :busy="busy" @action="galleryAction" /></div>
     <template v-if="!ended">
       <div v-for="item in pauseRequests" :key="item.id" class="pause-notice" aria-live="polite">
         <span>{{ nameOf(item.characterId) }} asked for a pause.</span>
-        <span class="actions"><button v-if="!paused" class="secondary" :disabled="busy" @click="setStatus('paused')">Pause now</button><button class="quiet" @click="dismissed.push(item.id)">Dismiss</button></span>
+        <span class="actions"><button v-if="!paused" class="secondary" :disabled="busy" @click="askToPause">Pause now</button><button class="quiet" @click="dismissed.push(item.id)">Dismiss</button></span>
       </div>
       <div v-for="track in fullCountdowns" :key="track.id" class="pause-notice countdown-notice" data-testid="countdown-full" aria-live="polite">
         <span>The countdown “{{ track.label.trim() }}” is full.<template v-if="track.completionText?.trim()"> When it fills: {{ closedSentence(track.completionText) }}</template> What happens next is your call.</span>
@@ -158,15 +179,17 @@ onUnmounted(stopListening);
             <details class="show-tools" data-testid="show-tools">
               <summary>Show tools</summary>
               <div class="stack">
-                <LiveControls :snapshot="director" :busy="busy" @command="(command, onSaved) => work(async () => { await send(command); onSaved(); })" />
-                <CorrectionControls :snapshot="director" :busy="busy" @command="(command, onSaved) => work(async () => { await send(command); onSaved(); })" />
-                <BeatSteering :snapshot="director" :busy="busy" @command="(command, onSaved) => work(async () => { await send(command); onSaved(); })" />
+                <LiveControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
+                <CastPresence :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
+                <CorrectionControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
+                <RestControls :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
+                <BeatSteering :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
                 <OperationsPanel :session-id="sessionId" />
                 <section class="panel"><p class="eyebrow">In the room</p><div v-for="npc in director.npcDetails" :key="npc.id" class="queue-item"><h3>{{ npc.displayName }}</h3><p class="muted">{{ npc.role }} · {{ npc.status }}</p><NpcPortraitControls :name="npc.displayName" :image-url="portraitSrc(npc.portraitId)" :state="portraitJob(npc.id)?.state ?? null" :message="portraitJob(npc.id)?.message ?? null" :enabled="picturesOn" :disabled="busy || ended" :can-create="Boolean(npc.appearance?.trim() || npc.role?.trim())" @create="createPortrait(npc.id)" @remove="removePortrait(npc.id)" /><details><summary>Director notes & memory</summary><p class="private-note">{{ npc.goal }}</p><p v-for="secret in npc.secrets" :key="secret" class="private-note">Secret: {{ secret }}</p><p v-for="memory in npc.knowledge" :key="memory.id" class="private-note">{{ memory.category }} · {{ memory.statement }}</p></details></div></section>
                 <section class="panel"><p class="eyebrow">Scenario notes (read-only)</p><p class="private-note">{{ director.directorNotes }}</p></section>
                 <section v-if="snapshot.facts.length" class="panel" data-testid="public-facts"><p class="eyebrow">Known to the party</p><p v-for="fact in snapshot.facts" :key="fact.id" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ fact.text }}</p></section>
                 <section v-if="snapshot.tracks.length" class="panel"><p class="eyebrow">Live state</p><div v-for="track in snapshot.tracks" :key="track.id" class="track" :class="track.kind"><div class="track-label"><span>{{ track.label }}</span><span>{{ track.current }}/{{ track.max }}{{ !track.enabled ? ' · inactive' : '' }}</span></div><div class="track-pips"><span v-for="pip in track.max" :key="pip" :class="{ filled: pip <= track.current }"></span></div></div></section>
-                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong><small>Strain {{ character.strain }}/4</small></div></div></section>
+                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong><small>Strain {{ character.strain }}/{{ STRAIN_MAX }}</small></div></div></section>
               </div>
             </details>
           </section>

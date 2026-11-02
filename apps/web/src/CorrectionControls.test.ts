@@ -15,7 +15,6 @@ async function begin(wrapper: ReturnType<typeof mount>) { await wrapper.get(fiel
 async function common(wrapper: ReturnType<typeof mount>) {
   await wrapper.get(field('correction-public-text')).setValue('The bridge is open; the earlier narration was mistaken.');
   await wrapper.get(field('correction-reason')).setValue('I misread the scenario.');
-  await wrapper.get(field('correction-discard-input')).setValue(true);
 }
 function command(wrapper: ReturnType<typeof mount>, index = 0) { return wrapper.emitted('command')![index]![0] as Command; }
 
@@ -27,7 +26,7 @@ describe('director corrections', () => {
     expect(wrapper.get(field('correction-public-preview')).text()).toContain('The bridge is open');
     expect(wrapper.get(field('correction-public-preview')).text()).not.toContain('misread');
     await wrapper.get(field('save-correction')).trigger('click');
-    expect(command(wrapper)).toEqual({ type: 'record_correction', commandId: expect.any(String), expectedStateRevision: 7, publishedBeatId: 'beat-1', publicText: 'The bridge is open; the earlier narration was mistaken.', reason: 'I misread the scenario.', discardQueuedInput: true, changes: [] });
+    expect(command(wrapper)).toEqual({ type: 'record_correction', commandId: expect.any(String), expectedStateRevision: 7, publishedBeatId: 'beat-1', publicText: 'The bridge is open; the earlier narration was mistaken.', reason: 'I misread the scenario.', changes: [] });
     expect(CommandSchema.safeParse(command(wrapper)).success).toBe(true);
     (wrapper.emitted('command')![0]![1] as () => void)();
     await wrapper.vm.$nextTick();
@@ -69,10 +68,22 @@ describe('director corrections', () => {
     expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'strain_set', characterId: 'aster', value: 1 }, { kind: 'track_set', trackId: 'danger', value: 4 }] }); wrapper.unmount();
   });
 
-  it('reports missing acknowledgement and no-op changes at Save without losing words', async () => {
+  it('accepts strain up to the maximum of 8 and refuses 9', async () => {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper); await common(wrapper);
+    await wrapper.get(field('add-correction-strain')).trigger('click');
+    expect(wrapper.get(field('correction-value-0')).attributes('max')).toBe('8');
+    await wrapper.get(field('correction-value-0')).setValue('9');
+    await wrapper.get(field('save-correction')).trigger('click');
+    expect(wrapper.emitted('command')).toBeUndefined(); expect(wrapper.get('[role="alert"]').text()).toContain('0 to 8');
+    await wrapper.get(field('correction-value-0')).setValue('8');
+    await wrapper.get(field('save-correction')).trigger('click');
+    expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'strain_set', characterId: 'aster', value: 8 }] }); wrapper.unmount();
+  });
+
+  it('reports missing words and no-op changes at Save without losing words', async () => {
     const wrapper = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper);
     await wrapper.get(field('save-correction')).trigger('click');
-    expect(wrapper.get('[role="alert"]').text()).toMatch(/public correction|reason|acknowledge/i);
+    expect(wrapper.get('[role="alert"]').text()).toMatch(/public correction|reason/i);
     await common(wrapper); await wrapper.get(field('add-correction-fact')).trigger('click');
     await wrapper.get(field('save-correction')).trigger('click');
     expect(wrapper.emitted('command')).toBeUndefined(); expect(wrapper.get('[role="alert"]').text()).toMatch(/unchanged/i);

@@ -188,7 +188,7 @@ describe('native scenario and character library', () => {
       const wrapper = await open();
       const place = wrapper.findAll('details.row-fold').find(row => row.get('summary').text() === 'Observatory')!;
       expect(place.attributes('open')).toBeUndefined();
-      expect(labelsIn(place)).toEqual(['Location name', 'Location description']);
+      expect(labelsIn(place)).toEqual(['Location name', 'What the party sees on arrival']);
       expect(place.findAll('button').map(button => button.text())).toContain('Remove location');
       expect(wrapper.findAll('button').map(button => button.text())).toContain('Add location');
       wrapper.unmount();
@@ -314,8 +314,8 @@ describe('native scenario and character library', () => {
       return wrapper.findAll('p.field-help').find(helper => helper.attributes('id') === control.attributes('aria-describedby'))!.text();
     };
     expect(description('Location name')).toMatch(/director.*location choices/i);
-    expect(description('Location description')).toMatch(/private location notes.*director/i);
-    expect(description('Location description')).toMatch(/party.*scene description/i);
+    expect(description('What the party sees on arrival')).toMatch(/what the party sees when they arrive/i);
+    expect(description('What the party sees on arrival')).toMatch(/change scene copies it.*scene description/i);
     expect(description('Director notes')).toMatch(/private.*reference/i);
     expect(description('Motivation')).toMatch(/private.*reference/i);
     const tickLabel = wrapper.findAll('label').find(label => label.text().startsWith('Tick automatically'))!;

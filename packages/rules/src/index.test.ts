@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ActionContractSchema, type ActionContract, type Effect, type OutcomeBand, type SessionState } from '@rpg/contracts';
-import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits, type ContractLine } from './index';
+import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, STRAIN_MAX, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits, type ContractLine } from './index';
 
 const state = () => ({
   characters: [
@@ -149,10 +149,10 @@ describe('critical failure on double ones', () => {
   });
 });
 
-describe('Say-led rolls at four strain', () => {
+describe('Say-led rolls at full strain', () => {
   const tired = () => {
     const current = state();
-    current.characters[0].strain = 4;
+    current.characters[0].strain = STRAIN_MAX;
     (current.characters[0] as { displayName?: string }).displayName = 'Dash';
     return current;
   };
@@ -164,22 +164,36 @@ describe('Say-led rolls at four strain', () => {
   });
 
   it('refuses a check led by a Do line, naming the character', () => {
-    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/Dash is at four strain/);
-    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/four strain/);
+    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/Dash is at full strain/);
+    expect(() => validateContracts([contract()], tired(), [{ ...say, kind: 'act' }])).toThrow(/full strain/);
   });
 
   it('refuses a check when the actor leads with a Say line and a Do line', () => {
     const both = contract({ submissionIds: ['input', 'second'] });
-    expect(() => validateContracts([both], tired(), [say, { id: 'second', characterId: 'lead', kind: 'act' }])).toThrow(/four strain/);
+    expect(() => validateContracts([both], tired(), [say, { id: 'second', characterId: 'lead', kind: 'act' }])).toThrow(/full strain/);
   });
 
   it('refuses a check with no lines, a line of unknown kind, or no own line cited', () => {
-    expect(() => validateContracts([contract()], tired())).toThrow(/Dash is at four strain/);
-    expect(() => validateContracts([contract()], tired(), [{ id: 'input', characterId: 'lead' }])).toThrow(/four strain/);
-    expect(() => validateContracts([contract()], tired(), [{ ...say, characterId: 'other' }])).toThrow(/four strain/);
+    expect(() => validateContracts([contract()], tired())).toThrow(/Dash is at full strain/);
+    expect(() => validateContracts([contract()], tired(), [{ id: 'input', characterId: 'lead' }])).toThrow(/full strain/);
+    expect(() => validateContracts([contract()], tired(), [{ ...say, characterId: 'other' }])).toThrow(/full strain/);
   });
 
-  it('still lets No check and Blocked contracts through at four strain', () => {
+  it('allows a Do-led check below the maximum and refuses it at the maximum', () => {
+    const act = { ...say, kind: 'act' as const };
+    const almost = tired();
+    almost.characters[0].strain = STRAIN_MAX - 1;
+    expect(() => validateContracts([contract()], almost, [act])).not.toThrow();
+    expect(() => validateContracts([contract()], tired(), [act])).toThrow(/full strain \(8 of 8\)/);
+  });
+
+  it('clamps strain at 8', () => {
+    expect(STRAIN_MAX).toBe(8);
+    const updated = applyEffects(state(), [{ kind: 'strain_delta', characterId: 'lead', delta: 4 }, { kind: 'strain_delta', characterId: 'lead', delta: 4 }, { kind: 'strain_delta', characterId: 'lead', delta: 4 }]);
+    expect(updated.characters[0].strain).toBe(8);
+  });
+
+  it('still lets No check and Blocked contracts through at full strain', () => {
     expect(() => validateContracts([contract({ ruling: 'no_check' })], tired())).not.toThrow();
     expect(() => validateContracts([contract({ ruling: 'blocked' })], tired())).not.toThrow();
   });
@@ -204,12 +218,13 @@ describe('RULE-05 bounded atomic effect application', () => {
       { kind: 'track_delta', trackId: 'alarm', delta: 3 },
       { kind: 'track_delta', trackId: 'alarm', delta: -2 },
       { kind: 'strain_delta', characterId: 'lead', delta: 4 },
+      { kind: 'strain_delta', characterId: 'lead', delta: 4 },
     ]);
     expect(updated.tracks.find(track => track.id === 'alarm')?.current).toBe(6);
-    expect(updated.characters[0].strain).toBe(4);
+    expect(updated.characters[0].strain).toBe(STRAIN_MAX);
     expect(current.characters[0].strain).toBe(0);
     expect(updated.characters[0].traits).toEqual(current.characters[0].traits);
-    expect(applyEffects(updated, [{ kind: 'strain_delta', characterId: 'lead', delta: -2 }]).characters[0].strain).toBe(2);
+    expect(applyEffects(updated, [{ kind: 'strain_delta', characterId: 'lead', delta: -2 }]).characters[0].strain).toBe(STRAIN_MAX - 2);
     expect(() => validateContracts([contract()], updated)).toThrow(/strain|help/i);
   });
   it('deduplicates one shared incident per target but allows different targets', () => {
@@ -427,9 +442,9 @@ function oldValidateContracts(contracts: ActionContract[], current: SessionState
     const actor = current.characters.find(character => character.id === value.actorCharacterId);
     if (!actor) throw new Error('Unknown action actor.');
     if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
-    if (actor.strain >= 4 && value.ruling === 'check') {
+    if (actor.strain >= STRAIN_MAX && value.ruling === 'check') {
       const own = lines ? lines.filter(line => value.submissionIds.includes(line.id) && line.characterId === value.actorCharacterId) : [];
-      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(value.actorCharacterId)} is at four strain, so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
+      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(value.actorCharacterId)} is at full strain (${STRAIN_MAX} of ${STRAIN_MAX}), so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
     }
     if (value.edge && !value.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
     if (value.helperCharacterIds.length && value.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');

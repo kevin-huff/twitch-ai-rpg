@@ -26,7 +26,7 @@ function snapshotWithPremise(): DirectorSnapshot {
 }
 const field = (id: string) => `[data-testid="${id}"]`;
 async function begin(wrapper: ReturnType<typeof mount>, kind: string) { await wrapper.get(field(`begin-${kind}`)).trigger('click'); }
-async function acknowledge(wrapper: ReturnType<typeof mount>) { await wrapper.get(field('live-reason')).setValue('The cast agreed.'); await wrapper.get(field('discard-input')).setValue(true); }
+async function acknowledge(wrapper: ReturnType<typeof mount>) { await wrapper.get(field('live-reason')).setValue('The cast agreed.'); }
 beforeEach(() => { vi.clearAllMocks(); transport.subscribe.mockReturnValue(() => {}); transport.command.mockResolvedValue({}); voiceApi.loadVoices.mockResolvedValue({ voices: FAKE_VOICES.map(voice => ({ ...voice })) }); });
 
 function generator(wrapper: ReturnType<typeof mount>, name: FieldGenerationField, index = 0) {
@@ -43,7 +43,7 @@ async function generateField(wrapper: ReturnType<typeof mount>, name: FieldGener
 }
 
 describe('live field guidance', () => {
-  it('explains privacy, actual prompt use, reveal publication and cancellation without changing labels', async () => {
+  it('explains privacy, actual prompt use, reveal publication and arrival text without changing labels', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     const help = (name: string) => {
       const control = wrapper.get(field(name));
@@ -51,9 +51,11 @@ describe('live field guidance', () => {
     };
     await begin(wrapper, 'scene');
     await wrapper.get(field('scene-location-kind')).setValue('new');
-    expect(help('location-description')).toMatch(/Private catalog.*do not become the public scene/);
+    expect(help('location-description')).toMatch(/What the party sees when they arrive.*public scene description/);
+    expect(wrapper.get('label:has([data-testid="location-description"])').text()).toBe('What the party sees on arrival');
     expect(help('live-reason')).toMatch(/Private audit/);
-    expect(help('discard-input')).toMatch(/cancellation.*in-character.*Out-of-character questions stay/);
+    expect(wrapper.find(field('discard-input')).exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('cancels all queued');
     await begin(wrapper, 'npc');
     await wrapper.get(field('npc-choice')).setValue('mara');
     for (const key of ['aliases', 'personality', 'limits', 'dialogueExamples']) await wrapper.get(field(`add-npc-${key}`)).trigger('click');
@@ -384,7 +386,7 @@ describe('live director controls', () => {
     expect(wrapper.text()).toContain('Start the show from Cast & lobby before making live changes.');
     expect(wrapper.text()).not.toMatch(/\bsession\b|\btable\b/i); wrapper.unmount();
   });
-  it('requires explicit input cancellation acknowledgement and emits a complete new-location scene command', async () => {
+  it('saves with only a reason and emits a complete new-location scene command without a discard flag', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     await begin(wrapper, 'scene');
     await wrapper.get(field('scene-title')).setValue('Arrival');
@@ -393,11 +395,11 @@ describe('live director controls', () => {
     await wrapper.get(field('location-title')).setValue('New dock');
     await wrapper.get(field('location-description')).setValue('Fog\n\nAnd waves');
     await wrapper.get(field('live-reason')).setValue('Move on.');
-    await wrapper.get('form').trigger('submit'); expect(wrapper.emitted('command')).toBeUndefined();
-    expect(wrapper.text()).toContain('Out-of-character questions stay');
-    await wrapper.get(field('discard-input')).setValue(true); await wrapper.get('form').trigger('submit');
+    expect(wrapper.find(field('discard-input')).exists()).toBe(false);
+    await wrapper.get('form').trigger('submit');
     const command = wrapper.emitted('command')![0][0];
-    expect(command).toEqual(expect.objectContaining({ type: 'change_scene', expectedStateRevision: 7, reason: 'Move on.', discardQueuedInput: true, title: 'Arrival', description: 'First line\n\nSecond line', location: { kind: 'new', title: 'New dock', description: 'Fog\n\nAnd waves' }, presentNpcIds: ['mara'] }));
+    expect(command).not.toHaveProperty('discardQueuedInput');
+    expect(command).toEqual(expect.objectContaining({ type: 'change_scene', expectedStateRevision: 7, reason: 'Move on.', title: 'Arrival', description: 'First line\n\nSecond line', location: { kind: 'new', title: 'New dock', description: 'Fog\n\nAnd waves' }, presentNpcIds: ['mara'] }));
     expect(CommandSchema.safeParse(command).success).toBe(true); wrapper.unmount();
   });
   it('preserves unsaved words on pushes and requires an explicit reload after state changes', async () => {
@@ -409,7 +411,7 @@ describe('live director controls', () => {
     await wrapper.get('form').trigger('submit'); expect(wrapper.emitted('command')).toBeUndefined();
     await wrapper.get(field('reload-live')).trigger('click');
     expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('Saved elsewhere');
-    expect((wrapper.get(field('discard-input')).element as HTMLInputElement).checked).toBe(false); wrapper.unmount();
+    expect((wrapper.get(field('live-reason')).element as HTMLTextAreaElement).value).toBe(''); wrapper.unmount();
   });
   describe('character voice pick', () => {
     async function open(id: string) {
@@ -505,11 +507,11 @@ describe('live director controls', () => {
     const command = wrapper.emitted('command')![0][0]; expect(command).toEqual(expect.objectContaining({ type: 'reveal_npc', source: { kind: 'identity' }, publicText: 'Mara once served the queen.', witnessNpcIds: [] }));
     expect(JSON.stringify(command)).not.toContain('Private identity'); wrapper.unmount();
   });
-  it('uses selected destination and cast for an existing location and resets acknowledgement on switching forms', async () => {
+  it('uses selected destination and cast for an existing location and clears the reason on switching forms', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper, 'scene'); await acknowledge(wrapper);
     await wrapper.get(field('scene-location')).setValue('tower'); await wrapper.get(field('present-mara')).setValue(false); await wrapper.get(field('present-dax')).setValue(true); await wrapper.get('form').trigger('submit');
     expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', location: { kind: 'existing', locationId: 'tower' }, presentNpcIds: ['dax'] }));
-    await begin(wrapper, 'npc'); expect((wrapper.get(field('discard-input')).element as HTMLInputElement).checked).toBe(false); expect((wrapper.get(field('live-reason')).element as HTMLTextAreaElement).value).toBe(''); wrapper.unmount();
+    await begin(wrapper, 'npc'); expect((wrapper.get(field('live-reason')).element as HTMLTextAreaElement).value).toBe(''); wrapper.unmount();
   });
   it('disables draft switches and all edits while saving', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper, 'npc'); await wrapper.setProps({ busy: true });
@@ -523,7 +525,7 @@ describe('published reveals in every audience', () => {
     window.history.replaceState({}, '', '/sessions/show/director'); const current = snapshot(); transport.snapshot.mockResolvedValue(current);
     const wrapper = mount(App); await flushPromises(); const controls = wrapper.getComponent(LiveControls);
     await controls.get(field('begin-scene')).trigger('click'); await controls.get(field('scene-description')).setValue('Unsaved scene words');
-    await controls.get(field('live-reason')).setValue('The cast agreed.'); await controls.get(field('discard-input')).setValue(true);
+    await controls.get(field('live-reason')).setValue('The cast agreed.');
     if (accepted) transport.snapshot.mockResolvedValue({ ...current, session: { ...current.session, stateRevision: 8 } });
     else transport.command.mockRejectedValueOnce(new Error('The scene could not be saved.'));
     await controls.get('form').trigger('submit'); await flushPromises();
@@ -548,19 +550,19 @@ describe('published reveals in every audience', () => {
 
 describe('scene title follows the chosen place', () => {
   const title = (wrapper: ReturnType<typeof mount>) => (wrapper.get(field('scene-title')).element as HTMLInputElement).value;
-  it('sets the title to the picked place and the typed new place name, never copying private notes', async () => {
+  it('sets the title to the picked place and the typed new place name', async () => {
     const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
     await begin(wrapper, 'scene');
     expect(title(wrapper)).toBe('The bar');
     await wrapper.get(field('scene-location')).setValue('tower');
     expect(title(wrapper)).toBe('The tower');
-    expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('A quiet place.');
+    expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('High above.');
     await wrapper.get(field('scene-location-kind')).setValue('new');
     await wrapper.get(field('location-title')).setValue('Harbor');
-    await wrapper.get(field('location-description')).setValue('Private harbor notes');
+    await wrapper.get(field('location-description')).setValue('Harbor notes');
     expect(title(wrapper)).toBe('Harbor');
     expect(wrapper.text()).toContain('The title becomes public when you save.');
-    expect(title(wrapper)).not.toContain('Private'); expect(title(wrapper)).not.toContain('High above');
+    expect(title(wrapper)).not.toContain('Harbor notes'); expect(title(wrapper)).not.toContain('High above');
     wrapper.unmount();
   });
   it('keeps a typed title when a place is picked later, and a new scene form starts following again', async () => {
@@ -574,11 +576,13 @@ describe('scene title follows the chosen place', () => {
     expect(title(wrapper)).toBe('The tower');
     wrapper.unmount();
   });
-  it('warns while the description still describes the current place and hides once edited', async () => {
-    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+  it('warns while the description still describes the current place when the new place has no arrival text, and hides once edited', async () => {
+    const blank = snapshot(); blank.locations = [{ id: 'bar', title: 'The bar', description: '' }, { id: 'tower', title: 'The tower', description: '  ' }];
+    const wrapper = mount(LiveControls, { props: { snapshot: blank, busy: false } });
     await begin(wrapper, 'scene');
     expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
     await wrapper.get(field('scene-location')).setValue('tower');
+    expect((wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value).toBe('A quiet place.');
     expect(wrapper.get(field('scene-description-stale')).text()).toBe('The description still describes The bar. Update it so the stream, players and AI see the new place.');
     await wrapper.get(field('scene-description')).setValue('Wind and stone.');
     expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
@@ -594,6 +598,97 @@ describe('scene title follows the chosen place', () => {
     await wrapper.get(field('scene-description')).setValue('Wind and stone.');
     await wrapper.get('form').trigger('submit');
     expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', title: 'The tower', description: 'Wind and stone.', location: { kind: 'existing', locationId: 'tower' } }));
+    wrapper.unmount();
+  });
+});
+
+describe('scene form fills from the chosen place', () => {
+  const description = (wrapper: ReturnType<typeof mount>) => (wrapper.get(field('scene-description')).element as HTMLTextAreaElement).value;
+  const ticked = (wrapper: ReturnType<typeof mount>) => ['mara', 'dax'].filter(id => (wrapper.get(field(`present-${id}`)).element as HTMLInputElement).checked);
+  it('opens with today\'s description and ticks, and says the description goes public', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    expect(description(wrapper)).toBe('A quiet place.');
+    expect(ticked(wrapper)).toEqual(['mara']);
+    expect(wrapper.get(field('scene-description-public')).text()).toBe('The description becomes public when you save.');
+    wrapper.unmount();
+  });
+  it('fills the description from the picked place, follows later picks, and switches back to the current place', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('High above.');
+    expect(wrapper.find(field('scene-description-stale')).exists()).toBe(false);
+    await wrapper.get(field('scene-location')).setValue('bar');
+    expect(description(wrapper)).toBe('High above.');
+    wrapper.unmount();
+  });
+  it('keeps a description the director edited, whether typed or applied from the generator', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-description')).setValue('My own words.');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('My own words.');
+    await begin(wrapper, 'scene');
+    expect(description(wrapper)).toBe('A quiet place.');
+    await generator(wrapper, 'scene.description').vm.$emit('update:model-value', 'Generated words.');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('Generated words.');
+    wrapper.unmount();
+  });
+  it('leaves the description alone when the place has no arrival text', async () => {
+    const blank = snapshot(); blank.locations = [{ id: 'bar', title: 'The bar', description: '' }, { id: 'tower', title: 'The tower', description: '' }];
+    const wrapper = mount(LiveControls, { props: { snapshot: blank, busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('A quiet place.');
+    wrapper.unmount();
+  });
+  it('fills the description from the typed arrival text of a new place, and stops once it is edited', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location-kind')).setValue('new');
+    expect(description(wrapper)).toBe('A quiet place.');
+    await wrapper.get(field('location-description')).setValue('Fog rolls over the pier.');
+    expect(description(wrapper)).toBe('Fog rolls over the pier.');
+    await wrapper.get(field('scene-description')).setValue('Edited.');
+    await wrapper.get(field('location-description')).setValue('Something else.');
+    expect(description(wrapper)).toBe('Edited.');
+    wrapper.unmount();
+  });
+  it('keeps a blank place from wiping the description when switching back from a new place', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location-kind')).setValue('new');
+    await wrapper.get(field('location-description')).setValue('Fog rolls over the pier.');
+    await wrapper.get(field('scene-location-kind')).setValue('existing');
+    expect(description(wrapper)).toBe('Fog rolls over the pier.');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(description(wrapper)).toBe('High above.');
+    wrapper.unmount();
+  });
+  it('ticks everyone here plus the characters who live at the destination', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene');
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(ticked(wrapper)).toEqual(['mara', 'dax']);
+    await wrapper.get(field('scene-location')).setValue('bar');
+    expect(ticked(wrapper)).toEqual(['mara']);
+    await wrapper.get(field('scene-location')).setValue('tower');
+    await wrapper.get(field('scene-location-kind')).setValue('new');
+    expect(ticked(wrapper)).toEqual(['mara']);
+    wrapper.unmount();
+  });
+  it('keeps the ticks once the director changes one, and sends the resident ticks', async () => {
+    const wrapper = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(wrapper, 'scene'); await acknowledge(wrapper);
+    await wrapper.get(field('present-mara')).setValue(false);
+    await wrapper.get(field('scene-location')).setValue('tower');
+    expect(ticked(wrapper)).toEqual([]);
+    await begin(wrapper, 'scene'); await acknowledge(wrapper);
+    await wrapper.get(field('scene-location')).setValue('tower');
+    await wrapper.get('form').trigger('submit');
+    expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', description: 'High above.', location: { kind: 'existing', locationId: 'tower' }, presentNpcIds: ['mara', 'dax'] }));
     wrapper.unmount();
   });
 });

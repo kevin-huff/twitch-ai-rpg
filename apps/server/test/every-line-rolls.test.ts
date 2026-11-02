@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ActionContract, Command, DirectorSnapshot, PlayerSnapshot, SessionSnapshot, SessionState, StageSnapshot } from '@rpg/contracts';
+import { STRAIN_MAX, type ActionContract, type Command, type DirectorSnapshot, type PlayerSnapshot, type SessionSnapshot, type SessionState, type StageSnapshot } from '@rpg/contracts';
 import { buildApp } from '../src/app';
 import { createPool, transaction } from '../src/database';
 import { readState, saveState } from '../src/repository';
@@ -162,7 +162,7 @@ suite('every line rolls, and a double 1 is a critical failure', () => {
     for (const effect of critical.effects) {
       if (effect.kind === 'strain_delta') {
         const index = table.snapshot.characters.findIndex((character) => character.id === effect.characterId);
-        expect(table.snapshot.characters[index]!.strain).toBe(Math.min(4, strainBefore[index]! + effect.delta));
+        expect(table.snapshot.characters[index]!.strain).toBe(Math.min(STRAIN_MAX, strainBefore[index]! + effect.delta));
       }
       if (effect.kind === 'track_delta') {
         const index = table.snapshot.tracks.findIndex((track) => track.id === effect.trackId);
@@ -192,7 +192,7 @@ suite('every line rolls, and a double 1 is a critical failure', () => {
     expect(resolution.outcomes[0]!.publicText).toBe(contracts[0]!.outcomes.setback.publicText);
   });
 
-  it('lets a Say-led check approve and refuses a Do-led check at four strain', async () => {
+  it('lets a Say-led check approve and refuses a Do-led check at full strain', async () => {
     const table = await newTable();
     await table.open('conversation');
     await table.say(0, 'Please, just tell me.');
@@ -200,7 +200,7 @@ suite('every line rolls, and a double 1 is a critical failure', () => {
     const sayContracts = table.snapshot.activeBeat!.contracts;
     expect(sayContracts[0]!.ruling).toBe('check');
     const actorId = sayContracts[0]!.actorCharacterId;
-    await table.mutate((state) => { state.characters.find((character) => character.id === actorId)!.strain = 4; });
+    await table.mutate((state) => { state.characters.find((character) => character.id === actorId)!.strain = STRAIN_MAX; });
     await table.beat('approve_stakes', { classification: 'action', contracts: table.snapshot.activeBeat!.contracts });
     expect(table.snapshot.activeBeat!.stakesApproved).toBe(true);
 
@@ -211,8 +211,8 @@ suite('every line rolls, and a double 1 is a critical failure', () => {
     const doContracts = second.snapshot.activeBeat!.contracts;
     expect(doContracts[0]!.ruling).toBe('check');
     const doer = doContracts[0]!.actorCharacterId;
-    await second.mutate((state) => { state.characters.find((character) => character.id === doer)!.strain = 4; });
+    await second.mutate((state) => { state.characters.find((character) => character.id === doer)!.strain = STRAIN_MAX; });
     const refused = await second.beat('approve_stakes', { classification: 'action', contracts: doContracts }, 400);
-    expect(refused.json().message).toContain('four strain');
+    expect(refused.json().message).toContain('full strain');
   });
 });

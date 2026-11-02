@@ -263,7 +263,6 @@ test('expands individual director fields as reviewed drafts before saving or cha
   await expect(controls.getByTestId('scene-description')).toHaveValue(liveText);
   expect((await api(page, `/sessions/${show.sessionId}`)).session).toEqual(original.session);
   await controls.getByTestId('live-reason').fill('Move into the fog.');
-  await controls.getByTestId('discard-input').check();
   await controls.getByTestId('save-live').click();
   await expect.poll(async () => (await api(page, `/sessions/${show.sessionId}`)).session.scene.description).toBe(liveText);
   const grant = await api(page, `/sessions/${show.sessionId}/test-seat`, { characterId: original.characters[0].id });

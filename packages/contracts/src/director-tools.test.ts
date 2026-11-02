@@ -26,13 +26,19 @@ describe('director corrections and private steering contracts', () => {
       { ...correction, publishedBeatId: '' }, { ...correction, expectedStateRevision: -1 },
       { ...correction, publicText: ' ' }, { ...correction, publicText: 'x'.repeat(3001) },
       { ...correction, reason: ' ' }, { ...correction, reason: 'x'.repeat(1001) },
-      { ...correction, discardQueuedInput: false }, { ...correction, rolls: [] },
-      ...[{ kind: 'reroll', beatId: 'old-beat' }, { kind: 'strain_set', characterId: 'rook', value: 5 },
+      { ...correction, rolls: [] },
+      ...[{ kind: 'reroll', beatId: 'old-beat' }, { kind: 'strain_set', characterId: 'rook', value: 9 },
         { kind: 'track_set', trackId: 'danger', value: -1 }, { kind: 'track_set', trackId: 'danger', value: 1.5 },
         { ...fact, text: ' ' }, { ...fact, visibility: 'director' },
         { ...fact, knowledgeUpdates: [{ ...memory, mode: 'teach_everyone' }] },
       ].map(change => ({ ...correction, changes: [change] })),
     ]) expect(CommandSchema.safeParse(input).success).toBe(false);
+  });
+
+  it('accepts discardQueuedInput false and strain_set up to 8', () => {
+    expect(CommandSchema.safeParse({ ...correction, discardQueuedInput: false }).success).toBe(true);
+    expect(CommandSchema.safeParse({ ...correction, changes: [{ kind: 'strain_set', characterId: 'rook', value: 5 }] }).success).toBe(true);
+    expect(CommandSchema.safeParse({ ...correction, changes: [{ kind: 'strain_set', characterId: 'rook', value: 9 }] }).success).toBe(false);
   });
 
   it('rejects duplicate state and memory targets including across fact replacements', () => {

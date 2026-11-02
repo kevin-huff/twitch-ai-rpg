@@ -54,7 +54,7 @@ suite('live director controls', () => {
       expect((await command(value, `rpg_session=${otherToken}`)).statusCode).toBe(404);
     }
   });
-  it('creates server identities, retains location catalog, moves selected cast, and cancels only pending in-character input', async () => {
+  it('creates server identities, retains location catalog, moves selected cast, and keeps pending in-character input', async () => {
     await submit(); await submit('ooc');
     await pool.query("UPDATE submissions SET status='selected',data=jsonb_set(data,'{status}',to_jsonb('selected'::text)) WHERE session_id=$1 AND data->>'kind'='say'", [sessionId]); await refresh();
     const before = snapshot; const result = await ok(scene());
@@ -65,10 +65,10 @@ suite('live director controls', () => {
     expect(snapshot.locations.some(location => location.id === snapshot.session.scene.locationId)).toBe(true);
     expect(snapshot.npcDetails[0]!.locationId).toBe(snapshot.session.scene.locationId);
     for (const npc of snapshot.npcDetails.slice(1)) { expect(npc.status).toBe('offstage'); expect(npc.locationId).toBe(before.npcDetails.find(item => item.id === npc.id)!.locationId); }
-    expect(snapshot.submissions.find(item => item.kind === 'say')).toMatchObject({ status: 'cancelled', revision: 2 });
+    expect(snapshot.submissions.find(item => item.kind === 'say')).toMatchObject({ status: 'queued', revision: 1 });
     expect(snapshot.submissions.find(item => item.kind === 'ooc')).toMatchObject({ status: 'queued', revision: 1 });
     const event = (await pool.query('SELECT data FROM audit_events WHERE command_id=$1', [result.json().commandId])).rows[0].data;
-    expect(event.cancelledSubmissionIds).toEqual([before.submissions.find(item => item.kind === 'say')!.id]);
+    expect(event.keptSubmissionIds).toEqual([before.submissions.find(item => item.kind === 'say')!.id]); expect(event).not.toHaveProperty('cancelledSubmissionIds');
     expect(event.reason).toBe('Director adjustment'); expect(event.before).toBeTruthy(); expect(event.after).toBeTruthy();
     const publicState = (await request(`/api/sessions/${sessionId}`, stage)).json();
     expect(publicState).not.toHaveProperty('locations'); expect(JSON.stringify(publicState)).not.toContain('Private catalog detail');
@@ -104,7 +104,7 @@ suite('live director controls', () => {
     await submit(); const original = snapshot.npcDetails[0]!;
     await ok(save()); const created = snapshot.npcDetails.at(-1)!;
     expect(created.id).not.toBe(original.id); expect(created.knowledge).toEqual([]); expect(created.relationships).toEqual([]); expect(created.version).toBe(1);
-    expect(snapshot.submissions[0]!.status).toBe('cancelled');
+    expect(snapshot.submissions[0]).toMatchObject({ status: 'queued', revision: 1 });
     await ok(save({ npcId: original.id, expectedNpcVersion: original.version, profile: { ...profile(), displayName: 'Revised', hiddenIdentity: 'Private identity', secrets: ['Private secret'] } }));
     const edited = snapshot.npcDetails.find(npc => npc.id === original.id)!;
     expect(edited).toMatchObject({ id: original.id, knowledge: original.knowledge, relationships: original.relationships, version: original.version + 1, hiddenIdentity: 'Private identity' });
@@ -122,7 +122,7 @@ suite('live director controls', () => {
     expect(stored.sourceEventId).toBe(events[0].id);
     const npc = snapshot.npcDetails[0]!; expect(npc.version).toBe(original.version + 1); expect(npc.secrets).toEqual(original.secrets); expect(npc.displayName).toBe(original.displayName);
     expect(npc.knowledge.at(-1)).toMatchObject({ statement: fact.text, category: 'fact', acquisition: 'witnessed', sourceEventId: events[0].id, sourceEntityId: original.id });
-    expect(snapshot.submissions[0]!.status).toBe('cancelled');
+    expect(snapshot.submissions[0]).toMatchObject({ status: 'queued', revision: 1 });
     expect(JSON.stringify((await request(`/api/sessions/${sessionId}`, stage)).json())).not.toContain(original.secrets[0]!);
   });
   it('rejects offstage and channel-only witnesses and blank private sources', async () => {
@@ -164,9 +164,28 @@ suite('live director controls', () => {
     snapshot = response.json(); expect(snapshot.session.scene).toEqual(legacyScene);
     expect(snapshot.locations.find(location => location.id === legacyScene.locationId)).toMatchObject({ title: 'Current location', description: '' });
   });
+  it.each([true, undefined])('keeps a queued line through every live command when the discard flag is %s', async flag => {
+    const flagged = (value: Record<string, unknown>): Record<string, unknown> => { const result: Record<string, unknown> = live(value); if (flag === undefined) delete result.discardQueuedInput; return result; };
+    await submit(); const lineId = snapshot.submissions[0]!.id;
+    const original = snapshot.npcDetails[0]!;
+    const commands = [
+      () => flagged(scene()),
+      () => flagged(save({ npcId: original.id, expectedNpcVersion: snapshot.npcDetails.find(npc => npc.id === original.id)!.version, profile: { ...profile(), displayName: 'Renamed' } })),
+      () => flagged(reveal({ npcId: original.id, expectedNpcVersion: snapshot.npcDetails.find(npc => npc.id === original.id)!.version, witnessNpcIds: [] })),
+    ];
+    for (const build of commands) {
+      const before = snapshot;
+      const value = build();
+      const result = await ok(value);
+      expect(snapshot.submissions.find(item => item.id === lineId)).toMatchObject({ status: 'queued', revision: 1 });
+      expect(snapshot.session.stateRevision).toBe(before.session.stateRevision + 1); expect(snapshot.session.inputEpoch).toBe(before.session.inputEpoch + 1);
+      const event = (await pool.query('SELECT data FROM audit_events WHERE command_id=$1', [result.json().commandId])).rows[0].data;
+      expect(event.keptSubmissionIds).toEqual([lineId]); expect(event).not.toHaveProperty('cancelledSubmissionIds');
+    }
+  });
   it('rejects malformed commands and leaves queued input untouched', async () => {
     await submit(); const before = snapshot;
-    for (const value of [scene({ discardQueuedInput: false }), scene({ reason: ' ' }), scene({ presentNpcIds: [snapshot.npcs[0]!.id, snapshot.npcs[0]!.id] }), save({ profile: { ...profile(), knowledge: [] } }), reveal({ witnessNpcIds: [snapshot.npcs[0]!.id, snapshot.npcs[0]!.id] })]) {
+    for (const value of [scene({ reason: ' ' }), scene({ presentNpcIds: [snapshot.npcs[0]!.id, snapshot.npcs[0]!.id] }), save({ profile: { ...profile(), knowledge: [] } }), reveal({ witnessNpcIds: [snapshot.npcs[0]!.id, snapshot.npcs[0]!.id] })]) {
       expect((await command(value)).statusCode).toBe(400); await refresh(); expect(snapshot).toEqual(before);
     }
   });

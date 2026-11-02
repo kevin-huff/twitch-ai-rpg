@@ -691,7 +691,7 @@ describe('public performance and player authority', () => {
     const wrapper = mount(App);
     await flushPromises();
     await wrapper.get('[data-testid="speech-input"]').setValue('Wait for my signal.');
-    transport.snapshot.mockResolvedValue({ ...current, session: { ...current.session, inputEpoch: 2 } });
+    transport.snapshot.mockResolvedValue({ ...current, history: [...current.history, { ...current.history[0], id: 'beat-2' }], session: { ...current.session, inputEpoch: 2 } });
     await transport.subscribe.mock.calls[0][1]();
     await flushPromises();
     expect(wrapper.get('button.send').text()).toBe('Send it anyway');
@@ -766,6 +766,26 @@ describe('public performance and player authority', () => {
     wrapper.unmount();
   });
 
+  it('sends a line typed between turns without asking when only a round opened', async () => {
+    window.history.replaceState({}, '', '/sessions/show/play');
+    const current = snapshot('player');
+    transport.snapshot.mockResolvedValue(current);
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get('[data-testid="speech-input"]').setValue('Wait for my signal.');
+    const opened = { id: 'beat-3', kind: 'conversation', phase: 'collecting', revision: 1, locked: false, stakes: [] };
+    transport.snapshot.mockResolvedValue({ ...current, activeBeat: opened, session: { ...current.session, inputEpoch: 1 } });
+    await transport.subscribe.mock.calls[0][1]();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="review-current-input"]').exists()).toBe(false);
+    expect(wrapper.get('button.send').text()).toBe('Send');
+    await wrapper.get('[data-testid="submission-form"]').trigger('submit');
+    await flushPromises();
+    expect(transport.command).toHaveBeenCalledTimes(1);
+    expect(transport.command).toHaveBeenCalledWith('show', expect.objectContaining({ expectedInputEpoch: 1, contextBeatId: 'beat-3', text: 'Wait for my signal.' }));
+    wrapper.unmount();
+  });
+
   it('lets a player explicitly review stale words for the current beat without submitting them', async () => {
     window.history.replaceState({}, '', '/sessions/show/play');
     const current = snapshot('player');
@@ -773,7 +793,7 @@ describe('public performance and player authority', () => {
     const wrapper = mount(App);
     await flushPromises();
     await wrapper.get('[data-testid="speech-input"]').setValue('Mara, one more thing.');
-    transport.snapshot.mockResolvedValue({ ...current, session: { ...current.session, inputEpoch: 3 } });
+    transport.snapshot.mockResolvedValue({ ...current, history: [...current.history, { ...current.history[0], id: 'beat-2' }], session: { ...current.session, inputEpoch: 3 } });
     await transport.subscribe.mock.calls[0][1]();
     await flushPromises();
     await wrapper.get('[data-testid="review-current-input"]').trigger('click');

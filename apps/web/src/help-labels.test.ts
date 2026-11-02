@@ -144,6 +144,7 @@ const labels = [
   "What's at risk",
   'Resume show',
   'Pause show',
+  'Pause anyway',
   'End show',
   'Keep going',
   "End the show? Players will see that it's over, and it can't be restarted.",
@@ -202,6 +203,20 @@ const labels = [
   'Stop that one',
   'Nobody is playing the show audio right now.',
   'What happens next is your call.',
+  'Who is here',
+  'Change who is here',
+  'Save who is here',
+  'Saved who is here.',
+  'Nobody else is here.',
+  'Start over',
+  'Rest saved. Strain went down.',
+  'What the party sees on arrival',
+  'The description becomes public when you save.',
+  'The AI is still working on this round. Pausing now throws that work away.',
+  'Not in this round. It waits for the next turn.',
+  'You can send one more line.',
+  'Saved. Your line waits for the next turn.',
+  'Taken back. Send it again if you still want it.',
 ];
 
 // Help pages quote these as buttons; they ship on the help page itself.

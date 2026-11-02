@@ -110,9 +110,10 @@ export const ScenarioBriefSchema = z.strictObject({
 });
 export type ScenarioBrief = z.infer<typeof ScenarioBriefSchema>;
 
+export const STRAIN_MAX = 8;
 export const CharacterSchema = z.strictObject({
   id: IdSchema, displayName: z.string().min(1).max(80), traits: TraitsSchema,
-  strain: z.number().int().min(0).max(4), appearance: z.string().max(1000).default(''),
+  strain: z.number().int().min(0).max(STRAIN_MAX), appearance: z.string().max(1000).default(''),
   specialty: z.string().max(1000).default(''), flaw: z.string().max(1000).default(''),
   possessions: z.array(z.string().max(160)).max(20).default([]), connection: z.string().max(1000).default(''),
   secret: z.string().max(2000).default(''), approved: z.boolean().default(true),
@@ -186,7 +187,7 @@ export const PublicFactSchema = FactSchema.pick({ id: true, text: true });
 export const CorrectionChangeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('fact_replace'), factId: IdSchema, text: z.string().trim().min(1).max(6000),
     knowledgeUpdates: z.array(z.strictObject({ npcId: IdSchema, knowledgeId: IdSchema, mode: z.enum(['correct', 'retain_belief']) })) }),
-  z.strictObject({ kind: z.literal('strain_set'), characterId: IdSchema, value: z.number().int().min(0).max(4) }),
+  z.strictObject({ kind: z.literal('strain_set'), characterId: IdSchema, value: z.number().int().min(0).max(STRAIN_MAX) }),
   z.strictObject({ kind: z.literal('track_set'), trackId: IdSchema, value: z.number().int().min(0).max(8) }),
 ]);
 export type CorrectionChange = z.infer<typeof CorrectionChangeSchema>;
@@ -467,7 +468,7 @@ export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
 
 const commandBase = { commandId: IdSchema };
 const beatCommand = { ...commandBase, beatId: IdSchema, expectedBeatRevision: RevisionSchema };
-const liveCommand = { ...commandBase, expectedStateRevision: RevisionSchema, reason: z.string().trim().min(1).max(1000), discardQueuedInput: z.literal(true) };
+const liveCommand = { ...commandBase, expectedStateRevision: RevisionSchema, reason: z.string().trim().min(1).max(1000), discardQueuedInput: z.boolean().optional() };
 export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('record_correction'), ...liveCommand, publishedBeatId: IdSchema,
     publicText: z.string().trim().min(1).max(3000), changes: CorrectionChangesSchema }),
@@ -479,6 +480,10 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('reveal_npc'), ...liveCommand, npcId: IdSchema, expectedNpcVersion: z.number().int().positive(),
     source: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('secret'), index: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal('identity') })]),
     publicText: z.string().trim().min(1).max(6000), witnessNpcIds: uniqueNpcIds }),
+  z.strictObject({ type: z.literal('set_cast'), ...commandBase, expectedStateRevision: RevisionSchema, presentNpcIds: uniqueNpcIds }),
+  z.strictObject({ type: z.literal('rest'), ...commandBase, expectedStateRevision: RevisionSchema,
+    rests: z.array(z.strictObject({ characterId: IdSchema, amount: z.number().int().min(1).max(STRAIN_MAX) })).min(1).max(6)
+      .refine(rests => new Set(rests.map(rest => rest.characterId)).size === rests.length, 'Choose each character once.') }),
   z.strictObject({ type: z.literal('save_character'), ...commandBase, expectedCharacterRevision: RevisionSchema, card: CharacterCardDefinitionSchema, characterId: IdSchema.optional() }),
   z.strictObject({ type: z.literal('remove_seat'), ...commandBase, expectedStateRevision: RevisionSchema, characterId: IdSchema }),
   z.strictObject({ type: z.literal('approve_character'), ...commandBase, characterId: IdSchema, expectedCharacterRevision: RevisionSchema }),

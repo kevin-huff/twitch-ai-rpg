@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BeatSchema, CharacterCardDefinitionSchema, SubmissionSchema, FIELD_GENERATION_FIELDS, allowsPremise,
+import { BeatSchema, CharacterCardDefinitionSchema, SubmissionSchema, FIELD_GENERATION_FIELDS, STRAIN_MAX, allowsPremise,
   validateFieldGenerationText, type FieldGenerationField, type FieldGenerationRequest, type AiDraft, type ProviderContext, type Npc } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { CLEWDR_MAX_TOKENS, ClewdrAiProvider, ElevenLabsSpeechProvider, ProviderError, speechCacheKey } from './index.js';
@@ -142,6 +142,39 @@ describe('ClewdR native adapter', () => {
     expect(render.sent.characters.find((c: { id: string }) => c.id === render.actor).possessions).toEqual(['Brass key']);
   });
 
+  it('gives the planner every strain rule and keeps the cost, recovery, overflow and countdown rules out of the narrator', async () => {
+    const phrases = [
+      'The Do line of a character at full strain (strain 8)',
+      'A cost paid in strain is a strain_delta on the character who pays it',
+      'A line meant to ease strain (rest, first aid, medicine, a calming word) rolls like any other line',
+      'Never push a character past strain 8.',
+      'When beat.kind is "conversation", no outcome changes a countdown track.',
+    ];
+    const ctx = context();
+    const planMock = replying(singleLinePlan(ctx));
+    await ai(planMock).plan(ctx);
+    const planBody = JSON.parse(String(planMock.mock.calls[0][1]?.body));
+    for (const phrase of phrases) expect(planBody.system).toContain(phrase);
+    expect(planBody.system).toContain('Costly: low risk costs no strain (use a small complication instead), normal 1, high 2. Setback: low 1, normal 2, high 3.');
+    expect(planBody.system).toContain('clean -2, costly -1 with the price paid another way and never more strain on that character, setback 0, critical 0 with a small complication.');
+    expect(planBody.system).toContain('No outcome takes a character out of the story or kills them.');
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderMock).render(ctx);
+    const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
+    for (const phrase of phrases.slice(1)) expect(renderBody.system).not.toContain(phrase);
+    expect(renderBody.system).not.toContain('Costly: low risk costs no strain');
+    expect(renderBody.system).not.toContain('Never push a character past strain');
+  });
+
+  it('tells the planner the strain maximum in its rules context', async () => {
+    const ctx = context();
+    const planMock = replying(singleLinePlan(ctx));
+    await ai(planMock).plan(ctx);
+    const sent = String(JSON.parse(String(planMock.mock.calls[0][1]?.body)).messages[0].content);
+    expect(sent).toContain('Strain runs from 0 to 8. At 8, full strain');
+    expect(sent).not.toContain('Strain 4');
+  });
+
   it('asks only the planner for contract length limits', async () => {
     const ctx = context();
     const plan = singleLinePlan(ctx);
@@ -168,7 +201,7 @@ describe('ClewdR native adapter', () => {
     expect(planBody.system).not.toContain('Every selected act submission must be cited by a contract, even a safe one');
     expect(planBody.system).toContain('Never use ruling "no_check". The classification is always "action".');
     expect(planBody.system).toContain('Use ruling "blocked" only for a line that cannot happen.');
-    expect(planBody.system).toContain('The Do line of a character at strain 4 is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.');
+    expect(planBody.system).toContain('The Do line of a character at full strain (strain 8) is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.');
     expect(planBody.system).toContain('Small talk or a trivial action gets light, often funny stakes');
     expect(planBody.system).toContain('risk "low"');
     expect(planBody.system).toContain('risk "normal"');
@@ -480,10 +513,10 @@ describe('ClewdR native adapter', () => {
       for (const reason of reasons) expect(second.messages[2].content).toContain(reason);
     });
 
-    it('sends back a Do-led check at 4 strain once and accepts the same character leading from a Say line', async () => {
+    it('sends back a Do-led check at full strain once and accepts the same character leading from a Say line', async () => {
       const ctx = context();
       actLine(ctx);
-      ctx.state.characters[0].strain = 4;
+      ctx.state.characters[0].strain = STRAIN_MAX;
       const refused = singleLinePlan(ctx);
       const blocked = rolledPlan([rolledContract(ctx, 'ask', 0, [], 'submission', {
         ruling: 'blocked', outcomes: { clean: rolledOutcome, costly: rolledOutcome, setback: rolledOutcome },
@@ -492,24 +525,44 @@ describe('ClewdR native adapter', () => {
       expect(await ai(fetchMock).plan(ctx)).toEqual(blocked);
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
-      expect(second.messages[2].content).toContain('at 4 strain');
+      expect(second.messages[2].content).toContain('at full strain (8)');
       expect(second.messages[2].content).toContain('lead a "check" from a Do line');
       expect(second.messages[2].content).toContain(ctx.state.characters[0].displayName);
     });
 
-    it('accepts a check led from a Say line at 4 strain', async () => {
+    it('accepts a Do-led check one below full strain and sends it back once at full strain', async () => {
+      const below = context();
+      actLine(below);
+      below.state.characters[0].strain = STRAIN_MAX - 1;
+      const accepted = singleLinePlan(below);
+      const okMock = replying(accepted);
+      expect(await ai(okMock).plan(below)).toEqual(accepted);
+      expect(okMock).toHaveBeenCalledTimes(1);
+      const full = context();
+      actLine(full);
+      full.state.characters[0].strain = STRAIN_MAX;
+      const refused = singleLinePlan(full);
+      const blocked = rolledPlan([rolledContract(full, 'ask', 0, [], 'submission', {
+        ruling: 'blocked', outcomes: { clean: rolledOutcome, costly: rolledOutcome, setback: rolledOutcome },
+      })]);
+      const fetchMock = replying(refused, blocked);
+      expect(await ai(fetchMock).plan(full)).toEqual(blocked);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('accepts a check led from a Say line at full strain', async () => {
       const ctx = context();
-      ctx.state.characters[0].strain = 4;
+      ctx.state.characters[0].strain = STRAIN_MAX;
       const result = singleLinePlan(ctx);
       const fetchMock = replying(result);
       expect(await ai(fetchMock).plan(ctx)).toEqual(result);
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('lets a Do line at 4 strain help another character\'s check', async () => {
+    it('lets a Do line at full strain help another character\'s check', async () => {
       const ctx = twoLines();
       actLine(ctx);
-      ctx.state.characters[0].strain = 4;
+      ctx.state.characters[0].strain = STRAIN_MAX;
       const result = rolledPlan([{ ...rolledContract(ctx, 'other', 1, [0], 'extra'), submissionIds: ['extra', 'submission'], edge: 1, edgeReason: 'They work together.' }]);
       const fetchMock = replying(result);
       expect(await ai(fetchMock).plan(ctx)).toEqual(result);

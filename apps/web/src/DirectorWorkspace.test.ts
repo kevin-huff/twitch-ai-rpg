@@ -16,7 +16,7 @@ const stubs = {
   DirectorQueue: stub('DirectorQueue', { props: ['modelValue', 'snapshot'] }),
   GalleryPanel: { name: 'GalleryPanel', props: ['status', 'busy'], emits: ['action'], template: '<div data-testid="gallery-stub" />' },
   Story: stub('Story', { props: ['history', 'characters', 'corrections'] }),
-  LiveControls: stub('LiveControls'), CorrectionControls: stub('CorrectionControls'), BeatSteering: stub('BeatSteering'), OperationsPanel: stub('OperationsPanel'),
+  LiveControls: stub('LiveControls', { props: ['snapshot', 'busy'] }), CastPresence: stub('CastPresence', { props: ['snapshot', 'busy'] }), CorrectionControls: stub('CorrectionControls', { props: ['snapshot', 'busy'] }), RestControls: stub('RestControls', { props: ['snapshot', 'busy'] }), BeatSteering: stub('BeatSteering', { props: ['snapshot', 'busy'] }), OperationsPanel: stub('OperationsPanel'),
   ScenePicturePanel: stub('ScenePicturePanel'), NpcPortraitControls: stub('NpcPortraitControls'), PictureAvatar: stub('PictureAvatar'),
 };
 
@@ -357,18 +357,21 @@ describe('hiding the picture while a chain runs', () => {
 
     await testid(wrapper, 'answer-lines').trigger('click');
     await flushPromises();
-    expect(table.busy.value).toBe(true);
+    expect(table.beatBusy.value).toBe(true);
+    expect(table.busy.value).toBe(false);
     const hide = testid(wrapper, 'scene-picture-hide');
     expect(hide.attributes('disabled')).toBeUndefined();
     await hide.trigger('click');
     await flushPromises();
     expect(transport.hideScenePicture).toHaveBeenCalledWith('show');
     expect(testid(wrapper, 'scene-picture-show').exists()).toBe(true);
-    expect(table.busy.value).toBe(true);
+    expect(table.beatBusy.value).toBe(true);
+    expect(table.busy.value).toBe(false);
 
     openGate();
     await flushPromises();
     expect(transport.command.mock.calls.map(call => call[1].type)).toEqual(['open_beat', 'plan_beat']);
+    expect(table.beatBusy.value).toBe(false);
     expect(table.busy.value).toBe(false);
     expect(table.error.value).toBe('');
     expect(testid(wrapper, 'approve-and-roll').exists()).toBe(true);
@@ -492,7 +495,7 @@ describe('On the stage and Show tools', () => {
     expect((fold.element as HTMLDetailsElement).open).toBe(false);
     expect(fold.get('summary').text()).toBe('Show tools');
     const html = fold.html();
-    const order = ['LiveControls-stub', 'CorrectionControls-stub', 'BeatSteering-stub', 'OperationsPanel-stub', 'In the room', 'Scenario notes', 'Known to the party', 'Live state', 'The cast'].map(token => html.indexOf(token));
+    const order = ['LiveControls-stub', 'CastPresence-stub', 'CorrectionControls-stub', 'RestControls-stub', 'BeatSteering-stub', 'OperationsPanel-stub', 'In the room', 'Scenario notes', 'Known to the party', 'Live state', 'The cast'].map(token => html.indexOf(token));
     expect(order.every(position => position >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     wrapper.unmount();
@@ -565,5 +568,141 @@ describe('full countdown notice', () => {
   it('shows two notices for two full countdowns', async () => {
     const wrapper = await mountWorkspace(snapshot('live', [], { tracks: [track(), track({ id: 't2', label: 'Dawn' })] }));
     expect(notices(wrapper)).toHaveLength(2);
+  });
+});
+
+describe('pausing while the AI works', () => {
+  const statusCalls = () => transport.command.mock.calls.filter(call => call[1].type === 'set_status');
+
+  it('pauses at once when no beat work is running', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    await testid(wrapper, 'top-pause').trigger('click');
+    await flushPromises();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    expect(statusCalls()).toHaveLength(1);
+    expect(statusCalls()[0][1]).toMatchObject({ status: 'paused' });
+    wrapper.unmount();
+  });
+
+  it('asks first during beat work, and Pause anyway then pauses', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    table.beatBusy.value = true;
+    await flushPromises();
+    await testid(wrapper, 'top-pause').trigger('click');
+    await flushPromises();
+    expect(statusCalls()).toHaveLength(0);
+    expect(testid(wrapper, 'pause-confirm-row').text()).toContain('The AI is still working on this round. Pausing now throws that work away.');
+    expect(testid(wrapper, 'pause-anyway').text()).toBe('Pause anyway');
+    expect(testid(wrapper, 'pause-keep-going').text()).toBe('Keep going');
+    await testid(wrapper, 'pause-anyway').trigger('click');
+    await flushPromises();
+    expect(statusCalls()).toHaveLength(1);
+    expect(statusCalls()[0][1]).toMatchObject({ status: 'paused', expectedStateRevision: 4 });
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('Keep going closes the row and sends nothing', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    table.beatBusy.value = true;
+    await testid(wrapper, 'top-pause').trigger('click');
+    await testid(wrapper, 'pause-keep-going').trigger('click');
+    await flushPromises();
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(false);
+    expect(transport.command).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('asks from Pause now on a pause request too', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [{ ...submission('p', 'ooc'), text: PAUSE_TEXT }]));
+    table.beatBusy.value = true;
+    await buttonNamed(wrapper, 'Pause now')!.trigger('click');
+    await flushPromises();
+    expect(statusCalls()).toHaveLength(0);
+    expect(testid(wrapper, 'pause-confirm-row').exists()).toBe(true);
+    await testid(wrapper, 'pause-anyway').trigger('click');
+    await flushPromises();
+    expect(statusCalls()).toHaveLength(1);
+    wrapper.unmount();
+  });
+});
+
+describe('tools that keep or untick waiting lines', () => {
+  const selectedIds = (wrapper: VueWrapper) => wrapper.getComponent({ name: 'BeatPanel' }).props('selected') as string[];
+  const pushSnapshot = async (state: ReturnType<typeof snapshot>) => { transport.snapshot.mockResolvedValue(state); await table.refresh(); await flushPromises(); };
+  const saved = vi.fn();
+  const live = (type: string) => ({ type, commandId: crypto.randomUUID(), expectedStateRevision: 4 });
+  // The command returns a snapshot with the earlier lines still waiting and one new line.
+  const answerWith = (state: ReturnType<typeof snapshot>) => { transport.snapshot.mockResolvedValue(state); transport.command.mockImplementation(async () => ({ snapshot: state })); };
+
+  it.each([['record_correction', 'CorrectionControls'], ['change_scene', 'LiveControls']])('unticks lines waiting before %s and ticks one that arrives with it', async (type, panel) => {
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a'), submission('b')]));
+    expect(selectedIds(wrapper)).toEqual(['a', 'b']);
+    answerWith(snapshot('live', [submission('a'), submission('b'), submission('c')]));
+    wrapper.getComponent({ name: panel }).vm.$emit('command', live(type), saved);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual(['c']);
+    expect(saved).toHaveBeenCalled();
+    await pushSnapshot(snapshot('live', [submission('a'), submission('b'), submission('c'), submission('d')]));
+    expect(selectedIds(wrapper)).toEqual(['c', 'd']);
+    wrapper.unmount();
+  });
+
+  it.each(['save_npc', 'reveal_npc'])('unticks waiting lines after %s', async type => {
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a')]));
+    answerWith(snapshot('live', [submission('a')]));
+    wrapper.getComponent({ name: 'LiveControls' }).vm.$emit('command', live(type), saved);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual([]);
+    wrapper.unmount();
+  });
+
+  it('does not untick anything when the command is refused', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a')]));
+    transport.command.mockRejectedValue(new Error('The show changed. Look again, then save.'));
+    wrapper.getComponent({ name: 'CorrectionControls' }).vm.$emit('command', live('record_correction'), saved);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual(['a']);
+    expect(table.error.value).toBe('The show changed. Look again, then save.');
+    wrapper.unmount();
+  });
+
+  it.each([['set_cast', 'CastPresence'], ['rest', 'RestControls']])('keeps ticks after %s', async (type, panel) => {
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a'), submission('b')]));
+    wrapper.getComponent({ name: 'DirectorQueue' }).vm.$emit('update:modelValue', ['b']);
+    await flushPromises();
+    answerWith(snapshot('live', [submission('a'), submission('b'), submission('c')]));
+    wrapper.getComponent({ name: panel }).vm.$emit('command', live(type), saved);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual(['b', 'c']);
+    wrapper.unmount();
+  });
+
+  it('brings back lines from an abandoned round unticked', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a', 'say', 'selected')]));
+    expect(selectedIds(wrapper)).toEqual(['a']);
+    await pushSnapshot(snapshot('live', [submission('a', 'say', 'locked')]));
+    expect(selectedIds(wrapper)).toEqual([]);
+    await pushSnapshot(snapshot('live', [submission('a', 'say', 'queued'), submission('n')]));
+    expect(selectedIds(wrapper)).toEqual(['n']);
+    wrapper.unmount();
+  });
+});
+
+describe('who is here, rest and the cast panel', () => {
+  it('waits for the AI: only the beat panel work disables the new panels and steering', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
+    table.beatBusy.value = true;
+    await flushPromises();
+    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(true);
+    for (const name of ['LiveControls', 'CorrectionControls']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows strain out of the shared maximum', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { characters: [{ id: 'pc-1', displayName: 'Skooty', strain: 3 }] }));
+    expect(wrapper.text()).toContain('Strain 3/8');
+    wrapper.unmount();
   });
 });

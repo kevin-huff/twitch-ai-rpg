@@ -112,7 +112,6 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   const timer = snapshot.tracks.find((track: { kind: string }) => track.kind === 'countdown');
   await correction.getByTestId('correction-target-2').selectOption(timer.id);
   await correction.getByTestId('correction-value-2').fill(String(timer.max));
-  await correction.getByTestId('correction-discard-input').check();
   await expect(correction.getByTestId('correction-public-preview')).not.toContainText('PRIVATE');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await correction.screenshot({ path: 'test-results/director-correction-form.png' });
@@ -125,7 +124,7 @@ test('steers a locked scene without rerolling and publishes a correction to an o
   expect(snapshot.tracks.find((track: { id: string }) => track.id === timer.id).current).toBe(timer.max);
   expect(snapshot.facts.find((item: { id: string }) => item.id === fact.id).text).toBe('Mara carries the blue archive key.');
   expect(snapshot.npcDetails.find((npc: { id: string }) => npc.id === mara.id).knowledge).toContainEqual(expect.objectContaining({ statement: 'Mara carries the red archive key.', category: 'belief' }));
-  expect(snapshot.submissions.find((input: { text: string }) => input.text === 'Pending words for the old facts.').status).toBe('cancelled');
+  expect(snapshot.submissions.find((input: { text: string }) => input.text === 'Pending words for the old facts.').status).toBe('queued');
   for (const audience of [player, stage]) {
     await audience.reload();
     if (audience === stage) {

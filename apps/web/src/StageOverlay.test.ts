@@ -16,7 +16,7 @@ function snapshot(overrides: Record<string, unknown> = {}, status: 'lobby' | 'li
       inputEpoch: 0, scene: { id: 'sc', title: 'The Salt Bar', description: 'A quiet bar by the dock.', locationId: 'bar' }
     },
     characters: [
-      { id: 'c1', displayName: 'Mara Vale', traits: { force: 0, finesse: 1, wits: 2, presence: 1 }, strain: 4, appearance: '', approved: true, ready: true },
+      { id: 'c1', displayName: 'Mara Vale', traits: { force: 0, finesse: 1, wits: 2, presence: 1 }, strain: 8, appearance: '', approved: true, ready: true },
       { id: 'c2', displayName: 'Tom Reed', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 1, appearance: '', approved: true, ready: true }
     ],
     npcs: [],
@@ -299,7 +299,7 @@ describe('StageOverlay', () => {
     expect(mount(StageOverlay, { props: { snapshot: noStakes, connected: true } }).find('.wager').exists()).toBe(false);
   });
 
-  it('shows the badge, cast chips with Needs help at strain 4, and at most two enabled tracks', () => {
+  it('shows the badge, cast chips with Needs help at strain 8, and at most two enabled tracks', () => {
     const wrapper = mount(StageOverlay, { props: { snapshot: snapshot(), connected: true } });
     expect(wrapper.text()).toContain('AI-generated narration and character voices');
     expect(wrapper.text()).toContain('Live');

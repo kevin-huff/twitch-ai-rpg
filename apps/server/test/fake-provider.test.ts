@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiDraftSchema, CardDraftSchema, PictureDescriptionRequestSchema, ScenarioDraftSchema, type CardGenerationInput, type Beat, type PictureDescriptionRequest, type ProviderContext, type Submission } from '@rpg/contracts';
+import { AiDraftSchema, CardDraftSchema, PictureDescriptionRequestSchema, ScenarioDraftSchema, type CardGenerationInput, type Beat, type PictureDescriptionRequest, type ProviderContext, type Submission, STRAIN_MAX } from '@rpg/contracts';
 import { validateContracts } from '@rpg/rules';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { FAKE_PICTURE_DESCRIPTION, FakeAiProvider } from '../src/fake-provider';
@@ -53,14 +53,84 @@ describe('fake narrator speaker identity', () => {
     }
     expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
   });
-  it('blocks a Do line from a character at four strain with no critical outcome', async () => {
+  it('blocks a Do line from a character at full strain with no critical outcome', async () => {
     const input = context();
-    input.state.characters[0]!.strain = 4;
+    input.state.characters[0]!.strain = STRAIN_MAX;
     input.submissions[0]!.kind = 'act';
     const result = await provider.plan(input);
     expect(result.contracts[0]!.ruling).toBe('blocked');
     expect(Object.keys(result.contracts[0]!.outcomes).sort()).toEqual(['clean', 'costly', 'setback']);
     expect(() => validateContracts(result.contracts, input.state, input.submissions)).not.toThrow();
+  });
+  it('lets a Do line roll below full strain', async () => {
+    const input = context();
+    input.state.characters[0]!.strain = STRAIN_MAX - 1;
+    input.submissions[0]!.kind = 'act';
+    input.state.tracks = [];
+    const result = await provider.plan(input);
+    expect(result.contracts[0]!.ruling).toBe('check');
+    expect(result.contracts[0]!.outcomes.costly.effects).toEqual([{ kind: 'strain_delta', characterId: input.submissions[0]!.characterId, delta: 1 }]);
+    expect(result.contracts[0]!.outcomes.setback.effects).toEqual([{ kind: 'strain_delta', characterId: input.submissions[0]!.characterId, delta: 1 }]);
+    expect(result.contracts[0]!.outcomes.setback.publicText).toContain(' It costs them something else instead.');
+  });
+  it('keeps the normal-risk costs at 1, 2 and 3 with their texts', async () => {
+    const input = context();
+    input.state.tracks = [];
+    const characterId = input.submissions[0]!.characterId;
+    const { outcomes, risk } = (await provider.plan(input)).contracts[0]!;
+    expect(risk).toBe('normal');
+    expect(outcomes.costly).toEqual({ publicText: 'The agreed objective succeeds at the cost of 1 strain.', effects: [{ kind: 'strain_delta', characterId, delta: 1 }] });
+    expect(outcomes.setback).toEqual({ publicText: 'The objective remains out of reach; the effort causes 2 strain.', effects: [{ kind: 'strain_delta', characterId, delta: 2 }] });
+    expect(outcomes.critical).toEqual({ publicText: 'It goes as badly as it could; the effort causes 3 strain.', effects: [{ kind: 'strain_delta', characterId, delta: 3 }] });
+  });
+  it('sends costs to a public danger track when one exists', async () => {
+    const input = context();
+    const danger = input.state.tracks.find((track) => track.kind === 'danger' && track.visibility === 'public' && track.enabled)!;
+    expect(danger).toBeDefined();
+    input.state.characters[0]!.strain = STRAIN_MAX;
+    const { outcomes } = (await provider.plan(input)).contracts[0]!;
+    expect(outcomes.setback.effects).toEqual([{ kind: 'track_delta', trackId: danger.id, delta: 2 }]);
+    expect(outcomes.setback.publicText).not.toContain('something else');
+  });
+  it('cuts a strain cost to the room left and says the rest costs something else', async () => {
+    const input = context();
+    input.state.tracks = [];
+    const characterId = input.submissions[0]!.characterId;
+    input.state.characters[0]!.strain = STRAIN_MAX - 2;
+    const { outcomes } = (await provider.plan(input)).contracts[0]!;
+    expect(outcomes.costly.effects).toEqual([{ kind: 'strain_delta', characterId, delta: 1 }]);
+    expect(outcomes.costly.publicText).not.toContain('something else');
+    expect(outcomes.setback.effects).toEqual([{ kind: 'strain_delta', characterId, delta: 2 }]);
+    expect(outcomes.critical!.effects).toEqual([{ kind: 'strain_delta', characterId, delta: 2 }]);
+    expect(outcomes.critical!.publicText.endsWith(' It costs them something else instead.')).toBe(true);
+    input.state.characters[0]!.strain = STRAIN_MAX;
+    const full = (await provider.plan(input)).contracts[0]!.outcomes;
+    for (const band of ['costly', 'setback', 'critical'] as const) {
+      expect(full[band]!.effects).toEqual([]);
+      expect(full[band]!.publicText.endsWith(' It costs them something else instead.')).toBe(true);
+    }
+    expect(full.critical!.publicText.length).toBeLessThanOrEqual(110);
+    const planned = await provider.plan(input);
+    expect(() => validateContracts(planned.contracts, input.state, input.submissions)).not.toThrow();
+  });
+  it.each([
+    ['text', { text: 'Let me catch my breath for a moment.' }],
+    ['intent', { kind: 'act', intent: 'Bandage the wound', approach: 'Slowly' }],
+    ['approach', { kind: 'act', intent: 'Help Ines', approach: 'Give first aid' }],
+  ] as const)('gives a recovery line (%s) relief on its own character, with or without a danger track', async (_where, patch) => {
+    for (const withDanger of [true, false]) {
+      const input = context();
+      if (!withDanger) input.state.tracks = [];
+      Object.assign(input.submissions[0]!, patch);
+      const characterId = input.submissions[0]!.characterId;
+      const { outcomes } = (await provider.plan(input)).contracts[0]!;
+      expect(outcomes.clean).toEqual({ publicText: 'It helps. Some of the strain eases.', effects: [{ kind: 'strain_delta', characterId, delta: -2 }] });
+      expect(outcomes.costly).toEqual({ publicText: 'It helps a little, and it takes time.', effects: [{ kind: 'strain_delta', characterId, delta: -1 }] });
+      expect(outcomes.setback).toEqual({ publicText: 'It does not help this time.', effects: [] });
+      expect(outcomes.critical).toEqual({ publicText: 'It goes wrong, and something new needs fixing.', effects: [] });
+      const planned = await provider.plan(input);
+    expect(() => validateContracts(planned.contracts, input.state, input.submissions)).not.toThrow();
+    }
   });
   it('keeps the critical outcome on check contracts', async () => {
     const result = await provider.plan(context());

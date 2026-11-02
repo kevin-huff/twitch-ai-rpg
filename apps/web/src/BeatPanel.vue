@@ -20,7 +20,7 @@ const selected = computed(() => props.selected);
 const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
 
-const { sessionId, stage, snapshot, busy, director, work, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
+const { sessionId, stage, snapshot, busy, beatBusy, director, work, beatWork, send, onSnapshot, nameOf, phaseName, effectLabel } = useTable();
 
 const MAX_PLANNED_LINES = 12;
 const beat = computed(() => director.value?.activeBeat ?? null);
@@ -79,7 +79,7 @@ const statusText = computed(() => {
     return task.task === 'plan' ? `Planning… ${seconds} s` : `Writing the script… ${seconds} s`;
   }
   if (waiting.value) return 'Waiting for the voice, then publishing…';
-  if (busy.value || !hasDraft.value || scriptDirty.value || rendering.value || !['review', 'publish'].includes(step.value.step)) return '';
+  if (panelBusy.value || !hasDraft.value || scriptDirty.value || rendering.value || !['review', 'publish'].includes(step.value.step)) return '';
   if (voicePending.value) return 'Preparing voice…';
   return voice.value.status === 'ready' ? 'Voice ready' : '';
 });
@@ -102,17 +102,18 @@ const tickedLineCount = computed(() => {
   const kinds = new Map((director.value?.submissions ?? []).map(item => [item.id, item.kind]));
   return selected.value.filter(id => kinds.get(id) !== 'ooc').length;
 });
+const panelBusy = computed(() => busy.value || beatBusy.value);
 const tooManyLines = computed(() => needsLines.value && tickedLineCount.value > MAX_ROLLS_PER_ROUND);
 const tooManyWarning = computed(() => `${tickedLineCount.value} lines need ${tickedLineCount.value} rolls, and a round shows at most ${MAX_ROLLS_PER_ROUND}. Untick some lines, then plan the rest next round.`);
 const goldDisabled = computed(() => {
-  if (busy.value) return true;
+  if (panelBusy.value) return true;
   if (gold.value === 'resume') return false;
   if (needsLines.value && !tickedIds.value.length) return true;
   if (tooManyLines.value) return true;
   if (gold.value === 'publish') return scriptDirty.value || rendering.value || Boolean(working.value) || Boolean(waiting.value) || voice.value.status === 'failed';
   return Boolean(working.value);
 });
-const locked = computed(() => busy.value || paused.value);
+const locked = computed(() => panelBusy.value || paused.value);
 
 const root = ref<HTMLElement | null>(null);
 const actionsBar = ref<HTMLElement | null>(null);
@@ -161,7 +162,7 @@ function beatMeta() {
 
 function runBar(task: () => Promise<void>) {
   barError.value = '';
-  return work(async () => {
+  return beatWork(async () => {
     try { await task(); }
     catch (cause) { barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.'; }
     finally { running.value = null; }
@@ -321,12 +322,12 @@ function publishTextOnly() {
   if (voice.value.status === 'unavailable') return;
   return runPublish();
 }
-watch([waiting, voice, busy, scriptDirty, rendering, paused, () => beat.value?.id, () => beat.value?.draftRevision, () => beat.value?.phase], () => {
+watch([waiting, voice, panelBusy, scriptDirty, rendering, paused, () => beat.value?.id, () => beat.value?.draftRevision, () => beat.value?.phase], () => {
   const wait = waiting.value;
   if (!wait) return;
   const current = beat.value;
   if (!current || current.id !== wait.beatId || current.draftRevision !== wait.draftRevision || !hasDraft.value || scriptDirty.value || rendering.value || paused.value || voice.value.status === 'failed') { waiting.value = null; return; }
-  if (busy.value) return;
+  if (panelBusy.value) return;
   if (voice.value.status === 'ready') void runPublish(voice.value.preparationId);
   else if (voice.value.status === 'unavailable') void runPublish();
 });
@@ -353,11 +354,11 @@ function runGold() {
       <BeatStepper :n="position.n" :m="position.m" />
       <template v-if="idle || !beat"><p class="muted">Keep the exchange short, or bring the cast together for a consequential action.</p></template>
       <template v-else>
-        <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="busy" v-model:classification="reviewClassification" />
+        <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="panelBusy" v-model:classification="reviewClassification" />
         <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ bandLabel(roll.band) }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
           <section v-if="playerLines.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in playerLines" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
-          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="busy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
-          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="busy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
+          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="panelBusy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
+          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="panelBusy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
       </template>
       <DirectorGuidance :snapshot="director" @command="saveGuidance" />

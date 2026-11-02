@@ -34,7 +34,15 @@ const receiptFor = ref<string | null>(null);
 const recipientTouched = ref(false);
 const editing = ref<Submission | null>(null);
 const formPanel = ref<HTMLElement | null>(null);
-type InputContext = { epoch: number; beatId: string | null };
+type InputContext = { epoch: number; beatId: string | null; publishedBeatId?: string | null; sceneId?: string; corrections?: number; facts?: number };
+// Each box's stamp also records the story markers, so a round opening alone can be told from a publish, correction or scene change.
+const stampNow = (): InputContext => ({
+  ...context(),
+  publishedBeatId: snapshot.value?.history.at(-1)?.id ?? null,
+  sceneId: snapshot.value?.session.scene.id ?? '',
+  corrections: snapshot.value?.corrections?.length ?? 0,
+  facts: snapshot.value?.facts.length ?? 0,
+});
 const contexts = ref<Record<LineKind, InputContext | null>>({ say: null, act: null, ooc: null });
 const textOf = (lineKind: LineKind) => ({ say: sayText, act: actionText, ooc: noteText })[lineKind].value;
 const visibleBlank = () => !textOf(kind.value).trim();
@@ -95,7 +103,7 @@ watch(ownCharacterId, id => {
   actionText.value = twoBoxAction ? `${saved.intent}\n${saved.approach}` : saved.intent || saved.approach;
   recipient.value = saved.recipient; recipientTouched.value = true;
   if (!textOf(kind.value).trim()) kind.value = (['say', 'act', 'ooc'] as const).find(lineKind => textOf(lineKind).trim()) ?? kind.value;
-  for (const lineKind of ['say', 'act', 'ooc'] as const) if (textOf(lineKind).trim()) contexts.value[lineKind] = saved.context ?? context();
+  for (const lineKind of ['say', 'act', 'ooc'] as const) if (textOf(lineKind).trim()) contexts.value[lineKind] = saved.context ?? stampNow();
   draftRestored.value = true;
 }, { immediate: true });
 watch([kind, sayText, actionText, noteText, stageDirection, recipient, draftContext], () => {
@@ -111,7 +119,7 @@ watch([() => player.value?.activeBeat?.id, () => player.value?.activeBeat?.kind]
 function beginInput() {
   const lineKind = kind.value;
   if (visibleBlank()) contexts.value[lineKind] = null;
-  else if (!contexts.value[lineKind]) contexts.value[lineKind] = context();
+  else if (!contexts.value[lineKind]) contexts.value[lineKind] = stampNow();
 }
 
 const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch }));
@@ -123,8 +131,19 @@ const talkingTo = computed(() => {
   return npc ? `Talking to ${npc.displayName}` : 'Talking to your group';
 });
 // The box's stamp is stale once the input window or the open turn has changed since its first keystroke, or the server just refused it.
-const stale = computed(() => Boolean(activeContext.value) && (activeContext.value!.epoch !== snapshot.value?.session.inputEpoch || activeContext.value!.beatId !== context().beatId || Boolean(refusal.value)));
-const turnLocked = computed(() => Boolean(activeContext.value?.beatId) && !context().beatId);
+const movedSince = (ctx: InputContext | null) => Boolean(ctx) && (ctx!.epoch !== snapshot.value?.session.inputEpoch || ctx!.beatId !== context().beatId);
+const storyChangedSince = (ctx: InputContext | null) => {
+  if (!ctx) return false;
+  const now = stampNow();
+  return ctx.publishedBeatId !== now.publishedBeatId || ctx.sceneId !== now.sceneId || ctx.corrections !== now.corrections || ctx.facts !== now.facts;
+};
+const turnLockedSince = (ctx: InputContext | null) => Boolean(ctx?.beatId) && !context().beatId;
+// A round opening alone is a quiet change: nothing the player read has moved, so Send takes a fresh stamp without asking.
+const quietSince = (ctx: InputContext | null) => movedSince(ctx) && !storyChangedSince(ctx) && !turnLockedSince(ctx);
+const moved = computed(() => movedSince(activeContext.value));
+const quietChange = computed(() => quietSince(activeContext.value));
+const turnLocked = computed(() => turnLockedSince(activeContext.value));
+const stale = computed(() => Boolean(activeContext.value) && ((moved.value && !quietChange.value) || Boolean(refusal.value)));
 const submitLabel = computed(() => busy.value ? 'Sending…' : stale.value ? (editing.value ? 'Save changes anyway' : 'Send it anyway') : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
 
 function defaultRecipient(next: SessionSnapshot) {
@@ -153,19 +172,26 @@ function saveSubmission() { return work(async () => {
   receipt.value = ''; receiptFor.value = null;
   const lineKind = kind.value;
   // Pressing Send it anyway is the player's say-so that the words still fit, so a stale box takes a fresh stamp, as Yes, they still fit does.
-  const captured = stale.value ? context() : contexts.value[lineKind] ?? context();
+  // A quiet change (only a round opened) takes one silently.
+  let captured = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
   const editedId = editing.value?.id ?? null;
   const before = ownIds();
-  try {
-    await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
-  } catch (cause) {
-    if ((cause as { status?: number }).status !== 409) throw cause;
-    refusals.value[lineKind] = cause instanceof Error && cause.message ? cause.message : 'The story moved on. Press Send it anyway to send your words now.';
-    await table.refresh();
-    return;
+  const pastCollecting = Boolean(player.value?.activeBeat) && player.value?.activeBeat?.phase !== 'collecting';
+  let retried = false;
+  for (;;) {
+    try {
+      await send({ type: 'save_submission', commandId: crypto.randomUUID(), ...(editing.value ? { submissionId: editing.value.id } : {}), expectedSubmissionRevision: editing.value?.revision ?? 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, ...linePayload(lineKind), alreadySpokenAloud: true });
+      break;
+    } catch (cause) {
+      if ((cause as { status?: number }).status !== 409) throw cause;
+      await table.refresh();
+      if (!retried && quietSince(contexts.value[lineKind])) { retried = true; captured = stampNow(); continue; }
+      refusals.value[lineKind] = cause instanceof Error && cause.message ? cause.message : 'The story moved on. Press Send it anyway to send your words now.';
+      return;
+    }
   }
   finishLine(lineKind);
-  receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : 'Saved. The director has your line.';
+  receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : pastCollecting ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
   receiptFor.value = editedId ?? newOwnId(before);
 }); }
 
@@ -218,7 +244,7 @@ function returnWords(item: Submission) {
   setText(lineKind, held.trim() ? `${held}\n${words}` : words);
   receipt.value = ''; receiptFor.value = null;
   kind.value = lineKind;
-  contexts.value[lineKind] = context();
+  contexts.value[lineKind] = stampNow();
 }
 function editSubmission(item: Submission) {
   if (editing.value && editing.value.kind !== item.kind) finishLine(editing.value.kind);
@@ -229,7 +255,7 @@ function editSubmission(item: Submission) {
   else noteText.value = item.text;
   editing.value = item;
   receipt.value = ''; receiptFor.value = null;
-  contexts.value[item.kind] = context();
+  contexts.value[item.kind] = stampNow();
 }
 function withdraw(item: Submission) { return work(async () => {
   await send({ type: 'cancel_submission', commandId: crypto.randomUUID(), submissionId: item.id, expectedSubmissionRevision: item.revision });
@@ -290,10 +316,10 @@ async function askPrivately() {
           <small v-if="activeContext">Not sent yet</small>
           <small v-if="draftRestored" class="draft-restored">Your unsent words are back.</small>
           <small v-if="editing">You are changing a line you already sent.</small>
-          <div v-if="activeContext && (activeContext.epoch !== snapshot.session.inputEpoch || activeContext.beatId !== context().beatId)" class="notice"><template v-if="turnLocked">This turn is locked. Your line will wait for the director to pick it.</template><template v-else>The story moved on while you were typing. Read your words again. Do they still fit?</template><button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = context(); refusals[kind] = ''">Yes, they still fit</button></div>
+          <div v-if="activeContext && moved && !quietChange" class="notice"><template v-if="turnLocked">This turn is locked. Your line will wait for the director to pick it.</template><template v-else>The story moved on while you were typing. Read your words again. Do they still fit?</template><button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = stampNow(); refusals[kind] = ''">Yes, they still fit</button></div>
         </form>
       </section>
-      <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" @edit="startEdit" @withdraw="withdraw" />
+      <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" :beat="player.activeBeat" @edit="startEdit" @withdraw="withdraw" />
       <div class="extras"><button type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
     </div>
   </template>

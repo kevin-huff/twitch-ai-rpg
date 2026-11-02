@@ -5,8 +5,16 @@ import {
   type AiProvider, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
   type FieldGenerationRequest, type FieldGenerationResponse, type FieldGenerationCharacterContext,
   PictureDescriptionRequestSchema, type PictureDescriptionRequest,
-  LineAssistInputSchema, type LineAssistInput, type LineAssistResponse, type VoiceChoice, hasAudioTags, stripAudioTags,
+  LineAssistInputSchema, type LineAssistInput, type LineAssistResponse, type VoiceChoice, hasAudioTags, stripAudioTags, STRAIN_MAX,
 } from '@rpg/contracts';
+
+const RECOVERY_LINE = /\b(catch (?:my|our|your|his|her|their) breath|take a (?:rest|breather)|first aid|bandages?|patch (?:me|us|you|him|her|them) up|medicine|heal)\b/i;
+const RECOVERY_TEXTS = {
+  clean: 'It helps. Some of the strain eases.', costly: 'It helps a little, and it takes time.',
+  setback: 'It does not help this time.', critical: 'It goes wrong, and something new needs fixing.',
+};
+const OVERFLOW_SUFFIX = ' It costs them something else instead.';
+const STRAIN_COSTS = { costly: { low: 0, normal: 1, high: 2 }, setback: { low: 1, normal: 2, high: 3 } } as const;
 
 export const FAKE_PICTURE_DESCRIPTION = 'Everyone in the beat gathers at the center of the scene under warm lamplight, caught in the middle of the moment.';
 
@@ -141,21 +149,40 @@ export class FakeAiProvider implements AiProvider {
     const progress = state.tracks.find((track) => track.kind === 'progress' && track.visibility === 'public' && track.enabled);
     const danger = state.tracks.find((track) => track.kind === 'danger' && track.visibility === 'public' && track.enabled);
     const progressEffects: Effect[] = progress ? [{ kind: 'track_delta', trackId: progress.id, delta: 2 }] : [];
-    const cost = (characterId: string, delta: number): Effect => danger ? { kind: 'track_delta', trackId: danger.id, delta } : { kind: 'strain_delta', characterId, delta };
+    const risk = 'normal' as const;
+    const costs = { costly: STRAIN_COSTS.costly[risk], setback: STRAIN_COSTS.setback[risk], critical: STRAIN_COSTS.setback[risk] + 1 };
+    const strainOf = (characterId: string) => state.characters.find((character) => character.id === characterId)?.strain ?? 0;
+    const cost = (characterId: string, amount: number, text: (applied: number) => string, dangerText: string): { publicText: string; effects: Effect[] } => {
+      if (danger) return { publicText: dangerText, effects: amount > 0 ? [{ kind: 'track_delta', trackId: danger.id, delta: amount }] : [] };
+      const applied = Math.max(0, Math.min(amount, STRAIN_MAX - strainOf(characterId)));
+      const effects: Effect[] = applied > 0 ? [{ kind: 'strain_delta', characterId, delta: applied }] : [];
+      return { publicText: applied < amount ? `${text(applied)}${OVERFLOW_SUFFIX}` : text(applied), effects };
+    };
+    const strainText = (done: string, applied: number) => applied > 0 ? `${done} at the cost of ${applied} strain.` : `${done}.`;
     const contracts: ActionContract[] = submissions.filter((submission) => submission.kind !== 'ooc').map((submission) => {
       const words = hasAudioTags(submission.text) ? stripAudioTags(submission.text) : submission.text;
       const intent = submission.intent ? (hasAudioTags(submission.intent) ? stripAudioTags(submission.intent) : submission.intent) : '';
       const approach = submission.approach ? (hasAudioTags(submission.approach) ? stripAudioTags(submission.approach) : submission.approach) : '';
-      const ruling = submission.kind === 'act' && (state.characters.find((character) => character.id === submission.characterId)?.strain ?? 0) >= 4 ? 'blocked' as const : 'check' as const;
+      const ruling = submission.kind === 'act' && strainOf(submission.characterId) >= STRAIN_MAX ? 'blocked' as const : 'check' as const;
+      const recovery = [words, intent, approach].some((text) => RECOVERY_LINE.test(text));
+      const relief = (delta: number): Effect[] => delta ? [{ kind: 'strain_delta', characterId: submission.characterId, delta }] : [];
+      const costly = cost(submission.characterId, costs.costly, (n) => strainText('The agreed objective succeeds', n), 'The agreed objective succeeds, drawing attention.');
+      const setback = cost(submission.characterId, costs.setback, (n) => n > 0 ? `The objective remains out of reach; the effort causes ${n} strain.` : 'The objective remains out of reach.', 'The objective remains out of reach and danger increases.');
+      const critical = cost(submission.characterId, costs.critical, (n) => n > 0 ? `It goes as badly as it could; the effort causes ${n} strain.` : 'It goes as badly as it could.', 'It goes as badly as it could, and the danger jumps.');
       return {
       id: randomUUID(), version: 1, actorCharacterId: submission.characterId, helperCharacterIds: [], submissionIds: [submission.id],
       intent: intent || words, approach: approach || 'Ask the addressed NPC for a consequential concession',
-      ruling, trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk: 'normal', prerequisites: [], fallback: { kind: 'hold' },
-      outcomes: {
+      ruling, trait: submission.kind === 'say' ? 'presence' : 'wits', edge: 0, edgeReason: null, risk, prerequisites: [], fallback: { kind: 'hold' },
+      outcomes: recovery ? {
+        clean: { publicText: RECOVERY_TEXTS.clean, effects: relief(-2) },
+        costly: { publicText: RECOVERY_TEXTS.costly, effects: relief(-1) },
+        setback: { publicText: RECOVERY_TEXTS.setback, effects: [] },
+        ...(ruling === 'check' ? { critical: { publicText: RECOVERY_TEXTS.critical, effects: [] } } : {}),
+      } : {
         clean: { publicText: 'The agreed objective succeeds quietly.', effects: [...progressEffects] },
-        costly: { publicText: danger ? 'The agreed objective succeeds, drawing attention.' : 'The agreed objective succeeds at the cost of 1 strain.', effects: [...progressEffects, cost(submission.characterId, 1)] },
-        setback: { publicText: danger ? 'The objective remains out of reach and danger increases.' : 'The objective remains out of reach; the effort causes 2 strain.', effects: [cost(submission.characterId, 2)] },
-        ...(ruling === 'check' ? { critical: { publicText: danger ? 'It goes as badly as it could, and the danger jumps.' : 'It goes as badly as it could; the effort causes 3 strain.', effects: [cost(submission.characterId, 3)] } } : {}),
+        costly: { publicText: costly.publicText, effects: [...progressEffects, ...costly.effects] },
+        setback: { publicText: setback.publicText, effects: setback.effects },
+        ...(ruling === 'check' ? { critical: critical } : {}),
       },
       };
     });

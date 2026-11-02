@@ -10,7 +10,7 @@ import StageScene from './StageScene.vue';
 const traits = { force: 0, finesse: 1, wits: 2, presence: 1 };
 const characters = [
   { id: 'c1', displayName: 'Skooty Vale', traits, strain: 2, appearance: '', approved: true, ready: true },
-  { id: 'c2', displayName: 'Ren Ortega', traits: { ...traits, wits: 0 }, strain: 4, appearance: '', approved: true, ready: true },
+  { id: 'c2', displayName: 'Ren Ortega', traits: { ...traits, wits: 0 }, strain: 8, appearance: '', approved: true, ready: true },
 ];
 
 function beat(id: string, number: number, extra: Record<string, unknown> = {}) {
@@ -539,11 +539,11 @@ describe('StageScene', () => {
     expect(party.text()).toContain('Skooty Vale');
     expect(party.text()).toContain('SV');
     expect(party.text().match(/Needs help/g)).toHaveLength(1);
-    expect(party.findAll('[aria-label="Strain 2 of 4"]')).toHaveLength(1);
+    expect(party.findAll('[aria-label="Strain 2 of 8"]')).toHaveLength(1);
   });
 
   it('shows avatar and name only when more than five characters are at the table', () => {
-    const many = Array.from({ length: 6 }, (_, i) => ({ ...characters[0]!, id: `m${i}`, displayName: `Hero ${i}`, strain: 4 }));
+    const many = Array.from({ length: 6 }, (_, i) => ({ ...characters[0]!, id: `m${i}`, displayName: `Hero ${i}`, strain: 8 }));
     const party = mountScene(snapshot({ characters: many })).get('[aria-label="The party"]');
     expect(party.text()).toContain('Hero 5');
     expect(party.text()).not.toContain('Needs help');

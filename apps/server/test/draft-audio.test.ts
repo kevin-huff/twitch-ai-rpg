@@ -272,7 +272,7 @@ suite('private saved draft speech and publication attachment', () => {
     await command('open_beat', { kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
     const submitted = await request(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), type: 'save_submission', expectedSubmissionRevision: 0, contextBeatId: snapshot.activeBeat.id, expectedInputEpoch: snapshot.session.inputEpoch, kind: 'act', text: '', intent: 'Open the archive mechanism', approach: 'Careful investigation' }, player);
     expect(submitted.statusCode, submitted.body).toBe(200);
-    await beat('plan_beat', { submissionIds: submitted.json().snapshot.submissions.filter((submission: any) => submission.status === 'queued').map((submission: any) => submission.id) });
+    await beat('plan_beat', { submissionIds: submitted.json().snapshot.submissions.filter((submission: any) => submission.status === 'queued' && submission.contextBeatId === snapshot.activeBeat.id).map((submission: any) => submission.id) });
     await beat('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat.contracts });
     await beat('lock_beat'); await beat('render_beat');
     const preview = await prepare(); const path = draftPath(); const prior = structuredClone(snapshot.activeBeat.resolution);
@@ -512,7 +512,7 @@ suite('private saved draft speech and publication attachment', () => {
     expect(sent.statusCode, sent.body).toBe(200);
     const acted = await request(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), type: 'save_submission', expectedSubmissionRevision: 0, contextBeatId: snapshot.activeBeat.id, expectedInputEpoch: snapshot.session.inputEpoch, kind: 'act', text: '', intent: 'Climb the fire escape', approach: 'Quick and quiet' }, player);
     expect(acted.statusCode, acted.body).toBe(200);
-    const queued = acted.json().snapshot.submissions.filter((submission: any) => submission.status === 'queued');
+    const queued = acted.json().snapshot.submissions.filter((submission: any) => submission.status === 'queued' && submission.contextBeatId === snapshot.activeBeat.id);
     expect(queued.length).toBeGreaterThanOrEqual(2);
     await beat('plan_beat', { submissionIds: queued.map((submission: any) => submission.id) });
     await beat('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat.contracts });

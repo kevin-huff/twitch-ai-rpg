@@ -145,7 +145,8 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'More holds the steps you need less often. Open conversation starts a plain conversation when you have no lines to answer. Approve stakes only approves the stakes. Roll the dice locks the lines and rolls once, and it is on only when the stakes are approved and unchanged. Plan again goes back and plans the lines afresh. Regenerate script writes the script again, and the box Tell the AI what to change lets you steer it. Save edits keeps the changes you made to the script. When the beat already has a Note for the AI, the box shows it as Current note, and what you type there replaces it. Regenerate script asks Replace the current draft? first; press Yes, regenerate, or Keep draft. With text in Tell the AI what to change, it asks only when the script has unsaved edits. Abandon this beat opens a short form where you give a reason, then press Abandon beat. Published history stays as it was.',
           'Players write a Do line as one plain description, so the queue shows a single line for it. The What\'s at risk cards turn each line into a goal and results.',
-          'Every line a player sends can lead its own roll or help someone else\'s. A character can help only one roll in a round, and never their own. A character at 4 strain can still speak and roll on a Say line, but a Do line from them is blocked or helps someone else.',
+          'Every line a player sends can lead its own roll or help someone else\'s. A character can help only one roll in a round, and never their own. Strain is how much pressure a character is under, from 0 to 8. A character at full strain, which is 8, can still speak and roll on a Say line, but a Do line from them is blocked or helps someone else. Below 8, a Do line can roll as usual.',
+          'The AI sizes what a bad result costs by how risky the moment is. A cost that is paid in strain falls on the character who pays it, and it never pushes anyone past 8. A line meant to ease strain, such as resting, first aid, medicine or a calming word, rolls like any other line. A clean result lowers that character\'s strain by 2, a success with a cost lowers it by 1, and a setback leaves it as it is. You can also lower strain yourself with Rest in Show tools.',
           'A round shows at most 12 rolls, one for every line a full table of six seats can send. When more than 12 lines are ticked, the bar warns you before planning: it says how many rolls the lines need and asks you to untick some and plan the rest next round.',
         ],
       },
@@ -182,6 +183,7 @@ export const topics: HelpTopic[] = [
         heading: 'Pausing the show',
         paragraphs: [
           'Press Pause show at the top of the director page when the group needs a break. The stage shows a pause slate until you press Resume show. While the show is paused, every other button in the bar is off and the gold button reads Resume show. A player can also ask for a pause. You see the request on your page.',
+          'If the AI is planning or writing when you pause, the page asks first: The AI is still working on this round. Pausing now throws that work away. Press Pause anyway to pause and let the AI start again later, or Keep going to leave the show running. This question also shows when you press Pause now on a player\'s pause request.',
         ],
       },
       {
@@ -194,14 +196,15 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Show tools and the stage',
         paragraphs: [
-          'Below the beat controls, the closed Show tools fold holds the things you reach for less often: live controls, corrections, Note for the AI, the room, scenario notes, what the party knows, the live state and the cast.',
+          'Below the beat controls, the closed Show tools fold holds the things you reach for less often: live controls, Who is here, corrections, Rest, Note for the AI, the room, scenario notes, what the party knows, the live state and the cast.',
+          'While the AI is planning or writing, only the beat controls wait. Everything else stays open to look at. Who is here, Rest and Note for the AI wait until the AI finishes. The scene form and the correction form still ask you to finish or abandon the round first, because changing the story under the AI would throw its work away.',
           'If the narration does not start after you press Publish, the beat bar says so and offers Play latest reviewed beat. On the stage shows the first line of the latest beat. Show all opens that beat with the audio controls. Audio options, with Present audio and Release audio, is only on a Preview (not for OBS) tab.',
         ],
       },
       {
         heading: 'Note for the AI',
         paragraphs: [
-          'Note for the AI, in Show tools, lets you give the AI a private hint for the beat, such as a mood or a thing to steer toward. Type it in Note for this beat, press Save note, and press Clear note to remove it. Players never see it. Saving or clearing a note throws away the current draft (or, before the dice are rolled, the stakes under review), so the AI writes it again with the note. The dice and the lines players sent stay.',
+          'Note for the AI, in Show tools, lets you give the AI a private hint for the beat, such as a mood or a thing to steer toward. Type it in Note for this beat, press Save note, and press Clear note to remove it. Players never see it. Saving or clearing a note throws away the current draft (or, before the dice are rolled, the stakes under review), so the AI writes it again with the note. The dice and the lines players sent stay. It waits while the AI is working.',
         ],
       },
       {
@@ -239,13 +242,32 @@ export const topics: HelpTopic[] = [
         heading: 'Changing the scene',
         paragraphs: [
           'Press Change scene in the live controls to move the story to a new place. Pick the place first. The scene title fills in from the place until you type your own title. The title becomes public when you save. The page lists who is Moving with the party.',
-          'While the description still describes the old place, a warning says so. Update the description so the stream, players and AI see the new place. The AI is also told the place\'s name, and it goes by the place when the description disagrees. If players\' lines still describe the old place, the AI follows the players, so after a move, Narrate the scene before you take their lines.',
+          'The place\'s What the party sees on arrival text fills the public scene description, unless you typed your own description first. The description becomes public when you save. Read it before you press Save. For a new place, the description fills from the arrival text you type for it. Everyone who is here now is ticked, along with the characters who live at the place you picked. Untick anyone who should not come along. Once you change the ticks yourself, picking another place leaves them as you set them.',
+          'If the description still describes the old place, a warning says so. Update the description so the stream, players and AI see the new place. The AI is also told the place\'s name, and it goes by the place when the description disagrees. If players\' lines still describe the old place, the AI follows the players, so after a move, Narrate the scene before you take their lines.',
         ],
       },
       {
-        heading: 'Changes that clear queued lines',
+        heading: 'Changing who is here',
         paragraphs: [
-          'Lines players have sent but you have not locked can be cleared when the story changes under them. This happens when you publish a correction or change the scene or the cast. Players may need to send those lines again. A Note for the AI does not clear lines players sent.',
+          'Use Who is here, in Show tools, when people only walk on or off and the place stays the same. It does not start a new scene, draw a new picture or touch the lines players sent. Closed, it reads Here now with the names, or Nobody else is here.',
+          'Press Change who is here. Each non-player character has a box. A ticked box means that character is here and players can talk to them. Unticking sends them offstage. Press Save who is here, and the page says Saved who is here. Press Cancel to leave things as they were.',
+          'If the show changes while you are choosing, the page says the show changed. Press Start over to see who is here now. Who is here works while the show is paused, between rounds, or while a round is still taking lines. It waits while the AI is working, and it does not work after the dice for the round are rolled. Publish or abandon the round first.',
+        ],
+      },
+      {
+        heading: 'Resting',
+        paragraphs: [
+          'Use Rest, in Show tools, when characters stop to catch their breath. It lowers strain for the characters you choose and keeps every line players sent exactly where it is. Every character with strain shows how much they have, for example 3 of 8, and a box for how much strain to take off.',
+          'Each box starts at 2, or at the character\'s strain if that is lower. Change it to any whole number from 0 up to their strain. 0 means that character does not rest. A character with no strain has nothing to rest. Press Rest to save. The page says Rest saved. Strain went down. The 2 is only a starting number for now, and you can change it for each character.',
+          'Rest works while the show is paused, between rounds, or while a round is still taking lines. It waits while the AI is working, and it does not work after the dice for the round are rolled. Publish or abandon the round first. If strain changes while you are choosing, the page says so, and Start over loads the new numbers.',
+        ],
+      },
+      {
+        heading: 'Changes that keep queued lines',
+        paragraphs: [
+          'Lines players have sent but you have not locked stay in the queue when the story changes under them. That holds for a correction, a scene change, a character save and a reveal. Each line comes back unticked on your page, so nothing is picked by accident. Tick the ones that still fit. Lines that arrive afterwards are ticked as usual. Change who is here and Rest keep the lines and the ticks exactly as they were. A Note for the AI does not touch the lines either.',
+          'Abandoning a round sends its lines back to the queue too, even the ones that were already rolled. The dice from the abandoned round are thrown away, so those lines roll again if you pick them later.',
+          'A kept line may name someone who has since left. Read the queue before you plan.',
         ],
       },
     ],
@@ -273,7 +295,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What the scenario editor shows',
         paragraphs: [
-          'The editor keeps the main boxes in view: Scenario title, Premise, What the AI won\'t write, and the opening scene. Each place and each non-player character is one line with its name, and a click opens it. A character you open shows Name, Role and Appearance. The rest of that character sits under More about this character.',
+          'The editor keeps the main boxes in view: Scenario title, Premise, What the AI won\'t write, and the opening scene. Each place and each non-player character is one line with its name, and a click opens it. A place has What the party sees on arrival, the text that Change scene copies into the public scene description when you move the story there. A character you open shows Name, Role and Appearance. The rest of that character sits under More about this character.',
           'Everything else is in Fine-tune, a closed section: genre, tone, picture style, picture model, player hooks, objectives, discoveries, opportunities, tracks and facts, director notes and word targets. AI Generate buttons stay on the boxes you can see and inside the folds.',
           'At the bottom, Advanced tools holds Invite players to build characters (private character links) and the native JSON import and export. You rarely need them.',
         ],
@@ -477,7 +499,7 @@ export const topics: HelpTopic[] = [
         steps: [
           'Press Say something or Do something. The page picks the one that fits the moment, so you can often skip this step.',
           'Write in the box.',
-          'Press Send. The page shows "Saved. The director has your line."',
+          'Press Send. The page shows "Saved. The director has your line." If the story is no longer taking lines for this round, it shows "Saved. Your line waits for the next turn." instead.',
         ],
       },
       {
@@ -494,13 +516,15 @@ export const topics: HelpTopic[] = [
         heading: 'After you send',
         paragraphs: [
           'Your lines appear under What you sent, each with a note on where it has got to. The list keeps every line still in play, plus your newest finished line and your newest private note.',
+          'Each player can send two lines in a round. After your first, the page says "You can send one more line."',
         ],
         steps: [
           '"Sent. Waiting for the director to pick lines." Change it or take it back.',
+          '"Not in this round. It waits for the next turn." Your line missed this round and stays queued for the next one. Nothing to do.',
           '"Picked by the director. You can still change it." Change it or take it back.',
           '"Locked in. Watch the stream to see what happens." Nothing now. It\'s part of this turn.',
           '"This is in the story now." Nothing. It\'s done.',
-          '"Not used. You took it back, or the story moved on. Send it again if it still fits." Write it again if it still fits.',
+          '"Taken back. Send it again if you still want it." You took it back, or the director did not use it. Write it again if it still fits.',
           '"Sent. Only the director sees it." This is a private note. Change it or take it back.',
         ],
       },
@@ -589,7 +613,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What does "The story moved on while you were typing" mean?',
         paragraphs: [
-          'The director moved the story along while you were writing, for example by locking the lines or starting a new turn. Read your words again. If they still fit, press Yes, they still fit, then press Send. While that notice shows, the Send button reads Send it anyway. Pressing it confirms your words still fit and sends them in one go. If the director has locked the turn, the notice reads This turn is locked. Your line will wait for the director to pick it. A line the story refused keeps your words in the box and shows the reason beside Send, so you can fix it or send it again.',
+          'The story changed while you were writing: the director published a beat, made a correction, changed the scene or revealed something. Read your words again. A new round opening on its own does not ask, and neither does a pause. Your line just goes in. If they still fit, press Yes, they still fit, then press Send. While that notice shows, the Send button reads Send it anyway. Pressing it confirms your words still fit and sends them in one go. If the director has locked the turn, the notice reads This turn is locked. Your line will wait for the director to pick it. A line the story refused keeps your words in the box and shows the reason beside Send, so you can fix it or send it again.',
         ],
       },
       {
@@ -979,7 +1003,7 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Edge', definition: 'A bonus of 1 that a character gets when a teammate helps with the action.' },
   { term: 'Outcome bands', definition: 'The four result groups. A total of 10 or more is a clean success. A total of 7 to 9 is a success with a cost. A total of 6 or less is a setback. A double 1 is a Critical failure, whatever the total.' },
   { term: 'Critical failure', definition: 'The result of a double 1, whatever the total. The AI writes its own outcome for each roll, a clear step worse than the setback, and the stage shows it as Critical failure. A card without one treats a double 1 as a setback.' },
-  { term: 'Strain', definition: 'How much pressure a character is under, from 0 to 4. At 4 the stage shows Needs help next to the character.' },
+  { term: 'Strain', definition: 'How much pressure a character is under, from 0 to 8. At 8, called full strain, the stage shows Needs help next to the character, and a Do line from them cannot take a risk. Rest lowers it.' },
   { term: 'Track', definition: 'A meter for something that moves over time, such as progress, danger or a countdown. The scene layout shows up to three and the overlay layout shows up to two.' },
   { term: 'Facts to remember', definition: 'The facts the story must keep true, such as who is hurt or where an item is. They are listed above the bar when a script proposes them, and publishing keeps them unless you tick Don\'t keep these.' },
   { term: 'Note for the AI', definition: 'A private hint you give the AI for one beat, under Show tools. Players never see it.' },

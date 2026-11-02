@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue';
-import { CommandSchema } from '@rpg/contracts';
+import { CommandSchema, STRAIN_MAX } from '@rpg/contracts';
 import type { Command, CorrectionChange, DirectorSnapshot } from '@rpg/contracts';
 
 const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
@@ -14,7 +14,6 @@ const baseline = ref<DirectorSnapshot | null>(null);
 const beatId = ref('');
 const publicText = ref('');
 const reason = ref('');
-const acknowledged = ref(false);
 const changes = ref<DraftChange[]>([]);
 const error = ref('');
 const savedNotice = ref('');
@@ -36,11 +35,11 @@ function begin() {
   if (locked.value) return;
   epoch++; baseline.value = JSON.parse(JSON.stringify(props.snapshot));
   beatId.value = props.snapshot.history.at(-1)?.id ?? '';
-  publicText.value = ''; reason.value = ''; acknowledged.value = false; changes.value = []; error.value = ''; savedNotice.value = ''; retry = undefined;
+  publicText.value = ''; reason.value = ''; changes.value = []; error.value = ''; savedNotice.value = ''; retry = undefined;
 }
 function options(kind: Kind) {
   if (kind === 'fact_replace') return baseline.value?.facts.map(fact => ({ id: fact.id, label: fact.text, value: 0, max: 0 })) ?? [];
-  if (kind === 'strain_set') return baseline.value?.characters.map(character => ({ id: character.id, label: character.displayName, value: character.strain, max: 4 })) ?? [];
+  if (kind === 'strain_set') return baseline.value?.characters.map(character => ({ id: character.id, label: character.displayName, value: character.strain, max: STRAIN_MAX })) ?? [];
   return baseline.value?.tracks.map(track => ({ id: track.id, label: track.label, value: track.current, max: track.max })) ?? [];
 }
 function used(kind: Kind, targetId: string, except?: DraftChange) { return changes.value.some(change => change !== except && change.kind === kind && change.targetId === targetId); }
@@ -65,7 +64,6 @@ function cancel() { if (!props.busy) { epoch++; baseline.value = null; error.val
 function save() {
   if (locked.value || stale.value || !baseline.value) return;
   error.value = '';
-  if (!acknowledged.value) { error.value = 'Acknowledge that queued in-character dialogue and actions will be cancelled before saving.'; return; }
   if (!baseline.value.history.some(beat => beat.id === beatId.value)) { error.value = 'Choose a published beat for this correction.'; return; }
   for (const change of changes.value) {
     const target = original(change);
@@ -80,7 +78,7 @@ function save() {
   }
   const candidate = {
     type: 'record_correction', expectedStateRevision: baseline.value.session.stateRevision,
-    publishedBeatId: beatId.value, publicText: publicText.value, reason: reason.value, discardQueuedInput: true,
+    publishedBeatId: beatId.value, publicText: publicText.value, reason: reason.value,
     changes: changes.value.map(change => change.kind === 'fact_replace'
       ? { kind: change.kind, factId: change.targetId, text: change.text, knowledgeUpdates: change.knowledgeUpdates }
       : change.kind === 'strain_set' ? { kind: change.kind, characterId: change.targetId, value: change.value }
@@ -93,7 +91,7 @@ function save() {
   const savedEpoch = epoch;
   emit('command', parsed.data, () => {
     if (savedEpoch !== epoch) return;
-    baseline.value = null; acknowledged.value = false; retry = undefined;
+    baseline.value = null; retry = undefined;
     savedNotice.value = 'Correction published. Earlier narration and dice remain unchanged.';
   });
 }
@@ -139,8 +137,6 @@ function save() {
         <div class="actions"><button type="button" class="secondary" data-testid="add-correction-fact" :disabled="changes.length >= 10 || !available('fact_replace')" @click="add('fact_replace')">Correct a fact</button><button type="button" class="secondary" data-testid="add-correction-strain" :disabled="changes.length >= 10 || !available('strain_set')" @click="add('strain_set')">Correct strain</button><button type="button" class="secondary" data-testid="add-correction-track" :disabled="changes.length >= 10 || !available('track_set')" @click="add('track_set')">Correct a track</button></div>
         <label>Private reason<textarea v-model="reason" data-testid="correction-reason" maxlength="1000" rows="2" :aria-describedby="helpId('reason')" /></label>
         <p :id="helpId('reason')" class="field-help">A required private audit note explaining why you made this correction. It is not shown to players or the stage.</p>
-        <label class="check"><input v-model="acknowledged" data-testid="correction-discard-input" type="checkbox" :aria-describedby="helpId('discard')">Cancel queued or selected in-character dialogue and actions for this correction.</label>
-        <p :id="helpId('discard')" class="field-help">Players must submit in-character input again for the corrected situation. Out-of-character questions stay.</p>
         <p v-if="error" class="notice error" role="alert">{{ error }}</p>
         <div class="actions"><button type="button" data-testid="save-correction" :disabled="locked || stale" @click="save">{{ busy ? 'Saving…' : 'Publish correction' }}</button><button type="button" class="quiet" @click="cancel">Cancel correction</button></div>
       </fieldset>

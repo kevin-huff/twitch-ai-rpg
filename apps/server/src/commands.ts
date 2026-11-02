@@ -25,11 +25,21 @@ function itemErrorOrConflict<T>(run: () => T): T {
   }
 }
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
-const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character']);
+const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character', 'set_cast', 'rest']);
 function dropBlankCritical<T extends { outcomes: { critical?: { publicText: string; effects: readonly unknown[] } } }>(contract: T): T {
   const critical = contract.outcomes?.critical;
   if (critical && !critical.publicText.trim() && !critical.effects?.length) delete contract.outcomes.critical;
   return contract;
+}
+
+async function freshContractIds(client: PoolClient, contracts: { id: string; prerequisites: { contractId: string }[] }[]) {
+  const taken = new Set<string>((await client.query<{ id: string }>('SELECT id FROM action_contracts WHERE id = ANY($1)', [contracts.map((contract) => contract.id)])).rows.map((row) => row.id));
+  if (!taken.size) return;
+  const renamed = new Map([...taken].map((id) => [id, randomUUID()] as const));
+  for (const contract of contracts) {
+    for (const prerequisite of contract.prerequisites) prerequisite.contractId = renamed.get(prerequisite.contractId) ?? prerequisite.contractId;
+    contract.id = renamed.get(contract.id) ?? contract.id;
+  }
 }
 
 const directorCommands = new Set([...liveCommands, 'approve_character', 'remove_seat', 'set_boundaries', 'start_session', 'open_beat', 'narrate_scene', 'plan_beat', 'approve_stakes', 'lock_beat', 'render_beat', 'edit_script', 'approve_continuity', 'publish_beat', 'abort_beat', 'set_status']);
@@ -65,6 +75,15 @@ async function finish(client: PoolClient, sessionId: string, actor: Actor, comma
 function checkBeat(beat: Beat | null, command: Command): asserts beat is Beat {
   if (!beat || !('beatId' in command) || command.beatId !== beat.id) throw new AppError(409, 'conflict', 'This beat is no longer active. Refresh before continuing.');
   if (command.expectedBeatRevision !== beat.revision) conflict('The beat changed. Review the latest version.');
+}
+async function keepWaitingLines(client: PoolClient, all: Submission[]) {
+  const kept: string[] = [];
+  for (const submission of all) {
+    if (submission.kind === 'ooc' || !['queued', 'selected'].includes(submission.status)) continue;
+    kept.push(submission.id);
+    if (submission.status === 'selected') { submission.status = 'queued'; await saveSubmission(client, submission); }
+  }
+  return kept;
 }
 async function carryUnconsumed(client: PoolClient, beat: Beat, all: Submission[]) {
   const carried = [];
@@ -218,17 +237,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         }
       }
       for (const npc of changedNpcs) npc.version++;
-      const cancelledSubmissionIds = [];
-      for (const submission of all) {
-        if (submission.kind === 'ooc' || !['queued', 'selected'].includes(submission.status)) continue;
-        submission.status = 'cancelled'; submission.revision++;
-        cancelledSubmissionIds.push(submission.id); await saveSubmission(client, submission);
-      }
+      const keptSubmissionIds = await keepWaitingLines(client, all);
       state.session.stateRevision++; state.session.inputEpoch++;
       const publicCorrection: PublicCorrection = { id: eventId, publishedBeatId: command.publishedBeatId, beatNumber: published.beat_number,
         stateRevision: state.session.stateRevision, recordedAt: new Date().toISOString(), publicText: command.publicText };
       eventData = { public: publicCorrection, reason: command.reason, changes: command.changes, before,
-        after: { facts: state.facts, characters: state.characters, tracks: state.tracks, npcs: state.npcs }, cancelledSubmissionIds };
+        after: { facts: state.facts, characters: state.characters, tracks: state.tracks, npcs: state.npcs }, keptSubmissionIds };
       await recordEvent(client, sessionId, actor, command.commandId, 'correction.recorded', state.session.stateRevision, eventData, eventId);
       await saveState(client, state);
     } else if (command.type === 'change_scene' || command.type === 'save_npc' || command.type === 'reveal_npc') {
@@ -280,14 +294,9 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
           return npc!;
         });
       }
-      const cancelledSubmissionIds = [];
-      for (const submission of all) {
-        if (submission.kind === 'ooc' || !['queued', 'selected'].includes(submission.status)) continue;
-        submission.status = 'cancelled'; submission.revision++;
-        cancelledSubmissionIds.push(submission.id); await saveSubmission(client, submission);
-      }
+      const keptSubmissionIds = await keepWaitingLines(client, all);
       state.session.stateRevision = nextRevision; state.session.inputEpoch++;
-      eventData = { reason: command.reason, before, cancelledSubmissionIds };
+      eventData = { reason: command.reason, before, keptSubmissionIds };
       if (command.type === 'reveal_npc') {
         // Allocate the event once; its identity is the source for both the fact and memories.
         const eventId = randomUUID();
@@ -434,6 +443,38 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       character.cardRevision++;
       await saveState(client, state);
       eventData = { characterId: character.id, before, after: fields() };
+    } else if (command.type === 'set_cast' || command.type === 'rest') {
+      const isCast = command.type === 'set_cast';
+      if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict(isCast ? 'Start the show before changing who is here.' : 'Start the show before anyone rests.');
+      if (beat && beat.phase !== 'collecting') conflict('Publish or abandon this round first.');
+      if ((await client.query("SELECT 1 FROM generation_jobs WHERE session_id=$1 AND status IN ('queued','running') LIMIT 1", [sessionId])).rowCount) conflict('The AI is planning or writing right now. Wait for it to finish, then try again.');
+      if (command.expectedStateRevision !== state.session.stateRevision) conflict('The show changed. Look again, then save.');
+      if (command.type === 'set_cast') {
+        if (command.presentNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id))) conflict('A chosen character is not in this show.');
+        const here = (npc: SessionState['npcs'][number]) => npc.status === 'present' && npc.locationId === state.session.scene.locationId;
+        const before = state.npcs.filter(here).map((npc) => npc.id);
+        const wanted = new Set(command.presentNpcIds);
+        if (before.length === wanted.size && before.every((id) => wanted.has(id))) conflict('Nobody changed. Tick or untick someone first.');
+        for (const npc of state.npcs) {
+          if (wanted.has(npc.id) && !here(npc)) { npc.status = 'present'; npc.locationId = state.session.scene.locationId; npc.version++; }
+          else if (!wanted.has(npc.id) && here(npc)) { npc.status = 'offstage'; npc.version++; }
+        }
+        state.session.stateRevision++;
+        await saveState(client, state);
+        eventData = { before, after: state.npcs.filter(here).map((npc) => npc.id) };
+      } else {
+        const rested = command.rests.map((rest) => {
+          const character = state.characters.find((item) => item.id === rest.characterId);
+          if (!character) return conflict('That character is not in this show.');
+          if (rest.amount > character.strain) conflict(`${character.displayName} has only ${character.strain} strain to rest.`);
+          return { character, amount: rest.amount };
+        });
+        const before = rested.map(({ character }) => ({ characterId: character.id, strain: character.strain }));
+        for (const { character, amount } of rested) character.strain -= amount;
+        state.session.stateRevision++;
+        await saveState(client, state);
+        eventData = { before, after: rested.map(({ character }) => ({ characterId: character.id, strain: character.strain })) };
+      }
     } else if (command.type === 'open_beat') {
       if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
       if (beat) conflict('Finish or abort the active beat first.');
@@ -526,6 +567,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (beat.phase !== 'stakes_review' || !beat.stakesApproved) conflict('Approve current stakes before locking.');
         const selected = all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id));
         if (!selected.length || selected.some((submission) => !['selected', 'queued'].includes(submission.status))) conflict('The accepted input changed.');
+        await freshContractIds(client, beat.contracts);
         beat.lockedSubmissions = structuredClone(selected); beat.sourceStateRevision = state.session.stateRevision;
         beat.inputSnapshotHash = digest({ selected, contracts: beat.contracts, stateRevision: state.session.stateRevision });
         for (const contract of beat.contracts) await client.query('INSERT INTO action_contracts(id,session_id,beat_id,version,data) VALUES($1,$2,$3,$4,$5)', [contract.id, sessionId, beat.id, contract.version, contract]);
@@ -557,7 +599,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         validateSources(command.updates, beat, state); beat.approvedContinuity = command.updates;
       } else if (command.type === 'abort_beat') {
         beat.phase = 'aborted'; beat.generation++; beat.lastError = command.reason;
-        for (const submission of all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id) && submission.status === 'locked')) { submission.status = 'cancelled'; await saveSubmission(client, submission); }
+        for (const submission of all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id) && submission.status === 'locked')) { submission.status = 'queued'; await saveSubmission(client, submission); }
         eventData = { beatId: beat.id, reason: command.reason, carriedSubmissions: await carryUnconsumed(client, beat, all) };
         state.session.inputEpoch++; await saveState(client, state);
         await client.query('UPDATE generation_jobs SET status=\'cancelled\',finished_at=now() WHERE beat_id=$1 AND status=\'running\'', [beat.id]);

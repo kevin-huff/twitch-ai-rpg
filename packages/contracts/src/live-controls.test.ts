@@ -34,14 +34,31 @@ describe('live director control contracts', () => {
     }
   });
 
-  it('requires a reason, captured revision, and acknowledgement of queued input cancellation', () => {
+  it('requires a reason and captured revision, and accepts any discard flag or none', () => {
     for (const command of [scene, save, reveal]) {
-      for (const changes of [{ reason: ' ' }, { discardQueuedInput: false }, { expectedStateRevision: -1 }, { role: 'director' }]) {
+      for (const changes of [{ reason: ' ' }, { expectedStateRevision: -1 }, { role: 'director' }]) {
         expect(CommandSchema.safeParse({ ...command, ...changes }).success).toBe(false);
       }
+      expect(CommandSchema.safeParse({ ...command, discardQueuedInput: false }).success).toBe(true);
       const { discardQueuedInput: _discard, ...missing } = command;
-      expect(CommandSchema.safeParse(missing).success).toBe(false);
+      expect(CommandSchema.safeParse(missing).success).toBe(true);
     }
+  });
+
+  it('parses set_cast and rest and refuses bad shapes', () => {
+    const cast = { type: 'set_cast', commandId: 'c', expectedStateRevision: 2, presentNpcIds: ['a', 'b'] };
+    const rest = { type: 'rest', commandId: 'r', expectedStateRevision: 2, rests: [{ characterId: 'x', amount: 2 }] };
+    expect(CommandSchema.safeParse(cast).success).toBe(true);
+    expect(CommandSchema.safeParse({ ...cast, presentNpcIds: [] }).success).toBe(true);
+    expect(CommandSchema.safeParse(rest).success).toBe(true);
+    const seven = Array.from({ length: 7 }, (_, i) => ({ characterId: `c${i}`, amount: 1 }));
+    for (const bad of [
+      { ...cast, presentNpcIds: ['a', 'a'] }, { ...cast, reason: 'because' },
+      { ...rest, rests: [] }, { ...rest, rests: seven },
+      { ...rest, rests: [{ characterId: 'x', amount: 0 }] }, { ...rest, rests: [{ characterId: 'x', amount: 9 }] },
+      { ...rest, rests: [{ characterId: 'x', amount: 1 }, { characterId: 'x', amount: 2 }] },
+      { ...rest, reason: 'because' }, { ...rest, discardQueuedInput: true },
+    ]) expect(CommandSchema.safeParse(bad).success).toBe(false);
   });
 
   it('never adds the private location catalog to a stage projection', () => {

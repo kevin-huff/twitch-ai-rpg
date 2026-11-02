@@ -88,7 +88,7 @@ suite('director corrections and private beat steering', () => {
     }
   });
 
-  it('records a public clarification while cancelling only pending in-character input and preserving public/private separation', async () => {
+  it('records a public clarification while keeping pending in-character input and preserving public/private separation', async () => {
     await submit(); await submit('ooc');
     await pool.query("UPDATE submissions SET status='selected',data=jsonb_set(data,'{status}',to_jsonb('selected'::text)) WHERE session_id=$1 AND status='queued' AND data->>'kind'='say'", [sessionId]); await refresh();
     const before = structuredClone(snapshot);
@@ -97,14 +97,15 @@ suite('director corrections and private beat steering', () => {
     expect(snapshot.characterDetails).toEqual(before.characterDetails);
     expect(snapshot.npcDetails).toEqual(before.npcDetails);
     expect(snapshot.history).toEqual(before.history);
-    expect(snapshot.submissions.find(item => item.kind === 'say')).toMatchObject({ status: 'cancelled', revision: 2 });
+    expect(snapshot.submissions.find(item => item.kind === 'say')).toMatchObject({ status: 'queued', revision: 1 });
     expect(snapshot.submissions.find(item => item.kind === 'ooc')).toMatchObject({ status: 'queued', revision: 1 });
     const events = (await pool.query('SELECT id,kind,data FROM audit_events WHERE session_id=$1 AND command_id=$2', [sessionId, result.json().commandId])).rows;
     expect(events).toHaveLength(1); expect(events[0].kind).toBe('correction.recorded');
     const notice = events[0].data.public;
     expect(notice).toEqual({ id: events[0].id, publishedBeatId: before.history[0]!.id, beatNumber: before.history[0]!.beatNumber, stateRevision: snapshot.session.stateRevision, publicText: correction().publicText, recordedAt: expect.any(String) });
     expect(Number.isFinite(Date.parse(notice.recordedAt))).toBe(true);
-    expect(events[0].data).toMatchObject({ reason: correction().reason, changes: [], before: expect.any(Object), after: expect.any(Object), cancelledSubmissionIds: [before.submissions.find(item => item.kind === 'say')!.id] });
+    expect(events[0].data).toMatchObject({ reason: correction().reason, changes: [], before: expect.any(Object), after: expect.any(Object), keptSubmissionIds: [before.submissions.find(item => item.kind === 'say')!.id] });
+    expect(events[0].data).not.toHaveProperty('cancelledSubmissionIds');
     await pool.query("UPDATE audit_events SET data=jsonb_set(data,'{public,reason}',to_jsonb('Private nested trap'::text),true) WHERE id=$1", [notice.id]);
     for (const credential of [host, player, stage]) {
       const response = await request(`/api/sessions/${sessionId}`, undefined, credential);
@@ -116,6 +117,27 @@ suite('director corrections and private beat steering', () => {
     }
   });
 
+  it.each([true, undefined])('keeps a queued line through a correction when the discard flag is %s', async flag => {
+    await submit(); const lineId = snapshot.submissions.find(item => item.kind === 'say' && item.status === 'queued')!.id;
+    const value = correction(); if (flag === undefined) delete (value as Record<string, unknown>).discardQueuedInput;
+    const result = await ok(value);
+    expect(snapshot.submissions.find(item => item.id === lineId)).toMatchObject({ status: 'queued', revision: 1 });
+    const data = (await pool.query('SELECT data FROM audit_events WHERE command_id=$1', [result.json().commandId])).rows[0].data;
+    expect(data.keptSubmissionIds).toContain(lineId); expect(data).not.toHaveProperty('cancelledSubmissionIds');
+  });
+  it('puts an abandoned round\'s rolled lines back in the queue with no round, lists them as carried, and lets the next round plan them', async () => {
+    await prepare(); await ok(beatCommand('lock_beat'));
+    const abandoned = snapshot.activeBeat!;
+    const lockedIds = snapshot.submissions.filter(item => item.status === 'locked').map(item => item.id);
+    expect(lockedIds.length).toBeGreaterThan(0); expect(abandoned.resolution?.rolls.length ?? 0).toBeGreaterThan(0);
+    const result = await ok(beatCommand('abort_beat', { reason: 'Start this round over.' }));
+    for (const id of lockedIds) expect(snapshot.submissions.find(item => item.id === id)).toMatchObject({ status: 'queued', contextBeatId: null, revision: expect.any(Number) });
+    const event = (await pool.query('SELECT data FROM audit_events WHERE command_id=$1', [result.json().commandId])).rows[0].data;
+    expect(event.carriedSubmissions.map((item: { submissionId: string }) => item.submissionId).sort()).toEqual([...lockedIds].sort());
+    await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
+    await ok(beatCommand('plan_beat', { submissionIds: lockedIds }));
+    expect(snapshot.activeBeat!.selectedSubmissionIds.sort()).toEqual([...lockedIds].sort());
+  });
   it('atomically replaces public facts, reconciles every factual memory, sets strain and track values, and preserves provenance metadata', async () => {
     const before = structuredClone(snapshot);
     const fact = factChange(); fact.knowledgeUpdates[1]!.mode = 'retain_belief';

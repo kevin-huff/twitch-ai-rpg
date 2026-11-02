@@ -8,7 +8,7 @@ function sub(n: number, over: Partial<Submission> = {}): Submission {
   return { id: `s${n}`, sessionId: 'x', characterId: 'c', contextBeatId: null, inputEpoch: 1, revision: n, kind: 'say', text: `Line ${n}`, recipientNpcIds: [], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true, status: 'queued', ...over } as Submission;
 }
 const npcs = [{ id: 'n1', displayName: 'Mara' }] as never[];
-const make = (submissions: Submission[]) => mount(SubmissionList, { props: { submissions, npcs, busy: false } });
+const make = (submissions: Submission[], beat: { phase: string } | null = null) => mount(SubmissionList, { props: { submissions, npcs, busy: false, beat: beat as never } });
 const buttons = (root: Pick<VueWrapper | DOMWrapper<Element>, 'findAll'>, name: string) => root.findAll('button').filter(b => b.text() === name);
 
 describe('SubmissionList', () => {
@@ -57,12 +57,36 @@ describe('SubmissionList', () => {
       selected: 'Picked by the director. You can still change it.',
       locked: 'Locked in. Watch the stream to see what happens.',
       published: 'This is in the story now.',
-      cancelled: 'Not used. You took it back, or the story moved on. Send it again if it still fits.',
+      cancelled: 'Taken back. Send it again if you still want it.',
     };
     for (const [status, sentence] of Object.entries(expected)) {
       const w = make([sub(1, { status: status as Submission['status'] })]);
       expect(w.find('.sentence').text()).toBe(sentence);
     }
+  });
+
+  const waitsSentence = 'Not in this round. It waits for the next turn.';
+  it.each(['stakes_review', 'locked', 'draft_review'])('says a queued line waits for the next turn in %s', phase => {
+    const w = make([sub(1)], { phase });
+    expect(w.find('.sentence').text()).toBe(waitsSentence);
+  });
+
+  it.each([['collecting', { phase: 'collecting' }], ['no round', null]])('keeps the usual queued sentence with %s', (_name, beat) => {
+    const w = make([sub(1)], beat);
+    expect(w.find('.sentence').text()).toBe('Sent. Waiting for the director to pick lines.');
+  });
+
+  it('shows the one-more-line hint with one waiting line', () => {
+    expect(make([sub(1)], { phase: 'collecting' }).find('[data-testid="one-more-line"]').text()).toBe('You can send one more line.');
+    expect(make([sub(1, { status: 'selected' })]).find('[data-testid="one-more-line"]').exists()).toBe(true);
+  });
+
+  it('hides the hint with two waiting lines, past collecting, or when only notes wait', () => {
+    expect(make([sub(1), sub(2)]).find('[data-testid="one-more-line"]').exists()).toBe(false);
+    expect(make([sub(1)], { phase: 'locked' }).find('[data-testid="one-more-line"]').exists()).toBe(false);
+    expect(make([sub(1, { kind: 'ooc' })]).find('[data-testid="one-more-line"]').exists()).toBe(false);
+    expect(make([sub(1), sub(2, { kind: 'ooc' })]).find('[data-testid="one-more-line"]').exists()).toBe(true);
+    expect(make([sub(1, { status: 'published' })]).find('[data-testid="one-more-line"]').exists()).toBe(false);
   });
 
   it('keeps only the newest private note, with its own sentence', () => {
@@ -78,7 +102,7 @@ describe('SubmissionList', () => {
   it('keeps the newest note and the newest finished line apart', () => {
     const w = make([sub(1, { status: 'published' }), sub(2, { status: 'cancelled' }), sub(3, { kind: 'ooc', text: 'Pause requested. Please check in with the table.' })]);
     expect(w.findAll('.sub-item').map(i => i.attributes('data-status'))).toEqual(['queued', 'cancelled']);
-    expect(w.text()).toContain('Send it again if it still fits.');
+    expect(w.text()).toContain('Send it again if you still want it.');
     expect(make([sub(1, { kind: 'ooc', text: 'Old note' }), sub(2, { status: 'published' })]).findAll('.sub-item')).toHaveLength(2);
   });
 

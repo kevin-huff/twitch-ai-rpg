@@ -1,7 +1,8 @@
 import {
-  ActionContractSchema, EffectSchema, TraitsSchema,
+  ActionContractSchema, EffectSchema, STRAIN_MAX, TraitsSchema,
   type ActionContract, type Effect, type OutcomeBand, type Resolution, type SessionState,
 } from '@rpg/contracts';
+export { STRAIN_MAX } from '@rpg/contracts';
 
 export function outcomeForTotal(total: number): OutcomeBand {
   if (!Number.isInteger(total)) throw new Error('A dice total must be an integer.');
@@ -86,7 +87,7 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
     }
   }
   next.tracks = next.tracks.map(track => ({ ...track, current: Math.max(0, Math.min(track.max, track.current + (trackDeltas.get(track.id) ?? 0))) }));
-  next.characters = next.characters.map(character => ({ ...character, strain: Math.max(0, Math.min(4, character.strain + (strainDeltas.get(character.id) ?? 0))) }));
+  next.characters = next.characters.map(character => ({ ...character, strain: Math.max(0, Math.min(STRAIN_MAX, character.strain + (strainDeltas.get(character.id) ?? 0))) }));
   return next;
 }
 
@@ -116,9 +117,9 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     const actor = state.characters.find(character => character.id === contract.actorCharacterId);
     if (!actor) throw new Error('Unknown action actor.');
     if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
-    if (actor.strain >= 4 && contract.ruling === 'check') {
+    if (actor.strain >= STRAIN_MAX && contract.ruling === 'check') {
       const own = lines ? lines.filter(line => contract.submissionIds.includes(line.id) && line.characterId === contract.actorCharacterId) : [];
-      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(contract.actorCharacterId)} is at four strain, so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
+      if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(contract.actorCharacterId)} is at full strain (${STRAIN_MAX} of ${STRAIN_MAX}), so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
     }
     if (contract.edge && !contract.edgeReason?.trim()) throw new Error('Edge requires an established reason.');
     if (contract.helperCharacterIds.length && contract.edge !== 1) throw new Error('Meaningful helpers grant one Edge.');

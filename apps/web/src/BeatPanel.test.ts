@@ -1234,3 +1234,52 @@ describe('beat panel replacing typed lines', () => {
     wrapper.unmount();
   });
 });
+
+describe('beat panel own pending flag', () => {
+  const deferred = () => { let resolve!: (value: unknown) => void; let reject!: (cause: Error) => void; const promise = new Promise((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
+
+  it('marks only the beat panel busy while the gold request is pending, and lets other work run', async () => {
+    const wrapper = await mountPanel(snapshot(null, 'live', { submissions: [line('say-1')] }), ['say-1']);
+    const pendingRequest = deferred();
+    transport.command.mockReturnValue(pendingRequest.promise);
+    const gold = wrapper.get('[data-testid="answer-lines"]');
+    await gold.trigger('click'); await flushPromises();
+    expect(table.beatBusy.value).toBe(true);
+    expect(table.busy.value).toBe(false);
+    expect(wrapper.get('[data-testid="answer-lines"]').attributes('disabled')).toBeDefined();
+    let ran = false;
+    await table.work(async () => { ran = true; });
+    expect(ran).toBe(true);
+    expect(table.busy.value).toBe(false);
+    expect(table.beatBusy.value).toBe(true);
+    pendingRequest.resolve({});
+    await flushPromises();
+    expect(table.beatBusy.value).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('disables Plan again while a beat request is pending', async () => {
+    const stakes = beat({ phase: 'stakes_review', selectedSubmissionIds: ['say-1'] });
+    const wrapper = await mountPanel(snapshot(stakes, 'live', { submissions: [line('say-1')] }), ['say-1']);
+    expect(more(wrapper).get('[data-testid="plan-again"]').attributes('disabled')).toBeUndefined();
+    const hold = deferred();
+    void table.beatWork(() => hold.promise.then(() => undefined));
+    await flushPromises();
+    expect(table.busy.value).toBe(false);
+    expect(more(wrapper).get('[data-testid="plan-again"]').attributes('disabled')).toBeDefined();
+    hold.resolve(undefined);
+    await flushPromises();
+    expect(more(wrapper).get('[data-testid="plan-again"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('clears the beat flag after a failed request and shows the error', async () => {
+    const wrapper = await mountPanel(snapshot(null, 'live', { submissions: [line('say-1')] }), ['say-1']);
+    transport.command.mockRejectedValue(new Error('The AI timed out.'));
+    await wrapper.get('[data-testid="answer-lines"]').trigger('click'); await flushPromises();
+    expect(table.beatBusy.value).toBe(false);
+    expect(table.busy.value).toBe(false);
+    expect(wrapper.get('[data-testid="answer-lines"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+});

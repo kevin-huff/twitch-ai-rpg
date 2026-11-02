@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { isPlayerSegmentKind, type PublicActionContract, type SessionSnapshot } from '@rpg/contracts';
+import { STRAIN_MAX, isPlayerSegmentKind, type PublicActionContract, type SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
 import { pictureUrl, portraitAlt, portraitIdFor, shownScenePicture } from './pictures';
 import {
@@ -309,8 +309,8 @@ onBeforeUnmount(() => {
         >
         <span v-else class="initials" aria-hidden="true">{{ initials(character.displayName) }}</span>
         <span class="chip-name">{{ character.displayName }}</span>
-        <span class="strain" :aria-label="`Strain ${character.strain} of 4`"><i v-for="pip in 4" :key="pip" :class="{ filled: pip <= character.strain }"></i></span>
-        <span v-if="character.strain === 4" class="chip-flag">Needs help</span>
+        <span class="strain" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`"><i v-for="pip in STRAIN_MAX" :key="pip" :class="{ filled: pip <= character.strain }"></i></span>
+        <span v-if="character.strain >= STRAIN_MAX" class="chip-flag">Needs help</span>
       </div>
     </div>
 
@@ -401,7 +401,7 @@ onBeforeUnmount(() => {
   display: flex; gap: 4px; padding: 4px; box-sizing: border-box; height: 24px; background: var(--night-raised);
   box-shadow: var(--canvas-frame-slot); clip-path: var(--cut-1);
 }
-.strain { grid-column: 2; grid-row: 2; align-self: center; width: 84px; margin-left: 12px; }
+.strain { grid-column: 2; grid-row: 2; align-self: center; width: 100px; margin-left: 12px; }
 .strain i, .pips i { display: block; flex: 1 1 0; min-width: 0; height: 16px; background: var(--night); }
 .strain i.filled { background: var(--heart); }
 .pips i.filled { background: var(--herb); }
