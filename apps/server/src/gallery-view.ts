@@ -7,11 +7,11 @@ import {
 import { AppError, readState } from './repository';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const PICTURE_COLUMNS = 'id, subject_id, status, hidden, beat_id, released_at, shows_beat_id, moment, file_hash, content_type, width, height, model, prompt';
+const PICTURE_COLUMNS = 'id, subject_id, status, hidden, beat_id, released_at, shows_beat_id, shelf_only, moment, file_hash, content_type, width, height, model, prompt';
 
 interface PictureRow {
   id: string; subject_id: string; status: string; hidden: boolean; beat_id: string | null; released_at: Date | null;
-  shows_beat_id: string | null; moment: PictureMoment | null; file_hash: string; content_type: ImageContentType;
+  shows_beat_id: string | null; shelf_only: boolean; moment: PictureMoment | null; file_hash: string; content_type: ImageContentType;
   width: number; height: number; model: string; prompt: string;
 }
 
@@ -52,6 +52,10 @@ export async function loadGalleryView(client: PoolClient, sessionId: string): Pr
     published.set(row.id, { ...row.data, segments: Array.isArray(row.data?.segments) ? row.data.segments : [] });
   }
 
+  const everPinned = new Set((await client.query<{ image_id: string | null }>(
+    "SELECT DISTINCT data->>'imageId' AS image_id FROM audit_events WHERE session_id=$1 AND kind='picture.pinned'", [sessionId])).rows
+    .map(row => row.image_id).filter((id): id is string => typeof id === 'string'));
+
   const sceneRows = (await client.query<PictureRow>(
     `SELECT ${PICTURE_COLUMNS} FROM images
       WHERE session_id=$1 AND purpose='scene' AND status IN ('ready','cancelled') AND file_hash IS NOT NULL AND content_type IS NOT NULL
@@ -59,7 +63,7 @@ export async function loadGalleryView(client: PoolClient, sessionId: string): Pr
   const scenes: GalleryScene[] = [];
   sceneOrder.forEach((scene, index) => {
     const pictures = sceneRows.filter(row => row.subject_id === scene.id)
-      .map(row => picture(row, sceneCaption({ ...row, moment: usableMoment(row.moment) }, published)));
+      .map(row => picture(row, sceneCaption({ ...row, moment: usableMoment(row.moment), ever_pinned: everPinned.has(row.id) }, published)));
     if (pictures.length) scenes.push({ number: index + 1, title: scene.title, pictures });
   });
 

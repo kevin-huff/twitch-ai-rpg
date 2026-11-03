@@ -11,8 +11,12 @@ const scroller = ref<HTMLElement | null>(null);
 
 const beats = computed(() => open.value ? props.history : props.history.slice(-1));
 const rollName = (id: string) => props.characters.find(character => character.id === id)?.displayName ?? 'Someone';
-const playerLines = (beat: PublishedBeat) => beat.segments.filter(segment => isPlayerSegmentKind(segment.kind));
-const otherLines = (beat: PublishedBeat) => beat.segments.filter(segment => !isPlayerSegmentKind(segment.kind));
+const leadingCount = (beat: PublishedBeat) => {
+  const index = beat.segments.findIndex(segment => !isPlayerSegmentKind(segment.kind));
+  return index === -1 ? beat.segments.length : index;
+};
+const leadingLines = (beat: PublishedBeat) => beat.segments.slice(0, leadingCount(beat));
+const laterLines = (beat: PublishedBeat) => beat.segments.slice(leadingCount(beat));
 const showsName = (segment: ScriptSegment) => segment.kind !== 'narration' && segment.kind !== 'system';
 const nameOf = (segment: ScriptSegment) => segment.speaker?.displayName ?? 'Someone';
 
@@ -52,9 +56,9 @@ function toggleSound(beat: PublishedBeat) {
             <button type="button" class="secondary" data-testid="seat-story-play" :aria-label="`${sound.state.beatId === beat.id ? 'Stop' : 'Play'} beat ${beat.beatNumber}`" :disabled="sound.state.loading === beat.id" @click="toggleSound(beat)">{{ sound.state.beatId === beat.id ? 'Stop' : sound.state.loading === beat.id ? 'Loading…' : 'Play' }}</button>
             <span v-if="sound.state.errorBeatId === beat.id" class="seat-story-sound-note" role="status">{{ sound.state.error }}</span>
           </div>
-          <p v-for="segment in playerLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
+          <p v-for="segment in leadingLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
           <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
-          <p v-for="segment in otherLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span v-if="showsName(segment)" class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
+          <p v-for="segment in laterLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span v-if="showsName(segment)" class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
         </article>
       </div>
       <button type="button" class="secondary" data-testid="whole-story-toggle" :aria-expanded="open" @click="open = !open">{{ open ? 'Hide the whole story' : 'Show the whole story' }}</button>

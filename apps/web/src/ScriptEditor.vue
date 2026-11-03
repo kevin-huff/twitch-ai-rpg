@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
-import { voicedWords, voiceTextMatches } from '@rpg/contracts';
+import { placePlayerLines, voicedWords, voiceTextMatches } from '@rpg/contracts';
 import type { AiSegment, Npc } from '@rpg/contracts';
 import FieldGenerator from './FieldGenerator.vue';
 
-const props = defineProps<{ segments: AiSegment[]; npcs: Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel'>[]; locationId: string; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string }>();
+export interface ScriptPlayerLine { id: string; name: string; action: boolean; words: string }
+const props = withDefaults(defineProps<{ segments: AiSegment[]; npcs: Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel'>[]; locationId: string; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string; playerLines?: ScriptPlayerLine[] }>(), { playerLines: () => [] });
+const placement = computed(() => placePlayerLines(props.playerLines.map(line => line.id), props.segments));
+function lineBefore(index: number): ScriptPlayerLine | null {
+  const id = placement.value.before[index];
+  return id ? props.playerLines.find(line => line.id === id) ?? null : null;
+}
 
 const rowKeys = new WeakMap<AiSegment, number>();
 let nextRowKey = 0;
@@ -60,6 +66,7 @@ defineExpose({ addNarration });
 <template>
   <div class="script-editor">
     <div v-for="(segment, index) in segments" :key="rowKey(segment)" class="segment">
+      <p v-if="lineBefore(index)" class="script-player-line" data-testid="script-player-line"><strong>{{ lineBefore(index)!.name }}</strong> <span v-if="lineBefore(index)!.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ lineBefore(index)!.words }}</span></p>
       <button type="button" class="script-line" :data-testid="`script-line-${index}`" @click="open(segment)"><strong class="script-speaker">{{ rowParts(segment).speaker }}</strong> {{ rowParts(segment).words }}</button>
       <p v-if="readAs(segment) !== null" class="script-read-as" :data-testid="`script-read-as-${index}`">Read as: {{ readAs(segment) }}</p>
       <div v-if="openKeys.has(rowKey(segment))" class="segment-editor">
@@ -111,5 +118,9 @@ defineExpose({ addNarration });
 .script-line::before { content: none; }
 .script-line:hover { background: var(--night-raised); }
 .script-read-as { margin: 0; padding: 0 12px 8px; color: var(--dust); line-height: 24px; overflow-wrap: anywhere; }
+.script-player-line { margin: 0; padding: 8px 12px; line-height: 28px; overflow-wrap: anywhere; background: var(--night-raised); }
+.script-player-line strong { color: var(--candle); font-weight: normal; }
+.player-line-tag { font-family: var(--font-label); font-size: 16px; line-height: 20px; text-transform: uppercase; color: var(--dust); }
+.player-line-words { color: var(--bone); white-space: pre-wrap; }
 .script-speaker { font-weight: 400; color: var(--candle); }
 </style>

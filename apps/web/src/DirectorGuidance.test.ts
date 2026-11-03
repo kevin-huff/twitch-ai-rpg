@@ -121,6 +121,100 @@ describe('DirectorGuidance standing note', () => {
   });
 });
 
+describe('DirectorGuidance AI plan', () => {
+  const planBox = (wrapper: ReturnType<typeof mountGuidance>['wrapper']) => wrapper.get('[data-testid="ai-plan-text"]').element as HTMLTextAreaElement;
+
+  it('has a closed For the AI fold with a labelled box, its own help line and secondary buttons', () => {
+    const { wrapper } = mountGuidance(snapshot({ storyPlan: 'Head for the vault.' }));
+    const fold = wrapper.get('[data-testid="ai-plan"]');
+    expect(fold.element.tagName).toBe('DETAILS');
+    expect((fold.element as HTMLDetailsElement).open).toBe(false);
+    expect(fold.get('summary').text()).toBe('For the AI');
+    expect(fold.get('label').text()).toBe('AI plan for this show');
+    const box = wrapper.get('[data-testid="ai-plan-text"]');
+    expect(box.attributes('maxlength')).toBe('12000');
+    expect(box.attributes('rows')).toBe('6');
+    expect(planBox(wrapper).value).toBe('Head for the vault.');
+    const help = wrapper.get(`#${box.attributes('aria-describedby')}`);
+    expect(help.classes()).toContain('field-help');
+    expect(help.text()).toBe("The AI reads this on every plan and script and follows it. Players and the stream never see it. A new show starts with the scenario's For the AI text.");
+    expect(help.element.closest('label')).toBeNull();
+    expect(wrapper.get('[data-testid="save-ai-plan"]').text()).toBe('Save AI plan');
+    expect(wrapper.get('[data-testid="clear-ai-plan"]').text()).toBe('Clear AI plan');
+    expect(wrapper.get('[data-testid="save-ai-plan"]').classes()).toContain('secondary');
+    expect(wrapper.get('[data-testid="clear-ai-plan"]').classes()).toContain('secondary');
+  });
+
+  it('gives the plan box and the note box different help lines', () => {
+    const { wrapper } = mountGuidance(snapshot());
+    expect(wrapper.get('[data-testid="ai-plan-text"]').attributes('aria-describedby')).not.toBe(wrapper.get('[data-testid="standing-note-text"]').attributes('aria-describedby'));
+  });
+
+  it('saves only the plan, trimmed, and shows the saved line', async () => {
+    const { wrapper, onCommand } = mountGuidance(snapshot());
+    await wrapper.get('[data-testid="ai-plan-text"]').setValue('  Build toward the heist.  ');
+    await wrapper.get('[data-testid="save-ai-plan"]').trigger('click');
+    const command = commandOf(onCommand);
+    expect(command).toMatchObject({ type: 'set_guidance', storyPlan: 'Build toward the heist.' });
+    expect(Object.keys(command).sort()).toEqual(['commandId', 'storyPlan', 'type']);
+    doneOf(onCommand)();
+    await flushPromises();
+    const status = wrapper.get('[data-testid="ai-plan-status"]');
+    expect(status.attributes('role')).toBe('status');
+    expect(status.text()).toBe('AI plan saved. The AI reads it on every plan and script.');
+  });
+
+  it('clears the plan, empties the box and shows the cleared line', async () => {
+    const { wrapper, onCommand } = mountGuidance(snapshot({ storyPlan: 'Old plan.' }));
+    await wrapper.get('[data-testid="clear-ai-plan"]').trigger('click');
+    const command = commandOf(onCommand);
+    expect(command).toMatchObject({ type: 'set_guidance', storyPlan: '' });
+    expect(Object.keys(command).sort()).toEqual(['commandId', 'storyPlan', 'type']);
+    doneOf(onCommand)();
+    await flushPromises();
+    expect(planBox(wrapper).value).toBe('');
+    expect(wrapper.get('[data-testid="ai-plan-status"]').text()).toBe('AI plan cleared.');
+  });
+
+  it('keeps the typed words and shows the error when a save fails', async () => {
+    const { wrapper, onCommand } = mountGuidance(snapshot({ storyPlan: 'Old plan.' }));
+    await wrapper.get('[data-testid="ai-plan-text"]').setValue('New plan, not saved yet.');
+    await wrapper.get('[data-testid="save-ai-plan"]').trigger('click');
+    doneOf(onCommand)('The show changed. Try again.');
+    await flushPromises();
+    expect(planBox(wrapper).value).toBe('New plan, not saved yet.');
+    expect(wrapper.get('[role="alert"]').text()).toBe('The show changed. Try again.');
+    expect(wrapper.find('[data-testid="ai-plan-status"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="save-ai-plan"]').attributes('disabled')).toBeUndefined();
+  });
+
+  it('keeps the typed words when a failed clear is refused', async () => {
+    const { wrapper, onCommand } = mountGuidance(snapshot({ storyPlan: 'Old plan.' }));
+    await wrapper.get('[data-testid="ai-plan-text"]').setValue('Half-typed');
+    await wrapper.get('[data-testid="clear-ai-plan"]').trigger('click');
+    doneOf(onCommand)('Only the director can do that.');
+    await flushPromises();
+    expect(planBox(wrapper).value).toBe('Half-typed');
+    expect(wrapper.get('[role="alert"]').text()).toBe('Only the director can do that.');
+  });
+
+  it('updates an untouched box from a new snapshot, but not a box with typed words', async () => {
+    const clean = mountGuidance(snapshot({ storyPlan: 'Old.' }));
+    await clean.wrapper.setProps({ snapshot: snapshot({ storyPlan: 'New.' }) });
+    expect(planBox(clean.wrapper).value).toBe('New.');
+    const dirty = mountGuidance(snapshot({ storyPlan: 'Old.' }));
+    await dirty.wrapper.get('[data-testid="ai-plan-text"]').setValue('Half-typed');
+    await dirty.wrapper.setProps({ snapshot: snapshot({ storyPlan: 'New.' }) });
+    expect(planBox(dirty.wrapper).value).toBe('Half-typed');
+  });
+
+  it('does not touch the standing note box when the plan changes', async () => {
+    const { wrapper } = mountGuidance(snapshot({ standingNote: 'Keep it tense.', storyPlan: 'A.' }));
+    await wrapper.setProps({ snapshot: snapshot({ standingNote: 'Keep it tense.', storyPlan: 'B.' }) });
+    expect((wrapper.get('[data-testid="standing-note-text"]').element as HTMLTextAreaElement).value).toBe('Keep it tense.');
+  });
+});
+
 describe('DirectorGuidance availability', () => {
   it('works while paused and disables only its own controls while a save is in flight', async () => {
     const { wrapper, onCommand } = mountGuidance(snapshot(undefined, 'paused'));

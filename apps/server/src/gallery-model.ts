@@ -17,7 +17,7 @@ export interface GalleryView {
 export interface GalleryListEntry { slug: string; title: string; endedAt: string | null; pictures: number; cover: GalleryPicture | null }
 export interface GalleryCaptionRow {
   status: string; hidden: boolean; beat_id: string | null; released_at: Date | string | null;
-  shows_beat_id: string | null; moment: PictureMoment | null;
+  shows_beat_id: string | null; moment: PictureMoment | null; shelf_only?: boolean; ever_pinned?: boolean;
 }
 export type GalleryWork =
   | { kind: 'refresh' }
@@ -61,7 +61,7 @@ export function initials(name: string): string {
 export function sceneCaption(
   row: GalleryCaptionRow, published: ReadonlyMap<string, PublishedBeat>,
 ): { label: string; line: string | null; tag: GalleryTag | null } {
-  const hiddenTag: GalleryTag | null = row.hidden ? 'Hidden' : null;
+  const hiddenTag: GalleryTag | null = row.shelf_only && !row.ever_pinned ? 'Not shown on stream' : row.hidden ? 'Hidden' : null;
   if (row.beat_id) {
     const round = published.get(row.beat_id);
     if (row.status === 'cancelled') {
@@ -81,7 +81,12 @@ export function sceneCaption(
     return { label: 'A round that was never published', line: null, tag: 'Not shown on stream' };
   }
   const shown = row.shows_beat_id ? published.get(row.shows_beat_id) : undefined;
-  if (shown) return { label: `Beat ${shown.beatNumber}`, line: beatLine(shown), tag: hiddenTag };
+  if (shown) {
+    return {
+      label: shown.kind === 'conversation' ? `Beat ${shown.beatNumber}` : `Action round ${shown.actionRoundNumber}`,
+      line: beatLine(shown), tag: hiddenTag,
+    };
+  }
   if (row.moment) return { label: 'A beat', line: momentLine(row.moment), tag: hiddenTag };
   return { label: 'The place', line: null, tag: hiddenTag };
 }

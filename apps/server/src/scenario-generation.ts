@@ -173,7 +173,7 @@ export function scenarioFromDraft(
     ...(draft.pictureStyle.trim() ? { pictureStyle: draft.pictureStyle.trim() } : {}),
     boundaries: merged,
     locations, openingScene, npcs, tracks, facts, playerHooks, objectives, discoveries, opportunities,
-    directorNotes: draft.directorNotes.trim(), rulesVersion: '0.1',
+    directorNotes: draft.directorNotes.trim(), ...(draft.aiPlan.trim() ? { aiPlan: draft.aiPlan.trim() } : {}), rulesVersion: '0.1',
     pacing: { conversationWords: 90, actionWords: 120 }, extensions: {},
   });
 

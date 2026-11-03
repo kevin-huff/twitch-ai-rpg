@@ -37,12 +37,9 @@ const RETIRE_HELD = "UPDATE images SET status='cancelled', message=$3, finished_
 // Only the round's newest held picture is released, and only while it is still being made or is ready.
 const RELEASE_NEWEST = `WITH newest AS (SELECT id, status FROM images WHERE session_id=$1 AND beat_id=$2 AND released_at IS NULL AND status<>'cancelled' ORDER BY created_at DESC, id DESC LIMIT 1)
   UPDATE images SET released_at=clock_timestamp() FROM newest WHERE images.id=newest.id AND newest.status IN ('making','ready') RETURNING images.id, images.subject_id`;
-// Every other picture of the scene still being made for the stream shows an older moment than the round just released.
+// Every older beat picture of the scene still being made for the stream shows an older moment than the round just released. A place picture has no moment, so it is never cancelled here: it finishes and either shows with its reveal or lands on the shelf.
 const RETIRE_OUTRANKED = `UPDATE images SET status='cancelled', message=$4, finished_at=COALESCE(finished_at, clock_timestamp())
-  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) AND NOT shelf_only AND id<>$3 RETURNING id`;
-// Pressing a draw button again replaces a picture of this scene that is still on its way to the stream; a held action picture is not on its way yet.
-const START_OVER = `UPDATE images SET status='cancelled', message=$3, finished_at=COALESCE(finished_at, clock_timestamp())
-  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND (beat_id IS NULL OR released_at IS NOT NULL) AND NOT shelf_only RETURNING id`;
+  WHERE session_id=$1 AND purpose='scene' AND subject_id=$2 AND status='making' AND moment IS NOT NULL AND (beat_id IS NULL OR released_at IS NOT NULL) AND NOT shelf_only AND id<>$3 RETURNING id`;
 const requestedBy = (actor: Actor) => ({ actor_id: actor.actor_id, producer_grant_id: actor.producer_grant_id ?? null });
 
 // Reserves picture rows inside the caller's transaction and runs them in the background once that transaction has committed.
@@ -154,13 +151,6 @@ export class ImageService implements PictureEngine {
   async retireHeldPictures(client: PoolClient, sessionId: string, beatId: string): Promise<void> {
     if (!this.context || this.closed) return;
     const { rows } = await client.query<{ id: string }>(`${RETIRE_HELD} RETURNING id`, [sessionId, beatId, PICTURE_MESSAGES.actionSuperseded]);
-    if (rows.length) void this.stopWhenCommitted(rows.map(row => row.id));
-  }
-
-  // Cancels this scene's pictures still on their way to the stream; their calls stop only once the caller's transaction has committed.
-  async startOver(client: PoolClient, sessionId: string, sceneId: string): Promise<void> {
-    if (!this.context || this.closed) return;
-    const { rows } = await client.query<{ id: string }>(START_OVER, [sessionId, sceneId, PICTURE_MESSAGES.startedOver]);
     if (rows.length) void this.stopWhenCommitted(rows.map(row => row.id));
   }
 

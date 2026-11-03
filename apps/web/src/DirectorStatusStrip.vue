@@ -92,7 +92,7 @@ const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unk
 </script>
 
 <template>
-  <ul v-if="hasWarning || pinned" class="status-strip" aria-label="Show warnings">
+  <ul v-if="hasWarning || pinned" class="status-strip" aria-label="Show status">
     <li v-if="audio === 'none'" class="chip" data-testid="warning-no-audio">No show audio · <a :href="identityPath(`/sessions/${sessionId}/lobby#stage-links`)">Stream this show</a></li>
     <li v-if="audio === 'unknown'" class="chip" data-testid="warning-audio-unknown">Can't check the show audio</li>
     <li v-if="stuckSeconds !== null" class="chip" data-testid="warning-stuck" aria-live="polite">The AI is taking longer than usual ({{ stuckSeconds }} s)</li>

@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
-import { CommandSchema, CreateSessionSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role, type SessionListEntry, type VoiceSource, fakeVoiceSource } from '@rpg/contracts';
+import { CommandSchema, CreateSessionSchema, GuidanceSchema, type AiProvider, type CreateSessionResponse, type ImageProvider, type Role, type SessionListEntry, type VoiceSource, fakeVoiceSource } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { createPool, migrate, transaction } from './database';
 import { AppError, authorize, project, saveState, type Actor } from './repository';
@@ -172,7 +172,7 @@ export async function buildApp(options: AppOptions) {
         const state = custom?.state ?? createLedgerState(sessionId, randomUUID);
         if (command.title) state.session.title = command.title;
         await client.query('INSERT INTO sessions(id,owner_id,title,scene,status) VALUES($1,$2,$3,$4,$5)', [sessionId, actor.actor_id, state.session.title, state.session.scene, state.session.status]);
-        if (custom) await client.query('UPDATE sessions SET scenario_snapshot=$2,character_snapshots=$3,picture_settings=$4 WHERE id=$1', [sessionId, custom.scenarioSnapshot, JSON.stringify(custom.characterSnapshots), JSON.stringify(custom.pictureSettings)]);
+        if (custom) await client.query('UPDATE sessions SET scenario_snapshot=$2,character_snapshots=$3,picture_settings=$4,guidance=$5 WHERE id=$1', [sessionId, custom.scenarioSnapshot, JSON.stringify(custom.characterSnapshots), JSON.stringify(custom.pictureSettings), GuidanceSchema.parse({ storyPlan: custom.scenarioSnapshot.definition.aiPlan ?? '' })]);
         const seedEvent = await recordEvent(client, sessionId, actor.actor_id, command.commandId, 'session.created', 0);
         for (const npc of state.npcs) {
           for (const record of [...npc.knowledge, ...npc.relationships]) record.sourceEventId = seedEvent.eventId;

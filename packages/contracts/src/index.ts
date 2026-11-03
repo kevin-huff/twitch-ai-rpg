@@ -239,7 +239,7 @@ export const ScenarioDefinitionSchema = z.strictObject({
   tracks: z.array(TrackSchema).max(20).default([]), facts: z.array(FactSchema.omit({ sourceEventId: true })).max(50).default([]),
   playerHooks: z.array(z.string().max(1000)).max(20).default([]), objectives: z.array(z.string().max(1000)).max(20).default([]),
   discoveries: z.array(z.string().max(2000)).max(20).default([]), opportunities: z.array(z.string().max(2000)).max(20).default([]),
-  directorNotes: z.string().max(12000).default(''), rulesVersion: z.literal('0.1').default('0.1'),
+  directorNotes: z.string().max(12000).default(''), aiPlan: z.string().trim().max(12000).optional(), rulesVersion: z.literal('0.1').default('0.1'),
   pacing: PacingSchema.default({ conversationWords: 90, actionWords: 120 }), extensions: ExtensionsSchema,
 }).superRefine((scenario, ctx) => {
   const ids = [scenario.openingScene.id, ...scenario.locations.map(item => item.id), ...scenario.npcs.map(item => item.id), ...scenario.tracks.map(item => item.id), ...scenario.facts.map(item => item.id)];
@@ -336,6 +336,7 @@ export type Resolution = z.infer<typeof ResolutionSchema>;
 
 const authored = {
   text: TextSchema, recipientCharacterIds: z.array(IdSchema).max(6), delivery: DeliverySchema, voiceText: TextSchema.optional(),
+  answersSubmissionId: IdSchema.optional(),
 };
 export const AiSegmentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('narration'), speakerNpcId: z.null().optional(), ...authored }),
@@ -552,6 +553,23 @@ export interface ProviderContext {
   place?: string;
   standingNote?: string;
   aiCastNpcIds?: string[];
+  storyPlan?: string;   // the show's private 'For the AI' plan; present only when not empty
+  cameFrom?: string;   // title of the place the party just left; only before any beat is published after a move
+  sceneBeatCount?: number;   // beats published since the newest scene change (or since the show began)
+}
+
+export function placePlayerLines(playerLineIds: readonly string[], segments: readonly { answersSubmissionId?: string }[]): { first: string[]; before: (string | null)[] } {
+  const today = { first: [...playerLineIds], before: segments.map(() => null as string | null) };
+  const known = new Set(playerLineIds);
+  const marks = segments.map(item => item.answersSubmissionId);
+  if (!marks.some(Boolean) || marks.some(mark => mark !== undefined && !known.has(mark))) return today;
+  const placed = new Set<string>();
+  const before = marks.map(mark => {
+    if (mark === undefined || placed.has(mark)) return null;
+    placed.add(mark);
+    return mark;
+  });
+  return { first: playerLineIds.filter(id => !placed.has(id)), before };
 }
 
 export const PictureDescriptionRequestSchema = z.strictObject({
@@ -665,7 +683,7 @@ export const ScenarioDraftNpcSchema = z.object({
 });
 export type ScenarioDraftNpc = z.infer<typeof ScenarioDraftNpcSchema>;
 export const ScenarioDraftSchema = z.object({
-  title: cardText(160), premise: cardText(4000), genre: cardText(160), tone: cardText(500), pictureStyle: cardText(300), directorNotes: cardText(12000),
+  title: cardText(160), premise: cardText(4000), genre: cardText(160), tone: cardText(500), pictureStyle: cardText(300), directorNotes: cardText(12000), aiPlan: cardText(12000),
   playerHooks: draftList(1000, 20), objectives: draftList(1000, 20), discoveries: draftList(2000, 20), opportunities: draftList(2000, 20),
   suggestedBoundaries: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
   locations: z.array(z.object({ key: z.string().trim().min(1).max(40), title: cardText(160), description: cardText(4000) })).min(1).max(30),

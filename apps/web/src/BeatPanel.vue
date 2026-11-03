@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
 import type { ActionContract, AiSegment, Beat, Command } from '@rpg/contracts';
-import { ActionContractSchema, hasAudioTags, playerWords, stripAudioTags } from '@rpg/contracts';
+import { ActionContractSchema, hasAudioTags, placePlayerLines, playerWords, stripAudioTags } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
 import DirectorGuidance from './DirectorGuidance.vue';
@@ -70,6 +70,8 @@ const voice = ref<VoiceState>({ status: 'checking' });
 const skipFacts = ref(false);
 const waiting = ref<{ beatId: string; draftRevision: number } | null>(null);
 const playerLines = computed(() => (beat.value?.lockedSubmissions ?? []).filter(line => line.kind !== 'ooc' && playerWords(line).trim()).map(line => ({ id: line.id, characterId: line.characterId, action: line.kind === 'act', words: playerWords(line) })));
+const scriptPlayerLines = computed(() => playerLines.value.map(line => ({ id: line.id, name: nameOf(line.characterId), action: line.action, words: line.words })));
+const readFirst = computed(() => { const first = new Set(placePlayerLines(playerLines.value.map(line => line.id), script.value).first); return playerLines.value.filter(line => first.has(line.id)); });
 const hasDraft = computed(() => Boolean(!idle.value && showScript.value && beat.value?.draft));
 const voicePending = computed(() => voice.value.status === 'checking' || voice.value.status === 'preparing');
 const statusText = computed(() => {
@@ -96,8 +98,9 @@ watch(() => Boolean(working.value), active => {
 onUnmounted(() => { if (ticker) clearInterval(ticker); });
 const SUPERSEDED_BY_SERVER = 'The generation was superseded. Its result was discarded.';
 const failedStep = ref<'plan' | 'render'>('plan');
+const supersededWhilePaused = ref(false);
 const supersededText = computed(() => {
-  if (!paused.value) return 'The show changed while the AI was working, so its work was thrown away. Try again.';
+  if (!supersededWhilePaused.value) return 'The show changed while the AI was working, so its work was thrown away. Try again.';
   return `You paused, so the AI's work on this round was thrown away. Press ${failedStep.value === 'plan' ? 'Plan again' : 'Draft the scene again'} when you resume.`;
 });
 const errorText = computed(() => (barError.value === SUPERSEDED_BY_SERVER ? supersededText.value : barError.value) || (!idle.value && beat.value?.lastError) || '');
@@ -170,7 +173,10 @@ function runBar(task: () => Promise<void>) {
   barError.value = '';
   return beatWork(async () => {
     try { await task(); }
-    catch (cause) { barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.'; }
+    catch (cause) {
+      barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.';
+      if (barError.value === SUPERSEDED_BY_SERVER) supersededWhilePaused.value = paused.value;
+    }
     finally { running.value = null; }
   });
 }
@@ -362,9 +368,9 @@ function runGold() {
       <template v-else>
         <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="panelBusy" v-model:classification="reviewClassification" />
         <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span><small>{{ nameOf(roll.actorCharacterId) }} · {{ bandLabel(roll.band) }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
-          <section v-if="playerLines.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in playerLines" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
-          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="panelBusy" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
-          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines and actions are read first, word for word, when you publish. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="panelBusy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
+          <section v-if="readFirst.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in readFirst" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
+          <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="panelBusy" :player-lines="scriptPlayerLines" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
+          <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="beat.resolution?.effects.length" class="notice"><strong>Changes on publication</strong><p v-for="(effect, index) in beat.resolution.effects" :key="index" style="margin: .25rem 0">{{ effectLabel(effect) }}</p></div><p class="muted"><small>Player lines play word for word when you publish: the lines under Read aloud first play first, and a line shown inside the script plays just before the part that answers it. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="panelBusy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
         </template>
       </template>
       <DirectorGuidance :snapshot="director" @command="saveGuidance" />

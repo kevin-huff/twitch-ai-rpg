@@ -434,7 +434,7 @@ describe('help page', () => {
     const topic = topics.find(item => item.id === 'pictures-and-portraits')!;
     const text = topic.sections.flatMap(item => item.paragraphs ?? []).join(' ');
     expect(text).toContain('Every beat with narration gets its own picture, conversations included.');
-    expect(text).toContain('The stream always shows the newest moment, so when you publish a beat that has its own picture, a Draw the place picture still being made is dropped, because the beat is newer.');
+    expect(text).toContain('The stream always shows the newest moment, so a beat\'s picture replaces the place picture. Publishing a beat never stops a place picture that is still being drawn.');
     expect(text).toContain('The picture service would not draw this beat. You can still publish it.');
   });
 
@@ -447,7 +447,7 @@ describe('help page', () => {
     expect(text).not.toContain('starts over');
     expect(text).toContain('Pressing a draw button never cancels another picture.');
     expect(text).toContain("Draw the place makes a new picture of this scene's place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one's place when it is ready.");
-    expect(text).toContain('A round\'s picture waiting for you to publish is never touched by this.');
+    expect(text).toContain('A beat\'s picture waiting for you to publish is never touched by this.');
     expect(text).toContain('A change applies to pictures started after you save.');
     expect(text).toContain('using the first 10 portraits');
     expect(text).toContain('because the story AI writes the description first. Expect anywhere from 25 seconds to 2 minutes.');

@@ -12,7 +12,7 @@ const origin = 'http://localhost:3000';
 const GONE = 'That scenario draft was not found. It may have expired.';
 
 const draft = (): ScenarioDraft => ({
-  title: 'The Lantern Fair', premise: 'A fair in a harbor town hides a stolen map.', genre: 'mystery', tone: 'warm', pictureStyle: 'Ink and watercolor, soft dawn light', directorNotes: 'Keep it light.',
+  title: 'The Lantern Fair', premise: 'A fair in a harbor town hides a stolen map.', genre: 'mystery', tone: 'warm', pictureStyle: 'Ink and watercolor, soft dawn light', directorNotes: 'Keep it light.', aiPlan: '',
   playerHooks: ['You came for the lantern parade.'], objectives: ['Find the missing map.'], discoveries: [], opportunities: [],
   suggestedBoundaries: ['Keep serious injuries off screen.'],
   locations: [{ key: 'opening', title: 'Fairground', description: 'Lanterns and music.' }, { key: 'second', title: 'Harbor office', description: 'Crowded and dusty.' }],

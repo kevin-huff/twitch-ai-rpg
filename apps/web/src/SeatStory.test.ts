@@ -62,8 +62,14 @@ describe('SeatStory', () => {
     expect(toggle.attributes('aria-expanded')).toBe('false');
   });
 
-  it('orders player lines, then rolls in words, then the rest', () => {
-    const wrapper = mount(SeatStory, { props: { history: [second], characters } });
+  it('shows segments in published order with the rolls right after the leading player lines', () => {
+    const today = beat(5, [
+      segment('p1', 'player_dialogue', 'Anyone there?\nHello?', 'Dash'),
+      segment('p2', 'player_action', 'I climb the fire escape.', 'Dash'),
+      segment('n', 'narration', 'The alley goes quiet.'),
+      segment('x', 'npc_dialogue', 'Who goes there?', 'Guard'),
+    ], [roll('r1', 'c-Dash', 11, 'clean'), roll('r2', 'gone', 7, 'costly')]);
+    const wrapper = mount(SeatStory, { props: { history: [today], characters } });
     const rows = wrapper.get('[data-testid="seat-story-beat"]').findAll('p').map(row => row.text());
     expect(rows).toEqual([
       'Dash Anyone there?\nHello?',
@@ -76,6 +82,33 @@ describe('SeatStory', () => {
     const lines = wrapper.findAll('[data-testid="seat-story-line"]');
     expect(lines.map(line => line.classes()[line.classes().length - 1])).toEqual(['player_dialogue', 'player_action', 'narration', 'npc_dialogue']);
     expect(wrapper.findAll('[data-testid="seat-story-roll"]')).toHaveLength(2);
+  });
+
+  it('plays a paired beat in published order', () => {
+    const paired = beat(6, [
+      segment('p1', 'player_dialogue', 'First line.', 'Dash'),
+      segment('p2', 'player_dialogue', 'Second line.', 'Dash'),
+      segment('n', 'narration', 'Answer to the second.'),
+      segment('p3', 'player_action', 'I open the door.', 'Dash'),
+      segment('x', 'npc_dialogue', 'Who goes there?', 'Guard'),
+    ], [roll('r1', 'c-Dash', 11, 'clean')]);
+    const wrapper = mount(SeatStory, { props: { history: [paired], characters } });
+    const rows = wrapper.get('[data-testid="seat-story-beat"]').findAll('p').map(row => row.text());
+    expect(rows).toEqual([
+      'Dash First line.',
+      'Dash Second line.',
+      'Dash rolled 11: Clean success',
+      'Answer to the second.',
+      'Dash Action I open the door.',
+      'Guard Who goes there?',
+    ]);
+  });
+
+  it('puts the rolls first when the beat opens with narration', () => {
+    const wrapper = mount(SeatStory, { props: { history: [second], characters } });
+    const rows = wrapper.get('[data-testid="seat-story-beat"]').findAll('p').map(row => row.text());
+    expect(rows[0]).toBe('Dash rolled 11: Clean success');
+    expect(rows[2]).toBe('The alley goes quiet.');
   });
 
   it('tags only actions and names only spoken lines', () => {

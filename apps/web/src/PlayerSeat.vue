@@ -216,10 +216,11 @@ function saveSubmission() { return work(async () => {
   const before = ownIds();
   const pastCollecting = Boolean(player.value?.activeBeat) && player.value?.activeBeat?.phase !== 'collecting';
   if (sendingBoth.value) {
-    // The visible box follows the usual rules. The other box only takes a fresh stamp for a quiet change, so a box whose story moved is refused with its words kept.
+    // The visible box follows the usual rules. Send both anyway (the visible box is stale) is the player's say-so for both boxes, so the other box takes a fresh stamp too.
+    // Otherwise the other box only takes one for a quiet change, so a box whose story moved is refused with its words kept.
     const visibleStart = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
     const hiddenKind: LineKind = lineKind === 'say' ? 'act' : 'say';
-    const hiddenStart = quietSince(contexts.value[hiddenKind]) ? stampNow() : contexts.value[hiddenKind] ?? stampNow();
+    const hiddenStart = stale.value || quietSince(contexts.value[hiddenKind]) ? stampNow() : contexts.value[hiddenKind] ?? stampNow();
     const starts: Record<string, InputContext> = { [lineKind]: visibleStart, [hiddenKind]: hiddenStart };
     const sent: LineKind[] = [];
     const kept: LineKind[] = [];

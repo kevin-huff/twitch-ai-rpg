@@ -94,6 +94,33 @@ describe('ClewdR two-pass scenario writer', () => {
     }
   });
 
+  it('points the outline at aiPlan and keeps twists out of motivation and goal', async () => {
+    const fetchMock = routedFetch();
+    await ai(fetchMock).generateScenario(input);
+    const [first, ...rest] = calls(fetchMock);
+    expect(first.system).toContain('private direction for the storyteller in aiPlan');
+    expect(first.system).toContain('aiPlan never names a character\'s secret or hidden identity');
+    expect(first.system).toContain('They never hold hidden identities or secrets.');
+    const field = FIELD_GENERATION_FIELDS['scenario.aiPlan'];
+    expect(first.system).toContain(`${field.label}: ${field.instruction}`);
+    expect(first.system.indexOf(field.instruction)).toBeGreaterThan(first.system.indexOf(FIELD_GENERATION_FIELDS['scenario.directorNotes'].instruction));
+    expect(first.system).toContain('"aiPlan":{');
+    for (const call of rest) {
+      expect(call.system).toContain('only in hiddenIdentity and secrets, never in motivation or goal');
+      expect(call.system).toContain('the storyteller reads motivation and goal during play');
+    }
+  });
+
+  it('never passes the outline\'s aiPlan to the character pass', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (_url, init) => isOutline(init) ? nativeResponse({ ...outline, aiPlan: 'AIPLAN-MARKER steer toward the bell.' }) : nativeResponse(details(castIndex(init))));
+    const result = await ai(fetchMock).generateScenario(input);
+    expect(result.aiPlan).toBe('AIPLAN-MARKER steer toward the bell.');
+    for (const call of calls(fetchMock).slice(1)) {
+      expect(JSON.stringify(call.user)).not.toContain('AIPLAN-MARKER');
+      expect(call.user.outline).not.toHaveProperty('aiPlan');
+    }
+  });
+
   it('keeps at most two character calls in flight', async () => {
     let inFlight = 0;
     let peak = 0;

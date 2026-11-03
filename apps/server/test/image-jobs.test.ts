@@ -243,14 +243,14 @@ suite('background picture job', () => {
     expect(await load(id)).toMatchObject({ status: 'cancelled', started_at: null });
   });
 
-  it('makes seat and library portraits ready without events or attaching anything', async () => {
+  it('makes a seat portrait ready with an event and a library portrait without one, attaching nothing', async () => {
     const seat = await insert({ purpose: 'character', subject_id: 'some-character', attach: false });
     const library = await insert({ purpose: 'card', session_id: null, subject_id: 'editor-key', attach: false });
     const { run } = setup();
     expect(await run(seat)).toEqual({ status: 'ready' });
     expect(await run(library)).toEqual({ status: 'ready' });
     expect((await load(library)).status).toBe('ready');
-    expect(await events()).toEqual([]);
+    expect(await events()).toEqual([{ kind: 'portrait.ready', actor_id: ownerId, data: { imageId: seat, purpose: 'character', subjectId: 'some-character' } }]);
   });
 
   it('stores the plain sentence for each kind of failure and tells the director', async () => {

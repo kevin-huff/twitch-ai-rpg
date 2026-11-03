@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, type Beat, type ScriptSegment, type SessionState, type SpokenSegmentKind } from '@rpg/contracts';
+import { hasAudioTags, isSpokenSegmentKind, placePlayerLines, playerWords, stripAudioTags, type Beat, type ScriptSegment, type SessionState, type SpokenSegmentKind } from '@rpg/contracts';
 
 function playerSegments(beat: Beat, state: SessionState): ScriptSegment[] {
   return beat.lockedSubmissions.filter((submission) => submission.kind !== 'ooc').flatMap((submission): ScriptSegment[] => {
@@ -26,7 +26,16 @@ export function makeScript(beat: Beat, state: SessionState): ScriptSegment[] {
       recipientCharacterIds: segment.recipientCharacterIds, delivery: segment.delivery, sourceSubmissionIds: beat.lockedSubmissions.map((submission) => submission.id), voiceProfileId: npc?.voiceProfileId ?? 'voice_narrator', ttsEnabled: false,
       ...(segment.voiceText ? { voiceText: segment.voiceText } : {}) };
   });
-  return [...playerSegments(beat, state), ...segments];
+  const players = playerSegments(beat, state);
+  const playerById = new Map(players.map((segment) => [segment.sourceSubmissionIds[0]!, segment]));
+  const placement = placePlayerLines(players.map((segment) => segment.sourceSubmissionIds[0]!), beat.draft!.segments);
+  return [
+    ...placement.first.map((id) => playerById.get(id)!),
+    ...segments.flatMap((segment, index) => {
+      const answered = placement.before[index];
+      return answered ? [playerById.get(answered)!, segment] : [segment];
+    }),
+  ];
 }
 
 export interface SpeechLine { kind: SpokenSegmentKind; text: string; speaker: string; voiceProfileId: string; delivery: ScriptSegment['delivery']; voiceText?: string }

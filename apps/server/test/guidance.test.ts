@@ -224,23 +224,23 @@ suite('private director guidance', () => {
       expect(named).not.toHaveProperty('aiCastNpcIds');
     });
 
-    it('adds the standing note to plans and scripts, and never sends the story plan', async () => {
+    it('adds the standing note and the AI plan to plans and scripts, and sends no plan key when it is empty', async () => {
       const { alma } = await cast();
-      await guide({ standingNote: 'Keep the fog thick.', storyPlan: 'SECRET-PLAN-TEXT', aiCastNpcIds: [alma] });
+      await guide({ standingNote: 'Keep the fog thick.', storyPlan: 'The ferryman is the thief.', aiCastNpcIds: [alma] });
       await openConversation();
       const planning = await planContext();
       expect(planning.standingNote).toBe('Keep the fog thick.');
+      expect(planning.storyPlan).toBe('The ferryman is the thief.');
       await ok(beatCommand('approve_stakes', { classification: 'ordinary', contracts: [] }));
       await ok(beatCommand('lock_beat'));
       contexts = [];
       await ok(beatCommand('render_beat'));
       expect(contexts[0]!.standingNote).toBe('Keep the fog thick.');
-      for (const context of [planning, contexts[0]!]) expect(JSON.stringify(context)).not.toContain('SECRET-PLAN-TEXT');
-      const stored = (await pool.query('SELECT input FROM generation_jobs WHERE session_id=$1', [sessionId])).rows;
-      expect(JSON.stringify(stored)).not.toContain('SECRET-PLAN-TEXT');
-      await guide({ standingNote: '' });
+      expect(contexts[0]!.storyPlan).toBe('The ferryman is the thief.');
+      await guide({ standingNote: '', storyPlan: '' });
       await ok(beatCommand('render_beat'));
       expect(contexts.at(-1)).not.toHaveProperty('standingNote');
+      expect(contexts.at(-1)).not.toHaveProperty('storyPlan');
     });
   });
 });

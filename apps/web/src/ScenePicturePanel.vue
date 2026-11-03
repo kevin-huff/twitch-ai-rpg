@@ -39,11 +39,14 @@ const actionDrawn = computed(() => action.value?.state === 'making' || action.va
 const actionLine = computed(() => {
   if (!action.value) return '';
   if (action.value.state === 'failed') return action.value.message || 'This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now.';
+  const pinned = !hidden.value && !!props.snapshot.pinnedPicture;
   if (action.value.state === 'ready') {
+    if (pinned) return 'This beat\'s picture is ready. When you publish the beat, it waits behind your pinned picture until you press Release.';
     return hidden.value
       ? 'This beat\'s picture is ready. It stays hidden until you press Show picture.'
       : 'This beat\'s picture is ready. Viewers and players see it when you publish the beat.';
   }
+  if (pinned) return 'Making this beat\'s picture. When you publish the beat, it waits behind your pinned picture until you press Release.';
   return hidden.value
     ? 'Making this beat\'s picture. It stays hidden until you press Show picture.'
     : 'Making this beat\'s picture. Viewers and players see it when you publish the beat.';
@@ -61,7 +64,10 @@ const line = computed(() => {
     const base = props.snapshot.session.status === 'ended' ? FAILED_ENDED : (status.value?.message || FAILED_DEFAULT);
     return hidden.value ? base + HIDDEN_SUFFIX : base;
   }
-  if (!hidden.value && props.snapshot.pinnedPicture) return 'Your pinned picture is on the stream and the player seats instead. Press Release to show this one.';
+  if (!hidden.value && props.snapshot.pinnedPicture) {
+    if (props.snapshot.pinnedPicture.imageId === imageId.value) return 'This picture is pinned. It stays on the stream and the player seats until you press Release.';
+    return 'Your pinned picture is on the stream and the player seats instead. Press Release to show this one.';
+  }
   return hidden.value
     ? 'This picture is hidden. Viewers and players do not see it. Press Show picture to put it back.'
     : 'This picture is on the stream and the player seats.';

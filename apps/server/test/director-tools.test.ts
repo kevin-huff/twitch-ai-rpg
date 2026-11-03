@@ -312,20 +312,53 @@ suite('director corrections and private beat steering', () => {
     expect(JSON.stringify(contexts)).not.toContain(correction().reason);
   });
 
-  it('resets pre-lock proposals while retaining selected inputs, and keeps steering private but available to future planning', async () => {
+  it('keeps approved stakes when a note is saved after approval, and applies the note at the script', async () => {
     await prepare();
     const before = structuredClone(snapshot);
     expect(before.activeBeat!.steering).toBe('');
+    expect(before.activeBeat!.stakesApproved).toBe(true);
     const text = 'Private: focus on the locked cabinet, without deciding player actions.';
     const result = await ok(beatCommand('set_beat_steering', { text: `  ${text}  ` }));
     expect(snapshot.session).toEqual(before.session);
-    expect(snapshot.activeBeat).toMatchObject({ steering: text, phase: 'collecting', classification: null, contracts: [], stakesApproved: false, draft: null, approvedContinuity: [], lastError: null, selectedSubmissionIds: before.activeBeat!.selectedSubmissionIds, revision: before.activeBeat!.revision + 1, generation: before.activeBeat!.generation + 1 });
+    expect(snapshot.activeBeat).toMatchObject({ steering: text, phase: 'stakes_review', classification: before.activeBeat!.classification, contracts: before.activeBeat!.contracts, stakesApproved: true, inputSnapshotHash: before.activeBeat!.inputSnapshotHash, draft: null, lastError: null, selectedSubmissionIds: before.activeBeat!.selectedSubmissionIds, revision: before.activeBeat!.revision + 1, generation: before.activeBeat!.generation + 1 });
     expect(snapshot.submissions).toEqual(before.submissions);
     const audit = (await pool.query('SELECT data FROM audit_events WHERE command_id=$1', [result.json().commandId])).rows[0].data;
     expect(audit).toMatchObject({ before: '', after: text });
     for (const credential of [player, stage]) expect((await request(`/api/sessions/${sessionId}`, undefined, credential)).body).not.toContain(text);
+    await ok(beatCommand('lock_beat'));
+    await ok(beatCommand('render_beat'));
+    expect(contexts.at(-1)!.beat.steering).toBe(text);
+  });
+
+  it('still clears unapproved stakes when a note is saved in stakes review before approval', async () => {
+    await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
+    await submit('act');
+    await ok(beatCommand('plan_beat', { submissionIds: snapshot.submissions.filter(item => item.status === 'queued').map(item => item.id) }));
+    const before = structuredClone(snapshot);
+    expect(before.activeBeat!.phase).toBe('stakes_review');
+    expect(before.activeBeat!.stakesApproved).toBe(false);
+    const text = 'Private: keep the cabinet shut.';
+    await ok(beatCommand('set_beat_steering', { text }));
+    expect(snapshot.activeBeat).toMatchObject({ steering: text, phase: 'collecting', classification: null, contracts: [], stakesApproved: false, draft: null, lastError: null, selectedSubmissionIds: before.activeBeat!.selectedSubmissionIds, generation: before.activeBeat!.generation + 1 });
     await ok(beatCommand('plan_beat', { submissionIds: snapshot.activeBeat!.selectedSubmissionIds }));
     expect(contexts.at(-1)!.beat.steering).toBe(text);
+  });
+
+  it('releases a pinned picture when the show ends', async () => {
+    const imageId = randomUUID();
+    const row = (await pool.query('SELECT owner_id, scene FROM sessions WHERE id=$1', [sessionId])).rows[0];
+    await pool.query(
+      `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, status, prompt, width, height, provider, model, requested_by, file_hash, content_type, byte_length)
+       VALUES($1,$2,$3,'scene',$4,'pin-on-end-test','ready','A quiet harbor.',768,768,'fake','fake-image',$2,repeat('a', 64),'image/jpeg',1000)`,
+      [imageId, row.owner_id, sessionId, row.scene.id]);
+    await pool.query('UPDATE sessions SET pinned_image_id=$2 WHERE id=$1', [sessionId, imageId]);
+    await refresh();
+    const result = await ok({ type: 'set_status', status: 'ended', expectedStateRevision: snapshot.session.stateRevision });
+    expect((await pool.query('SELECT pinned_image_id FROM sessions WHERE id=$1', [sessionId])).rows[0].pinned_image_id).toBeNull();
+    const events = (await pool.query("SELECT data FROM audit_events WHERE session_id=$1 AND kind='picture.unpinned'", [sessionId])).rows;
+    expect(events).toHaveLength(1);
+    expect(events[0].data).toEqual({ imageId });
+    expect(result.json().snapshot.session.status).toBe('ended');
   });
 
   it('keeps locked dice, contracts, snapshots and counters when steering invalidates a reviewed draft', async () => {

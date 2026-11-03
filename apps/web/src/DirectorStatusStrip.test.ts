@@ -35,7 +35,7 @@ describe('DirectorStatusStrip', () => {
     transport.playback.mockResolvedValue(playback(false));
     const wrapper = mountStrip();
     await flushPromises();
-    expect(wrapper.find('ul').attributes('aria-label')).toBe('Show warnings');
+    expect(wrapper.find('ul').attributes('aria-label')).toBe('Show status');
     expect(wrapper.get('[data-testid="warning-no-audio"]').text()).toContain('No show audio');
     expect(wrapper.find('a').text()).toBe('Stream this show');
     expect(wrapper.find('a').attributes('href')).toContain('/sessions/show%20one/lobby#stage-links');

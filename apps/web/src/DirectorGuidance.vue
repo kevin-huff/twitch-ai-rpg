@@ -8,6 +8,7 @@ const emit = defineEmits<{ command: [command: Command, done: (error?: string) =>
 
 const helpPrefix = useId();
 const noteHelpId = `${helpPrefix}-note-help`;
+const planHelpId = `${helpPrefix}-plan-help`;
 const castHelpId = (id: string) => `${helpPrefix}-cast-${id}`;
 const guidance = computed(() => props.snapshot.guidance ?? EMPTY_GUIDANCE);
 const npcs = computed(() => props.snapshot.npcDetails ?? []);
@@ -27,8 +28,11 @@ const error = ref('');
 const noteStatus = ref('');
 const noteText = ref(guidance.value.standingNote);
 watch(() => guidance.value.standingNote, (next, previous) => { if (noteText.value === previous) noteText.value = next; });
+const planStatus = ref('');
+const planText = ref(guidance.value.storyPlan);
+watch(() => guidance.value.storyPlan, (next, previous) => { if (planText.value === previous) planText.value = next; });
 
-function save(fields: { aiCastNpcIds: string[] } | { standingNote: string }, onSaved?: () => void, onFailed?: () => void) {
+function save(fields: { aiCastNpcIds: string[] } | { standingNote: string } | { storyPlan: string }, onSaved?: () => void, onFailed?: () => void) {
   if (pending.value) return;
   pending.value = true;
   error.value = '';
@@ -53,6 +57,15 @@ function clearNote() {
   noteStatus.value = '';
   save({ standingNote: '' }, () => { noteText.value = ''; noteStatus.value = 'Standing note cleared.'; });
 }
+function savePlan() {
+  const text = planText.value.trim();
+  planStatus.value = '';
+  save({ storyPlan: text }, () => { planStatus.value = text ? 'AI plan saved. The AI reads it on every plan and script.' : 'AI plan cleared.'; });
+}
+function clearPlan() {
+  planStatus.value = '';
+  save({ storyPlan: '' }, () => { planText.value = ''; planStatus.value = 'AI plan cleared.'; });
+}
 </script>
 
 <template>
@@ -73,6 +86,18 @@ function clearNote() {
       </div>
       <p v-if="noteStatus" class="field-help" data-testid="standing-note-status" role="status">{{ noteStatus }}</p>
     </div>
+    <details class="guidance-plan" data-testid="ai-plan">
+      <summary>For the AI</summary>
+      <div class="guidance-note">
+        <label>AI plan for this show<textarea v-model="planText" data-testid="ai-plan-text" maxlength="12000" rows="6" :aria-describedby="planHelpId" /></label>
+        <p :id="planHelpId" class="field-help">The AI reads this on every plan and script and follows it. Players and the stream never see it. A new show starts with the scenario's For the AI text.</p>
+        <div class="actions">
+          <button type="button" class="secondary" data-testid="save-ai-plan" :disabled="pending" @click="savePlan">Save AI plan</button>
+          <button type="button" class="secondary" data-testid="clear-ai-plan" :disabled="pending" @click="clearPlan">Clear AI plan</button>
+        </div>
+        <p v-if="planStatus" class="field-help" data-testid="ai-plan-status" role="status">{{ planStatus }}</p>
+      </div>
+    </details>
     <p v-if="error" class="notice error" data-testid="guidance-error" role="alert">{{ error }}</p>
   </section>
 </template>
@@ -82,6 +107,7 @@ function clearNote() {
 .guidance-cast { min-width: 0; margin: 0; padding: 0; border: 0; }
 .guidance-cast legend { padding: 0; margin-bottom: 8px; }
 .guidance-note { display: grid; gap: 8px; min-width: 0; }
+.guidance-plan { min-width: 0; }
 .guidance-note textarea { width: 100%; box-sizing: border-box; }
 .director-guidance .actions { flex-wrap: wrap; gap: 12px; }
 .director-guidance p { margin: 0; }

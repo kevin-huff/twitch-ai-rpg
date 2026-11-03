@@ -9,7 +9,7 @@ import { readImageFile, storeImage } from './image-files';
 import type { ImageSlots } from './image-slots';
 import { PICTURE_MESSAGES, pictureFailure } from './picture-limits';
 import { changedLookNumbers, cleanDescription, descriptionBudget, fallbackDescription, momentPrompt, pictureDescriptionRequest } from './picture-prompts';
-import type { ImageRow } from './picture-views';
+import { RELEASED, type ImageRow } from './picture-views';
 
 export interface ImageJobContext {
   pool: Pool;
@@ -34,10 +34,10 @@ async function pictureEvent(client: PoolClient, row: ImageRow, kind: string) {
     session.rows[0]!.version, { imageId: row.id, purpose: row.purpose, subjectId: row.subject_id });
 }
 
-// Only scene rows and portraits headed for a live non-player character have people waiting on an event.
+// Only scene rows and portraits (a live non-player character's, or a player's seat portrait) have people waiting on an event.
 function failureKind(row: ImageRow): string | null {
   if (row.purpose === 'scene' && row.session_id) return 'picture.failed';
-  if (row.attach && row.session_id) return 'portrait.failed';
+  if ((row.attach || row.purpose === 'character') && row.session_id) return 'portrait.failed';
   return null;
 }
 
@@ -76,6 +76,10 @@ async function stillWanted(pool: Pool, row: ImageRow): Promise<Ended | null> {
   return null;
 }
 
+const PLACE_BEHIND_BEAT = `UPDATE images SET shelf_only=true WHERE id=$1 AND EXISTS (
+  SELECT 1 FROM images newer WHERE newer.session_id=$2 AND newer.purpose='scene' AND newer.subject_id=$3 AND newer.status='ready' AND newer.moment IS NOT NULL
+    AND ${RELEASED.replace(/\b(beat_id|released_at|shelf_only)\b/g, 'newer.$1')} AND COALESCE(newer.released_at, newer.created_at) > images.created_at)`;
+
 async function finishReady(context: ImageJobContext, row: ImageRow, file: { fileHash: string; contentType: string; byteLength: number }, workflowId: string | null): Promise<boolean> {
   return transaction(context.pool, async (client) => {
     const session = row.session_id
@@ -86,7 +90,13 @@ async function finishReady(context: ImageJobContext, row: ImageRow, file: { file
       [row.id, file.fileHash, file.contentType, file.byteLength, workflowId]);
     if (!updated.rowCount) return false;
     if (row.purpose === 'scene' && session) {
-      if (session.scene_id === row.subject_id) await pictureEvent(client, row, 'picture.ready');
+      if (session.scene_id === row.subject_id) {
+        // A place picture that finishes after a newer beat picture is already on the stream goes to the shelf, with no reveal.
+        if (!row.moment && !row.beat_id && !row.shows_beat_id && !row.shelf_only) await client.query(PLACE_BEHIND_BEAT, [row.id, row.session_id, row.subject_id]);
+        await pictureEvent(client, row, 'picture.ready');
+      }
+    } else if (row.purpose === 'character' && session) {
+      await pictureEvent(client, row, 'portrait.ready');
     } else if (row.purpose === 'npc' && session && updated.rows[0]!.attach) {
       // A later request for the same character wins, even when this one finishes last.
       const newest = await client.query<{ id: string }>(

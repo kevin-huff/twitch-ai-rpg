@@ -27,7 +27,7 @@ function moment(lines: { kind: 'narration' | 'npc_dialogue' | 'player_dialogue' 
 const published = new Map<string, PublishedBeat>([
   ['round-1', beat('round-1', [{ kind: 'npc_dialogue', text: 'Hello there.' }, { kind: 'narration', text: 'The gate creaks open. Then silence.' }], { beatNumber: 3, actionRoundNumber: 2 })],
   ['talk-1', { ...beat('talk-1', [{ kind: 'narration', text: 'The cellar door creaks. Dust falls.' }], { beatNumber: 5, actionRoundNumber: 0 }), kind: 'conversation' } as PublishedBeat],
-  ['beat-7', beat('beat-7', [{ kind: 'player_dialogue', text: 'We go now!' }], { beatNumber: 7, actionRoundNumber: 0 })],
+  ['beat-7', { ...beat('beat-7', [{ kind: 'player_dialogue', text: 'We go now!' }], { beatNumber: 7, actionRoundNumber: 0 }), kind: 'conversation' } as PublishedBeat],
 ]);
 
 function row(overrides: Partial<GalleryCaptionRow> = {}): GalleryCaptionRow {
@@ -75,6 +75,24 @@ describe('sceneCaption', () => {
   it('step 4: shows_beat_id found in the published beats', () => {
     expect(sceneCaption(row({ shows_beat_id: 'beat-7' }), published)).toEqual({ label: 'Beat 7', line: 'We go now!', tag: null });
     expect(sceneCaption(row({ shows_beat_id: 'beat-7', hidden: true }), published).tag).toBe('Hidden');
+  });
+
+  it('step 4: a picture that shows an action round reads Action round N, like the original', () => {
+    expect(sceneCaption(row({ shows_beat_id: 'round-1' }), published)).toEqual({ label: 'Action round 2', line: 'The gate creaks open.', tag: null });
+    expect(sceneCaption(row({ shows_beat_id: 'talk-1' }), published).label).toBe('Beat 5');
+  });
+
+  it('tags a shelf-only picture that was never pinned Not shown on stream, in place of Hidden', () => {
+    expect(sceneCaption(row({ shows_beat_id: 'beat-7', shelf_only: true }), published)).toEqual({ label: 'Beat 7', line: 'We go now!', tag: 'Not shown on stream' });
+    expect(sceneCaption(row({ shows_beat_id: 'beat-7', shelf_only: true, hidden: true }), published).tag).toBe('Not shown on stream');
+    expect(sceneCaption(row({ shelf_only: true, ever_pinned: false }), published).tag).toBe('Not shown on stream');
+    expect(sceneCaption(row({ moment: moment([{ kind: 'narration', text: 'Rain.' }]), shelf_only: true }), published).tag).toBe('Not shown on stream');
+  });
+
+  it('does not tag a shelf-only picture that was pinned at some point', () => {
+    expect(sceneCaption(row({ shows_beat_id: 'beat-7', shelf_only: true, ever_pinned: true }), published).tag).toBeNull();
+    expect(sceneCaption(row({ shows_beat_id: 'beat-7', shelf_only: true, ever_pinned: true, hidden: true }), published).tag).toBe('Hidden');
+    expect(sceneCaption(row({ shows_beat_id: 'beat-7', shelf_only: false, ever_pinned: true }), published).tag).toBeNull();
   });
 
   it('step 4 falls through to the moment when shows_beat_id is not published', () => {

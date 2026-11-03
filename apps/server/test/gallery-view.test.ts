@@ -15,7 +15,7 @@ const at = (seconds: number) => new Date(BASE + seconds * 1000);
 interface ImageFields {
   owner?: string; session?: string | null; purpose?: 'scene' | 'npc' | 'character'; subject: string;
   status?: 'making' | 'ready' | 'failed' | 'cancelled'; hidden?: boolean; beatId?: string | null; released?: boolean;
-  showsBeatId?: string | null; moment?: Record<string, unknown> | null; contentType?: 'image/jpeg' | 'image/png' | 'image/webp';
+  showsBeatId?: string | null; shelfOnly?: boolean; moment?: Record<string, unknown> | null; contentType?: 'image/jpeg' | 'image/png' | 'image/webp';
   model?: string; prompt?: string; width?: number; height?: number; time: number;
 }
 
@@ -39,13 +39,13 @@ suite('loadGalleryView', () => {
     const contentType = fields.contentType ?? 'image/jpeg';
     await pool.query(
       `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, status, hidden, prompt, width, height, provider, model,
-         requested_by, file_hash, content_type, byte_length, beat_id, released_at, shows_beat_id, moment, created_at)
-       VALUES($1,$2,$3,$4,$5,'gallery-view-test',$6,$7,$8,$9,$10,'fake',$11,$2,$12,$13,$14,$15,$16,$17,$18,$19)`,
+         requested_by, file_hash, content_type, byte_length, beat_id, released_at, shows_beat_id, moment, created_at, shelf_only)
+       VALUES($1,$2,$3,$4,$5,'gallery-view-test',$6,$7,$8,$9,$10,'fake',$11,$2,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [id, fields.owner ?? ownerId, fields.session === undefined ? sessionId : fields.session, fields.purpose ?? 'scene', fields.subject,
         status, fields.hidden ?? false, fields.prompt ?? `Prompt for ${id}`, fields.width ?? 768, fields.height ?? 512, fields.model ?? 'flux-3-klein',
         hasFile ? (++hashCounter).toString(16).padStart(64, '0') : null, hasFile ? contentType : null, hasFile ? 1000 : null,
         fields.beatId ?? null, fields.released ? at(fields.time + 1) : null, fields.showsBeatId ?? null,
-        fields.moment ? JSON.stringify(fields.moment) : null, at(fields.time)]);
+        fields.moment ? JSON.stringify(fields.moment) : null, at(fields.time), fields.shelfOnly ?? false]);
     return id;
   }
 
@@ -54,11 +54,11 @@ suite('loadGalleryView', () => {
       [randomUUID(), session, ownerId, randomUUID(), kind, data, at(time)]);
   }
 
-  async function publish(beatNumber: number, actionRoundNumber: number, segments: { kind: string; text: string }[]) {
+  async function publish(beatNumber: number, actionRoundNumber: number, segments: { kind: string; text: string }[], kind: 'action' | 'conversation' = 'action', session = sessionId) {
     const id = randomUUID();
-    await pool.query("INSERT INTO beats(id, session_id, kind, phase, data) VALUES($1,$2,'action','published','{}')", [id, sessionId]);
-    await pool.query('INSERT INTO published_beats(id, session_id, beat_number, data) VALUES($1,$2,$3,$4)', [id, sessionId, beatNumber, {
-      id, kind: 'action', beatNumber, actionRoundNumber, stateRevision: 1, publishedAt: at(0).toISOString(), rolls: [], outcomes: [], textOnly: true,
+    await pool.query("INSERT INTO beats(id, session_id, kind, phase, data) VALUES($1,$2,$3,'published','{}')", [id, session, kind]);
+    await pool.query('INSERT INTO published_beats(id, session_id, beat_number, data) VALUES($1,$2,$3,$4)', [id, session, beatNumber, {
+      id, kind, beatNumber, actionRoundNumber, stateRevision: 1, publishedAt: at(0).toISOString(), rolls: [], outcomes: [], textOnly: true,
       segments: segments.map((segment, index) => ({ id: `${id}-${index}`, kind: segment.kind, text: segment.text, speaker: null,
         recipientCharacterIds: [], delivery: 'public', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: false })),
     }]);
@@ -122,7 +122,7 @@ suite('loadGalleryView', () => {
 
     const roundOne = await publish(2, 1, [{ kind: 'npc_dialogue', text: 'Halt there.' }, { kind: 'narration', text: 'The gate groans open. Rain follows.' }]);
     const roundTwo = await publish(4, 2, [{ kind: 'narration', text: 'Lanterns swing over the canal! Boats scatter.' }]);
-    const beatThree = await publish(3, 1, [{ kind: 'npc_dialogue', text: 'You came back? Good.' }]);
+    const beatThree = await publish(3, 0, [{ kind: 'npc_dialogue', text: 'You came back? Good.' }], 'conversation');
 
     ids.hiddenPlace = await image({ subject: sceneIds.first, hidden: true, time: 20, prompt: 'A rainy club, "quiet" & dim.' });
     ids.replacedPublished = await image({ prompt: 'DRAFT-NARRATION-never-aired: The vault door swings open.', subject: sceneIds.first, status: 'cancelled', beatId: roundOne, released: true, time: 21 });
@@ -292,6 +292,30 @@ suite('loadGalleryView', () => {
     expect(empty.cast.map(member => member.name)).toEqual(['Rook', 'Lark', 'Quill', 'Pip']);
     expect(empty.morePortraits).toEqual([]);
     expect(empty.cover?.id).toBe(placeId);
+  });
+
+  it('tags Draw again pictures that never went on stream, keeps them off the cover, and labels a redraw like its round', async () => {
+    const id = `gallery-view-shelf-${randomUUID()}`;
+    const state = await createSession(id);
+    await save(state);
+    const sceneId = state.session.scene.id;
+    const round = await publish(1, 1, [{ kind: 'narration', text: 'The vault door swings open. Dust falls.' }], 'action', id);
+    const talk = await publish(2, 0, [{ kind: 'narration', text: 'Mara waves them in. Quietly.' }], 'conversation', id);
+    const redrawRound = await image({ session: id, subject: sceneId, showsBeatId: round, shelfOnly: true, time: 60 });
+    const redrawTalk = await image({ session: id, subject: sceneId, showsBeatId: talk, shelfOnly: true, time: 61 });
+    const pinnedOnce = await image({ session: id, subject: sceneId, showsBeatId: round, shelfOnly: true, time: 62 });
+    const onStream = await image({ session: id, subject: sceneId, showsBeatId: talk, time: 63 });
+    await event(id, 'picture.pinned', { imageId: pinnedOnce }, 64);
+    const loaded = await load(id);
+    const pictures = loaded.scenes[0]!.pictures;
+    const byPicture = new Map(pictures.map(entry => [entry.id, entry]));
+    expect(byPicture.get(redrawRound)).toMatchObject({ label: 'Action round 1', tag: 'Not shown on stream' });
+    expect(byPicture.get(redrawTalk)).toMatchObject({ label: 'Beat 2', tag: 'Not shown on stream' });
+    expect(byPicture.get(pinnedOnce)).toMatchObject({ label: 'Action round 1', tag: null });
+    expect(byPicture.get(onStream)).toMatchObject({ label: 'Beat 2', tag: null });
+    expect(pictures[0]!.id).toBe(redrawRound);
+    expect(loaded.cover?.id).toBe(pinnedOnce);
+    expect(loaded.cover?.id).not.toBe(redrawRound);
   });
 
   it('refuses a session that does not exist', async () => {

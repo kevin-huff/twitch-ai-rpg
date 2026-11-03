@@ -173,14 +173,17 @@ describe('native scenario and character library', () => {
     it('keeps every other scenario field in one closed Fine-tune', async () => {
       const wrapper = await open();
       const fine = wrapper.get('[data-testid="fine-tune"]');
+      const fineLabels = labelsIn(fine);
+      expect(fineLabels.findIndex(text => text.startsWith('For the AI'))).toBeGreaterThan(-1);
+      expect(fineLabels.findIndex(text => text.startsWith('For the AI'))).toBe(fineLabels.findIndex(text => text.startsWith('Director notes')) - 1);
       expect(fine.element.tagName).toBe('DETAILS');
       expect(fine.attributes('open')).toBeUndefined();
       expect(fine.get('summary').text()).toBe('Fine-tune');
       const inside = labelsIn(fine).join('|');
-      for (const text of ['Genre', 'Tone', 'Picture style', 'Picture model', 'Player hooks', 'Objectives', 'Discoveries', 'Opportunities', 'Director notes', 'Conversation word target', 'Action word target']) expect(inside).toContain(text);
+      for (const text of ['Genre', 'Tone', 'Picture style', 'Picture model', 'Player hooks', 'Objectives', 'Discoveries', 'Opportunities', 'For the AI', 'Director notes', 'Conversation word target', 'Action word target']) expect(inside).toContain(text);
       expect(fine.text()).toContain('Tracks & facts');
       expect(inside).not.toContain("What the AI won't write");
-      for (const field of ['scenario.genre', 'scenario.tone', 'scenario.pictureStyle', 'scenario.playerHooks', 'scenario.objectives', 'scenario.discoveries', 'scenario.opportunities', 'scenario.directorNotes']) expect(fine.element.contains(fieldControl(wrapper, field).element), field).toBe(true);
+      for (const field of ['scenario.genre', 'scenario.tone', 'scenario.pictureStyle', 'scenario.playerHooks', 'scenario.objectives', 'scenario.discoveries', 'scenario.opportunities', 'scenario.aiPlan', 'scenario.directorNotes']) expect(fine.element.contains(fieldControl(wrapper, field).element), field).toBe(true);
       wrapper.unmount();
     });
 
@@ -316,7 +319,8 @@ describe('native scenario and character library', () => {
     expect(description('Location name')).toMatch(/director.*location choices/i);
     expect(description('What the party sees on arrival')).toMatch(/what the party sees when they arrive/i);
     expect(description('What the party sees on arrival')).toMatch(/change scene copies it.*scene description/i);
-    expect(description('Director notes')).toMatch(/private.*reference/i);
+    expect(description('Director notes')).toBe('Only you read these. The AI never does. Put what the AI should follow in For the AI.');
+    expect(description('For the AI')).toBe('The AI reads this. Players never see it. The AI follows it on every round, and each new show starts with its own copy, which you can change on the director page under For the AI.');
     expect(description('Motivation')).toMatch(/private.*reference/i);
     const tickLabel = wrapper.findAll('label').find(label => label.text().startsWith('Tick automatically'))!;
     const tickId = tickLabel.get('select').attributes('aria-describedby');
@@ -436,7 +440,7 @@ describe('native scenario and character library', () => {
     await wrapper.findAll('label').find(label => label.text().startsWith('Relationship to the party'))!.get('select').setValue('friendly');
     const fields = wrapper.findAllComponents({ name: 'FieldGenerator' }).map(control => control.props('field'));
     expect(fields.sort()).toEqual([
-      'scenario.title', 'scenario.premise', 'scenario.genre', 'scenario.tone', 'scenario.pictureStyle', 'scenario.directorNotes',
+      'scenario.title', 'scenario.premise', 'scenario.genre', 'scenario.tone', 'scenario.pictureStyle', 'scenario.aiPlan', 'scenario.directorNotes',
       'scenario.boundaries', 'scenario.playerHooks', 'scenario.objectives', 'scenario.discoveries', 'scenario.opportunities',
       'scene.title', 'scene.description', 'location.title', 'location.description',
       'npc.displayName', 'npc.role', 'npc.appearance', 'npc.hiddenIdentity', 'npc.motivation', 'npc.goal', 'npc.mood',
@@ -1151,6 +1155,19 @@ describe('native scenario and character library', () => {
       const wrapper = mount(Library); await flushPromises();
       await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
       expect((wrapper.get('[data-testid="scenario-picture-model"]').element as HTMLSelectElement).value).toBe(PICTURE_MODELS[1]!.id);
+      wrapper.unmount();
+    });
+
+    it('saves the AI plan only when it is typed in', async () => {
+      const wrapper = mount(Library); await flushPromises();
+      await wrapper.get('[data-testid="edit-scenario-scenario-one"]').trigger('click');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(Object.keys((transport.saveScenario.mock.calls.at(-1)![0] as { definition: object }).definition)).not.toContain('aiPlan');
+      const box = fieldControl(wrapper, 'scenario.aiPlan').element.closest('.generated-field')!.querySelector('textarea')!;
+      expect(box.getAttribute('maxlength')).toBe('12000');
+      await wrapper.get('[data-testid="fine-tune"]').findAll('textarea').find(area => area.element === box)!.setValue('Head for the tower.');
+      await wrapper.get('[data-testid="save-scenario"]').trigger('click'); await flushPromises();
+      expect(transport.saveScenario).toHaveBeenLastCalledWith(expect.objectContaining({ definition: expect.objectContaining({ aiPlan: 'Head for the tower.' }) }));
       wrapper.unmount();
     });
 

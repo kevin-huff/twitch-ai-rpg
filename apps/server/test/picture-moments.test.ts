@@ -173,7 +173,7 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: second.id });
   });
 
-  it('cancels an opening picture still being made when the first round is published', async () => {
+  it('leaves an opening picture still being made running when the first round is published, and shelves it when it finishes late', async () => {
     const images = new GatedImages();
     const openScene = images.gate('Scene picture');
     await boot(images);
@@ -189,18 +189,18 @@ suite('picture moments: a late picture never takes the stream back from a newer 
     await publish(show, view);
     const action = await actionRow(show);
 
+    // The opening picture has no moment, so the round does not stop it.
     const openingCall = images.calls.find(call => call.title === 'Scene picture')!;
-    await waitFor(() => openingCall.signal?.aborted === true, 'the opening job to be stopped');
     const sceneId = (await director(show)).session.scene.id;
-    expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
+    expect(openingCall.signal?.aborted).toBe(false);
+    expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'making' });
     expect((await stageView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
-    const status = (await director(show)).scenePictureStatus;
-    expect(status).toMatchObject({ imageId: action.id });
-    expect(status?.state).not.toBe('making');
+    expect((await director(show)).scenePictureStatus).toMatchObject({ imageId: action.id, state: 'ready' });
 
     openScene();
     await waitFor(() => images.calls.every(call => call.settled), 'the opening job to settle');
-    expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
+    expect((await rows(show)).find(row => row.id === opening.id)).toMatchObject({ status: 'ready' });
+    expect((await pool.query('SELECT shelf_only FROM images WHERE id=$1', [opening.id])).rows[0].shelf_only).toBe(true);
     expect((await stageView(show)).scenePicture).toMatchObject({ imageId: action.id, sceneId });
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: action.id });
   });

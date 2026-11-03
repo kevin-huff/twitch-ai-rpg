@@ -889,7 +889,7 @@ describe('sending a Say line and a Do line together', () => {
       return {};
     });
 
-    it('reads Send both anyway, restamps the visible box and sends the hidden box on its old stamp, which the server refuses', async () => {
+    it('reads Send both anyway, restamps both boxes and saves both lines', async () => {
       const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
       await fillBoth(w);
       await moveOn();
@@ -898,19 +898,24 @@ describe('sending a Say line and a Do line together', () => {
       await submit(w);
       expect(transport.command).toHaveBeenCalledTimes(2);
       expect(transport.command.mock.calls[0]![1]).toEqual(expect.objectContaining({ kind: 'say', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
-      expect(transport.command.mock.calls[1]![1]).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-a', expectedInputEpoch: 0 }));
-      expect(pressed(w, 'Do something')).toBe('true');
-      expect(value(w, 'action-input')).toBe('Climb the fire escape');
-      expect(w.get('[data-testid="send-refused"]').text()).toContain('The input window changed.');
-      expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+      expect(transport.command.mock.calls[1]![1]).toEqual(expect.objectContaining({ kind: 'act', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
+      expect(value(w, 'speech-input')).toBe('');
+      await click(w, 'Do something');
+      expect(value(w, 'action-input')).toBe('');
+      expect(w.find('[data-testid="send-refused"]').exists()).toBe(false);
+      expect(w.get('[role="status"]').text()).toBe('Saved. The director has both lines.');
     });
 
-    it('does not restamp a hidden box silently: the player must see its notice and press Yes, they still fit', async () => {
+    it('with a fresh visible box, Send both does not restamp a hidden box whose story moved: the player must see its notice and press Yes, they still fit', async () => {
       const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
       await fillBoth(w);
       await moveOn();
+      await click(w, 'Say something');
+      await click(w, 'Yes, they still fit');
+      expect(w.get('button.send').text()).toBe('Send both');
       serverFor(3);
       await submit(w);
+      expect(transport.command.mock.calls[0]![1]).toEqual(expect.objectContaining({ kind: 'say', contextBeatId: 'beat-b', expectedInputEpoch: 3 }));
       expect(transport.command.mock.calls.every(call => call[1].kind !== 'act' || call[1].expectedInputEpoch === 0)).toBe(true);
       expect(w.get('[data-testid="review-current-input"]').element.parentElement!.textContent).toContain('The story moved on while you were typing.');
       await click(w, 'Yes, they still fit');

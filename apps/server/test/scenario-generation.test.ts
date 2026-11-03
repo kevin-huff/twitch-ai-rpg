@@ -18,6 +18,11 @@ const npc = (overrides: Record<string, unknown> = {}) => ({
 const run = (overrides: Record<string, unknown> = {}, boundaries: string[] = []) => scenarioFromDraft(draftOf(overrides), boundaries, counter());
 
 describe('scenarioFromDraft', () => {
+  it('copies the AI plan trimmed and adds no key for a blank one', () => {
+    expect(run({ aiPlan: '  Head for the tower.  ' }).definition.aiPlan).toBe('Head for the tower.');
+    expect('aiPlan' in run({ aiPlan: '   ' }).definition).toBe(false);
+    expect('aiPlan' in run().definition).toBe(false);
+  });
   it('assigns ids in order: places, opening scene, characters, tracks, facts', () => {
     const { definition } = run({
       npcs: [npc()], tracks: [{ label: 'Search', kind: 'progress', max: 4 }], facts: [{ text: 'The ship left at dawn.' }],

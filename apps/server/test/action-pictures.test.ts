@@ -305,18 +305,18 @@ suite('action pictures', () => {
   }
   const markReady = (id: string) => pool.query("UPDATE images SET status='ready', file_hash=repeat('a', 64), content_type='image/png', byte_length=10, finished_at=clock_timestamp() WHERE id=$1", [id]);
 
-  it('cancels and stops the older pictures still being made when a newer round is released', async () => {
+  it('cancels and stops the older round picture still being made when a newer round is released, and leaves the place picture drawing', async () => {
     const { images, provider } = service({ hold: () => new Promise<void>(() => undefined) });
     const current = await state();
     const { scene, round } = await makingOnStream(images, provider, current);
     const newer = await reserveAction(images, current, beat({ id: 'beat-action-2' }));
     await markReady(newer!);
     expect(await release(images, 'beat-action-2')).toBe(newer);
-    for (const id of [scene, round]) {
-      expect(await load(id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
-      expect((await load(id)).finished_at).toBeInstanceOf(Date);
-    }
-    await waitFor(() => provider.requests.every(request => request.signal?.aborted), 'both picture calls to stop');
+    expect(await load(round)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
+    expect((await load(round)).finished_at).toBeInstanceOf(Date);
+    await waitFor(() => provider.requests[0]!.signal?.aborted === true, 'the older round picture call to stop');
+    expect(await load(scene)).toMatchObject({ status: 'making', message: null });
+    expect(provider.requests[1]!.signal?.aborted).toBe(false);
     expect(await load(newer!)).toMatchObject({ status: 'ready', message: null });
   });
 
@@ -341,7 +341,7 @@ suite('action pictures', () => {
     await markReady(newer!);
     await expect(transaction(pool, async (client) => {
       expect(await images.releaseActionPicture(client, sessionId, 'beat-action-2')).toBe(newer);
-      expect((await client.query('SELECT status FROM images WHERE id=$1', [scene])).rows[0].status).toBe('cancelled');
+      expect((await client.query('SELECT status FROM images WHERE id=$1', [round])).rows[0].status).toBe('cancelled');
       await new Promise(resolve => setTimeout(resolve, 100));
       throw new Error('publish failed');
     })).rejects.toThrow('publish failed');

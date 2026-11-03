@@ -360,6 +360,19 @@ describe('ScenePicturePanel', () => {
       expect(line(mountPanel(snapshot({}, { state: 'ready', imageId })))).not.toBe(PINNED);
     });
 
+    it('words the beat picture lines and the status line for the pinned case', () => {
+      const pinnedPicture = { imageId: '33333333-3333-4333-8333-333333333333', kind: 'place', label: 'The cellar' };
+      const aLine = (w: ReturnType<typeof mountPanel>) => w.get('[data-testid="action-picture-status"]').text();
+      const withAction = (state: string, pinned: unknown, st: Record<string, unknown> = {}) =>
+        mountPanel(snapshot({ pinnedPicture: pinned, actionPicture: action(state, state === 'ready' ? { imageId } : {}) } as never, { state: 'ready', imageId, ...st }));
+      expect(aLine(withAction('ready', pinnedPicture))).toBe("This beat's picture is ready. When you publish the beat, it waits behind your pinned picture until you press Release.");
+      expect(aLine(withAction('making', pinnedPicture))).toBe("Making this beat's picture. When you publish the beat, it waits behind your pinned picture until you press Release.");
+      expect(aLine(withAction('ready', pinnedPicture, { hidden: true }))).toBe(READY_HIDDEN);
+      expect(aLine(withAction('ready', undefined))).toBe(READY);
+      expect(line(withAction('ready', { ...pinnedPicture, imageId }))).toBe('This picture is pinned. It stays on the stream and the player seats until you press Release.');
+      expect(line(withAction('ready', pinnedPicture))).toBe('Your pinned picture is on the stream and the player seats instead. Press Release to show this one.');
+    });
+
     it('emits hide when Hide picture is pressed for a held action picture', async () => {
       const w = mountPanel(snapshot({ actionPicture: action('making') }));
       await button(w, 'hide').trigger('click');

@@ -56,7 +56,6 @@ export interface PictureEngine {
   reserveScene(client: PoolClient, state: SessionState, actor: Actor, mode?: 'request' | 'automatic'): Promise<string | null>;
   reserveNpcPortrait(client: PoolClient, state: SessionState, npcId: string, actor: Actor, mode?: 'request' | 'automatic'): Promise<string | null>;
   reserveBeatPicture(client: PoolClient, state: SessionState, beatId: string, actor: Actor, options?: { shelfOnly?: boolean }): Promise<string | null>;
-  startOver(client: PoolClient, sessionId: string, sceneId: string): Promise<void>;
   run(imageIds: string[]): void;
   generateNow(imageId: string): Promise<void>;
 }

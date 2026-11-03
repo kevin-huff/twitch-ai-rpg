@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PICTURE_MODELS, PICTURE_NEGATIVE_PROMPT, type SessionState } from '@rpg/contracts';
+import { CommandSchema, PICTURE_MODELS, PICTURE_NEGATIVE_PROMPT, type SessionState } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
 import { buildApp } from '../src/app';
+import { executeCommand } from '../src/commands';
+import { FakeAiProvider } from '../src/fake-provider';
 import { createPool, transaction } from '../src/database';
 import { FakeImageProvider, type FakeImageOptions } from '../src/fake-images';
 import { ImageService, PICTURE_MESSAGES, type ImageReservation, type ImageServiceOptions } from '../src/images';
@@ -354,75 +356,64 @@ suite('image service', () => {
     expect((await load(second!)).prompt.startsWith('Gouache poster.')).toBe(true);
   });
 
-  describe('start over', () => {
-    async function seed(fields: { status?: string; sceneId?: string; beatId?: string | null; released?: boolean; purpose?: string }) {
+  describe('pictures that are held or on the shelf', () => {
+    async function seed(fields: { status?: string; beatId?: string | null; shelfOnly?: boolean; sceneId?: string }) {
       const current = await state();
       const id = randomUUID();
+      const ready = (fields.status ?? 'making') === 'ready';
       await pool.query(
-        `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, status, prompt, width, height, provider, model, requested_by, beat_id, released_at, file_hash, content_type, byte_length)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'a picture',1344,768,'fake','fake-image',$2,$8, CASE WHEN $9::boolean THEN clock_timestamp() END,
-           CASE WHEN $7='ready' THEN repeat('a', 64) END, CASE WHEN $7='ready' THEN 'image/png' END, CASE WHEN $7='ready' THEN 100 END)`,
-        [id, ownerId, sessionId, fields.purpose ?? 'scene', fields.sceneId ?? current.session.scene.id, `scene:${sessionId}`, fields.status ?? 'making', fields.beatId ?? null, fields.released ?? false]);
+        `INSERT INTO images(id, owner_id, session_id, purpose, subject_id, limit_key, status, prompt, width, height, provider, model, requested_by, beat_id, shelf_only, file_hash, content_type, byte_length)
+         VALUES($1,$2,$3,'scene',$4,$5,$6,'a picture',1344,768,'fake','fake-image',$2,$7,$8,
+           CASE WHEN $9::boolean THEN repeat('a', 64) END, CASE WHEN $9::boolean THEN 'image/png' END, CASE WHEN $9::boolean THEN 100 END)`,
+        [id, ownerId, sessionId, fields.sceneId ?? current.session.scene.id, `scene:${sessionId}`, fields.status ?? 'making', fields.beatId ?? null, fields.shelfOnly ?? false, ready]);
       return id;
     }
-    const startOver = (images: ImageService, sceneId?: string) =>
-      transaction(pool, async client => images.startOver(client, sessionId, sceneId ?? (await state()).session.scene.id));
 
-    it('cancels this scene\'s released pictures still being made and nothing else', async () => {
-      const { images } = service();
-      const placeId = await seed({});
-      const releasedRound = await seed({ beatId: 'round-1', released: true });
-      const heldRound = await seed({ beatId: 'round-2' });
-      const readyId = await seed({ status: 'ready' });
-      const otherScene = await seed({ sceneId: 'another-scene' });
-      const portrait = await seed({ purpose: 'npc' });
-      await startOver(images);
-      for (const id of [placeId, releasedRound]) {
-        expect(await load(id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
-        expect((await load(id)).finished_at).toBeInstanceOf(Date);
-      }
-      for (const [id, status] of [[heldRound, 'making'], [readyId, 'ready'], [otherScene, 'making'], [portrait, 'making']] as const) {
-        expect(await load(id)).toMatchObject({ status, message: null });
-      }
-    });
-
-    it('does nothing with pictures off or after close', async () => {
-      const id = await seed({});
-      await startOver(service(null).images);
-      expect(await statusOf(id)).toBe('making');
-      const closed = service().images;
-      await closed.close();
-      await startOver(closed);
-      expect(await statusOf(id)).toBe('making');
-    });
-
-    it('stops a running picture only once the transaction commits', async () => {
+    it('stops a held beat picture still being drawn once the transaction that retires it commits', async () => {
       const gate = deferred();
       const { images, provider } = service({ hold: () => gate.promise });
-      const current = await state();
-      const id = await reserveScene(images, current);
-      images.run([id!]);
-      await waitFor(() => provider.requests.length === 1, 'the picture to reach the service');
+      const id = await seed({ beatId: 'round-1' });
+      images.run([id]);
+      await waitFor(() => provider.requests.length === 1, 'the held picture to reach the service');
+      const call = provider.requests[0]!.signal;
+      expect(call?.aborted).toBe(false);
+      await transaction(pool, client => images.retireHeldPictures(client, sessionId, 'round-1'));
+      await waitFor(() => call?.aborted === true, 'the call to be stopped');
+      expect(await load(id)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.actionSuperseded });
+      gate.resolve();
+    });
+
+    it('keeps a held picture drawing when the transaction that would retire it rolls back', async () => {
+      const gate = deferred();
+      const { images, provider } = service({ hold: () => gate.promise });
+      const id = await seed({ beatId: 'round-1' });
+      images.run([id]);
+      await waitFor(() => provider.requests.length === 1, 'the held picture to reach the service');
       await expect(transaction(pool, async (client) => {
-        await images.startOver(client, sessionId, current.session.scene.id);
-        expect((await client.query('SELECT status FROM images WHERE id=$1', [id])).rows[0].status).toBe('cancelled');
+        await images.retireHeldPictures(client, sessionId, 'round-1');
         throw new Error('the command failed');
       })).rejects.toThrow('the command failed');
-      expect(await statusOf(id!)).toBe('making');
       await new Promise(resolve => setTimeout(resolve, 150));
+      expect(provider.requests[0]!.signal?.aborted).toBe(false);
       gate.resolve();
-      await waitFor(async () => await statusOf(id!) === 'ready', 'the picture the rollback kept');
+      await waitFor(async () => await statusOf(id) === 'ready', 'the picture the rollback kept');
+    });
 
-      const second = deferred();
-      const held = service({ hold: () => second.promise });
-      const next = await reserveScene(held.images, current);
-      held.images.run([next!]);
-      await waitFor(() => held.provider.requests.length === 1, 'the second picture to reach the service');
-      const stopped = held.provider.requests[0]!.signal;
-      await startOver(held.images, current.session.scene.id);
-      await waitFor(() => stopped?.aborted === true, 'the call to be stopped');
-      expect(await load(next!)).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.startedOver });
-      second.resolve();
+    it('still reserves the opening picture when going live and the scene\'s only ready picture is shelf-only', async () => {
+      const gate = deferred();
+      const { images } = service({ hold: () => gate.promise });
+      const current = await state();
+      const shelf = await seed({ status: 'ready', shelfOnly: true });
+      const response = await executeCommand(
+        { pool, provider: new FakeAiProvider(), rollDie: () => 4, pictures: images, picturesEnabled: true },
+        sessionId, host, CommandSchema.parse({ commandId: randomUUID(), type: 'set_status', status: 'live', expectedStateRevision: current.session.stateRevision }));
+      expect(response.snapshot.session.status).toBe('live');
+      const all = await rows();
+      expect(all).toHaveLength(2);
+      const opening = all.find(row => row.id !== shelf)!;
+      expect(opening).toMatchObject({ purpose: 'scene', subject_id: current.session.scene.id, shelf_only: false, beat_id: null });
+      expect(await load(shelf)).toMatchObject({ status: 'ready', shelf_only: true });
+      gate.resolve();
     });
   });
 

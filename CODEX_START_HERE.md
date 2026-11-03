@@ -25,6 +25,70 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## November 2 update: AI direction
+
+Six tasks from the Story Table board (326, 327, 328, 450, 451, 452) and the fourteen follow-ups found by sprint 2's final reviewers were built on November 2. The AI now has a private plan for each show, treats the director's notes as instructions, knows where the party came from and what the last two beats said, hears each on-stage character's motive and goal, and marks which player line each of its pieces answers. Nothing is committed or deployed yet.
+
+What changed:
+
+- Contracts (`packages/contracts/src/index.ts`, `field-generation.ts`): `ScenarioDefinitionSchema` gains an optional `aiPlan` (up to 12,000 characters, no default, so saved scenarios parse and re-save unchanged) and the scenario draft gains `aiPlan` too. `ProviderContext` gains `storyPlan`, `cameFrom` and `sceneBeatCount`. Both kinds of draft segment gain an optional `answersSubmissionId`; published segments never carry it. A new `placePlayerLines` helper decides the order of player lines and is the only place that rule lives. The field writer has a "For the AI" field, and the character, motive and goal instructions say hidden twists go in secrets.
+- Providers (`packages/providers/src/index.ts`): the plan, the standing note and the beat note leave the game data and become a labelled direction block ("Plan for the show:", "Standing note:", "Note for this beat:") at the end of the system instructions, after every rule and just before the required JSON schema. The block says the AI follows them as instructions and that only the fixed dice, the players' words, the boundaries and what each character knows can limit them. The prompt gains `scene.cameFrom`, `recentBeats` (the last two published beats, with `thisScene`), and `motivation` and `goal` on every character it already sends, plus rules for the arrival, the recent beats and one unprompted agenda per scene. The render prompt explains `answersSubmissionId`, and the draft check deletes a mark that names no selected line, on every attempt, without refusing the reply. Conversation plans send `output_config: { effort: 'low' }` on both attempts; action plans and every script send nothing. The scenario writer asks for an `aiPlan` and keeps twists out of motive and goal.
+- Server (`commands.ts`, `app.ts`, `script.ts`, `scenario-generation.ts`): a beat note saved after stakes approval keeps the approved stakes and applies at the script. `safeContext` adds the plan; `sceneArrival` counts the beats published since the newest scene change and, while that count is 0 and the place changed, names the place the party left (title only, never a description). A new custom show copies the scenario's `aiPlan` into its guidance when it is made. `makeScript` plays each answered player line just before the first piece that answers it. `scenarioFromDraft` copies a non-blank `aiPlan`.
+- Pictures, server (`images.ts`, `image-jobs.ts`, `picture-views.ts`) and gallery (`gallery-model.ts`, `gallery-view.ts`): see follow-ups 3, 5, 8, 9, 11 and 12.
+- Library and director page (`Library.vue`, `DirectorGuidance.vue`): Fine-tune has a For the AI box above Director notes. The director page has a closed For the AI fold after the standing note, with the box AI plan for this show, Save AI plan and Clear AI plan.
+- Script review and seats (`BeatPanel.vue`, `ScriptEditor.vue`, `SeatStory.vue`): the "Read aloud first, word for word" header lists only the lines no piece answers, an answered line shows just above its first answering piece, and the seat shows the published order with the rolls right after the leading run of player lines.
+- Help (`apps/web/src/help/content.ts`): new For the AI and What the AI reads entries, firmer wording for Note for the AI and Standing note, the paired line order, faster conversation planning, a glossary entry, and the corrections listed under the follow-ups. `help-labels.test.ts` checks the new labels.
+- Docs: `docs/ARCHITECTURE.md` has a new "AI direction" section and the corrected picture and script paragraphs. `.local/ai-direction-2026-11-02/prompt-size.mts` measures the plan and script prompts before and after.
+
+Kevin's decisions:
+
+- 289: on the first beat after a move to a different place the AI sees the place the party left, and every plan and script carries the last two published beats' public text. Private place notes are never sent.
+- 290: each scenario and each show has a private For the AI plan. Director notes stay private and the AI never reads them. A new show copies the scenario's plan, and the director can edit the show's copy during the show.
+- 291: the beat note, the standing note and the plan are followed as instructions. Only the fixed dice, the players' words, the boundaries and what each character knows can limit them. A beat note saved after stakes approval applies at the script and keeps the approved stakes.
+- 432: every plan and script request carries each sent character's motive and goal, and at most one of them per scene may push their own agenda without being spoken to. Twists go in secrets, which still go no further than before.
+- 435: the AI marks which player line each piece answers, and the script plays each line followed by the pieces that answer it. Lines no piece answers play first. The words never change, and today's order is the fallback when marks are missing or wrong.
+- 303: conversation rounds are planned at the AI's low effort. Action-round plans and every script keep the default effort. Kevin chose this over the recommendation; low effort planned in 29 s instead of 47 to 52 s at the beta, with terser stakes.
+
+Prompt growth, measured by `prompt-size.mts` on beta beat 13 (7 player lines, 2 characters sent, 12 earlier beats of history; no network call; tokens are characters divided by 4). The full table is in `.local/ai-direction-2026-11-02/prompt-sizes.md`.
+
+| Request | Before (d6449c2) | After, no plan | After, 4,823-character plan |
+| --- | ---: | ---: | ---: |
+| Plan | 49,647 characters (about 12,412 tokens) | 56,109 (14,027), +6,462 | 61,385 (15,346), +11,738 |
+| Script | 45,040 characters (about 11,260 tokens) | 51,800 (12,950), +6,760 | 57,076 (14,269), +12,036 |
+
+Without a plan the growth is 13.0% on the plan request and 15.0% on the script request. Most of it is the last two beats' text (+6,117 characters in the user part of both requests); the rules and direction wording add 345 to the plan's system part and 643 to the script's. A 4,823-character plan adds 5,276 characters to each request, so the full growth is 23.6% on the plan and 26.7% on the script.
+
+Sprint 2 follow-ups fixed:
+
+1. Help's Send both paragraph (`help/content.ts`) says "If one line is refused, the other still goes" and now follows the entries that explain Say and Do.
+2. Send both anyway (`PlayerSeat.vue`) gives both boxes a fresh stamp, so a hidden box whose story also moved is no longer refused again.
+3. The public gallery (`gallery-model.ts`, `gallery-view.ts`) tags a Draw again picture that never went on stream "Not shown on stream" unless it was pinned at some point, and such a picture can no longer be the cover.
+4. The pictures help covers every beat in the held-picture sentence, no longer says only action rounds use their narration, and says Draw again belongs to pictures of a beat (place pictures and portraits have none).
+5. Publishing a beat no longer cancels a place picture still being drawn (`images.ts`). If a beat picture is already on the stream when the place picture finishes (`image-jobs.ts`), it lands on the shelf with no reveal; otherwise it shows with its reveal. Older beat pictures are still cancelled.
+6. After Pause anyway and Resume, the beat panel keeps the sentence about the thrown-away work (`BeatPanel.vue`); it is chosen when the error arrives.
+7. The scene picture panel (`ScenePicturePanel.vue`) words the beat-picture line for a pinned picture ("it waits behind your pinned picture until you press Release") and says "This picture is pinned" when the pin is the scene's own picture.
+8. A seat portrait records `portrait.ready` or `portrait.failed` (`image-jobs.ts`), so an open shelf shows it without waiting for another event.
+9. Three test gaps closed with tests that fail when the bug is planted: `retireHeldPictures` stops a picture still being drawn and going live needs `AND NOT shelf_only` in `RELEASED` (both in `image-service.test.ts`), and `aiWorking` stays true until the last of two overlapping plan or script requests ends (`apps/web/src/table.test.ts`). `START_OVER` and the two `startOver` methods had no callers and are gone.
+10. This file and `docs/ARCHITECTURE.md` say that abandoning a beat cancels its held pictures and that the shelf leaves them out; "Saving…" uses the ellipsis character.
+11. Ending the show releases a pin and records `picture.unpinned` (`commands.ts`), so a pin cannot outlive the show.
+12. A Draw again picture of an action round reads like the beat it shows ("Beat N" or "Action round N") on the shelf, in the Pinned line and in the gallery.
+13. The status strip's list is named "Show status" (`DirectorStatusStrip.vue`).
+14. The reviewer's browser spec is now `tests/browser/shelf-and-pins.spec.ts` and stays in the suite.
+
+Deploy notes: no migration. The server changes (prompts, script order, pictures), so redeploy it from a clean export of main after Kevin commits. Reload the director page, the library and every player seat. No stream page file changed (`StageScene.vue`, `StageOverlay.vue` and `pictures.ts` are untouched), so OBS needs no reload.
+
+What Kevin should check:
+
+- Existing scenarios' character goals and motivations. The story writer used to put a hidden twist in a goal (Teddy's goal at the beta ended with his parasite secret), and goal and motivation now reach the AI. Move any twist into that character's secrets. Newly written scenarios keep twists out of goals; saved ones are not rewritten.
+- Existing scenarios and shows have no For the AI text until he writes one. A new show copies its scenario's text, so a show already made needs the director-page box filled in.
+- A character pushes their own goal only when the AI is given them: tick the character under On stage for the AI. With none ticked the AI hears about the characters players speak to, or up to two who are here when nobody is spoken to.
+- Notes are binding now. A Note for this beat or a Standing note that was only a hint before is followed as an instruction, so reread the ones he has saved.
+- Live AI checks the main agent still owes: that ClewdR accepts the low effort setting on conversation plans, that stakes still come back valid and quicker, that the AI follows a For the AI plan and a beat note saved after stakes approval, that the replies carry usable reply marks, and that no more than one character acts unprompted in a scene.
+
+Known leftovers: a reply mark the AI gets wrong is dropped and the beat plays in today's order, so a bad mark costs only the pairing. The last two beats are sent in full, which is most of the prompt growth. A Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
+
+How it was checked: the baseline at d6449c2 was typecheck clean; `npm test` 2,991 passed and 889 skipped; database suite 1,333 passed in 103 files; browser suite 53 of 53. On the finished code, before the integration pass: `npm test` 3,065 passed, 1 failed and 904 skipped (the database tests) in 206 files; database suite 1,357 passed and 1 failed in 105 files; typecheck reported two errors. The failing tests and both type errors shared one cause: the fake scenario writer's draft (`apps/server/src/fake-provider.ts`) and the draft in `apps/server/test/scenario-drafts.test.ts` had no `aiPlan`. Integration gave both an empty `aiPlan`. Final counts: typecheck clean; `npm test` 3,066 passed and 904 skipped (the database tests) in 206 files; database suite 1,358 passed in 105 files; browser suite 55 of 55, including the two new shelf-and-pins tests. Prompt sizes were measured on the final provider with `prompt-size.mts`, and a rerun at integration gave the same figures.
+
 ## October 31 update (evening): pictures for every beat, the shelf and pinning
 
 Nine picture tasks from the Story Table board (349, 347, 348, 350, 351, 352, 353, 354, 355), a simpler Rest, a way to send a Say line and a Do line together, and the ten follow-ups found by the last review were built on the evening of October 31 and November 2.
@@ -32,11 +96,11 @@ Nine picture tasks from the Story Table board (349, 347, 348, 350, 351, 352, 353
 What changed:
 
 - Contracts and migration 017 (`packages/contracts/src/images.ts`, `packages/contracts/src/index.ts`, `migrations/017_picture_shelf.sql`): the public scene picture gains an optional `kind` (`place` or `beat`; missing means place). New schemas cover the pinned picture, the director's picture list and the pin and redraw requests. Every snapshot (director, player and stage) may carry an optional `pinnedPicture`. The `rest` command is now just a command ID and the expected state revision. The migration adds `sessions.pinned_image_id` (cleared if the image is deleted) and `images.shelf_only`, with a check that only scene pictures with no beat can be shelf-only.
-- Server pictures (`images.ts`, `commands.ts`, `image-jobs.ts`, `gallery-model.ts`): every beat whose script has narration, conversations included, reserves one held picture when its narration first appears or changes and releases it when the beat is published. Each picture still asks the AI for one description and keeps the words-only fallback when that call fails; it is never retried. Conversation pictures read "Beat N" in the gallery and are titled "Beat picture"; action rounds are unchanged.
+- Server pictures (`images.ts`, `commands.ts`, `image-jobs.ts`, `gallery-model.ts`): every beat whose script has narration, conversations included, reserves one held picture when its narration first appears or changes and releases it when the beat is published. Each picture still asks the AI for one description and keeps the words-only fallback when that call fails; it is never retried. Conversation pictures read "Beat N" in the gallery and are titled "Beat picture"; action rounds are unchanged. Abandoning a beat cancels its held pictures, and the shelf leaves out an abandoned beat's held pictures.
 - Server list and pin (`picture-list.ts`, `shelf-routes.ts`, `picture-views.ts`, `repository.ts`): `GET /api/sessions/:id/pictures` is host-only and lists every picture, newest first, with label, status, on-stream and pinned flags. `POST /api/sessions/:id/pinned-picture` pins a ready picture of the show (held pictures and other shows' pictures are refused) and `POST /api/sessions/:id/pinned-picture/release` lets go. Seats and stage links can fetch the pinned image. The list stays out of the snapshot.
 - Draw again (`picture-routes.ts`): the beat-picture route takes an optional `beatId` of any published beat. That redraw is shelf-only: it copies the beat's scene words, lands on the shelf and never replaces the stream picture. Hide also releases the pin.
 - Rest (`commands.ts`): one press sets every character's strain to 0. It keeps all lines and the input stamp, refuses with "Nobody has strain to rest." when nobody has strain, and keeps the old safety checks (live or paused show, no AI work running, no round past taking lines, show unchanged since the panel loaded).
-- Director page: new picture shelf (`PictureShelf.vue`) below the picture panel with Show on stream and Draw again, a "Pinned: label, Release" line in the status strip, and Rest everyone with a confirmation. Who is here and Rest read "Waiting for the AI to finish" while the AI works and "Saving..." only during their own save. The scene picture panel talks about this beat's picture.
+- Director page: new picture shelf (`PictureShelf.vue`) below the picture panel with Show on stream and Draw again, a "Pinned: label, Release" line in the status strip, and Rest everyone with a confirmation. Who is here and Rest read "Waiting for the AI to finish" while the AI works and "Saving…" only during their own save. The scene picture panel talks about this beat's picture.
 - Stream pages and seats: the stage scene, the overlay and the seat heading pick their picture through one helper, `displayedPicture` in `pictures.ts`, so the pin wins over the newest scene picture. Beat pictures swap in quietly; only places play the 4-second reveal, and nothing reveals while a picture is pinned. Pinned portraits fit whole. A broken file falls back to the scene picture. The stage layouts were not split.
 - Seat (`PlayerSeat.vue`): when both the Say and Do boxes hold words, Send both sends two separate lines (Say, then Do). If one is refused, the other still goes and the refused box keeps its words and its reason.
 - Help (`apps/web/src/help/content.ts`): entries for the shelf, Show on stream, Release, Draw again, the pinned line and Send both; pictures-on-every-beat, reveal and Rest entries corrected.
@@ -52,7 +116,7 @@ Kevin's decisions:
 Sprint 1 follow-ups fixed:
 
 1. The scene form puts back the description it opened with when a newly picked place has no arrival text and the director has not edited it, so the warning shows.
-2. Who is here and Rest say they are waiting for the AI instead of "Saving...".
+2. Who is here and Rest say they are waiting for the AI instead of "Saving…".
 3. After Pause anyway, the beat panel says in plain words that the AI's work was thrown away, with no red server message.
 4. The pause confirmation row shows only while a plan or script request runs and closes when it ends.
 5. Who is here treats a changed show as stale on its own, so Start over and Save work after the ticks are set back.
@@ -64,7 +128,7 @@ Sprint 1 follow-ups fixed:
 
 Deploy notes: `017_picture_shelf.sql` runs at start-up. Reload every OBS browser source and every stream tab, because the stage pages changed. Every beat now asks the AI for a picture description, with the words-only fallback when that fails, so expect more picture work per show.
 
-Known leftovers: a Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. Publishing a beat replaces older pictures of the scene that are still being drawn. The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
+Known leftovers: a Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. Publishing a beat replaces older beat pictures of the scene that are still being drawn (the November 2 update stops it cancelling a place picture). The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
 
 How it was checked: the baseline at ee39f62 was typecheck clean; `npm test` 2,893 passed and 825 skipped; database suite 1,267 passed in 99 files; browser suite 52 of 52. Final counts, after the main agent's fix below: the typecheck reports no errors; `npm test` 2,991 passed and 889 skipped (the database tests) in 125 files; database suite 1,333 passed in 103 files; browser suite 53 of 53.
 
@@ -135,7 +199,7 @@ Fixes after the main agent's own review: Roll the dice turns only the three item
 
 Deploy note: after deploying, reload every OBS browser source; migration 016 runs at start-up.
 
-Known leftovers: the story plan is stored but unused until Kevin decides on a private AI plan; how firmly the AI follows notes is still a pending decision; stopped page ids are kept per show; live edits wait until a rolled round is published or abandoned; and the show-audio line sits under Show all on the director page.
+Known leftovers: the story plan is stored but unused until Kevin decides on a private AI plan; how firmly the AI follows notes is still a pending decision (both were settled on November 2); stopped page ids are kept per show; live edits wait until a rolled round is published or abandoned; and the show-audio line sits under Show all on the director page.
 
 ## October 29 update: beta-night fixes
 
@@ -448,7 +512,7 @@ These operations preserve published dialogue, dice, effects, and cached audio. T
 
 **Corrections** references any published beat and adds an explicit public note. It can also replace an existing public fact, set character strain, or set a public track value. Review the before/after preview and choose whether each existing factual NPC memory should be corrected or retained as a belief. Uninformed characters gain no knowledge. A text-only clarification is valid. Corrections require a private reason and keep pending player lines; they preserve original publications, dice, recordings, and beat/round counters. Setting a countdown value does not trigger its completion effects. The public correction ledger remains visible for older beats outside the recent transcript window.
 
-**Private AI direction** applies only to the active beat and is sent to the AI with the next plan or render. Saving before lock clears the plan and requires fresh stakes review. Saving after lock clears the script and continuity review while preserving locked input and dice. Saving also discards unsaved script or stakes edits. Save and Clear are explicit; another director's revision preserves unsaved direction until **Reload saved direction**. New beats start with empty direction. Stored direction is excluded from public snapshots and is never sent directly to speech synthesis; the director must still review generated text before publication.
+**Private AI direction** applies only to the active beat and is sent to the AI with the next plan or render. Saving before lock clears the plan and requires fresh stakes review. Since November 2, a note saved after the stakes are approved and before lock keeps the approved stakes and applies at the script. Saving after lock clears the script and continuity review while preserving locked input and dice. Saving also discards unsaved script or stakes edits. Save and Clear are explicit; another director's revision preserves unsaved direction until **Reload saved direction**. New beats start with empty direction. Stored direction is excluded from public snapshots and is never sent directly to speech synthesis; the director must still review generated text before publication.
 
 ## Selected live providers
 

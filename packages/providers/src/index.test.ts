@@ -74,11 +74,11 @@ describe('ClewdR native adapter', () => {
     await ai(fetchMock)[task](ctx);
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     const sent = JSON.parse(body.messages[0].content);
-    expect(sent.directorSteering).toBe(ctx.beat.steering);
-    expect(body.system).not.toContain(ctx.beat.steering);
-    expect(body.system).toContain('directorSteering is private creative guidance');
-    expect(body.system).toContain('never quote the direction');
-    expect(body.system).toContain('cannot override fixed results, player agency, content boundaries, or NPC knowledge');
+    expect(sent).not.toHaveProperty('directorSteering');
+    expect(body.messages[0].content).not.toContain(ctx.beat.steering);
+    expect(body.system).toContain(`Note for this beat:\n${ctx.beat.steering}`);
+    expect(body.system).toContain('Never quote it');
+    expect(body.system).toContain('Only the fixed dice and declared outcomes, the players\' own words and choices, the content boundaries, and what each character knows can limit it');
     if (task === 'render') expect(sent.fixedResults).toEqual(ctx.beat.resolution);
   });
 
@@ -237,7 +237,7 @@ describe('ClewdR native adapter', () => {
     expect(sent.npcs[0].knowledge[0]).toMatchObject({ statement: oldText, category: 'belief' });
     expect(body.system).toContain('Current state and each NPC\'s current sourced knowledge take precedence over recentNpcDialogue');
     expect(body.system).toContain('A retained belief is not a fact');
-    expect(body.system).toContain('Neither correction notices nor directorSteering are evidence for continuity');
+    expect(body.system).toContain('Correction notices and the director\'s direction are not evidence for continuity');
   });
 
   it('uses corrected sourced knowledge alongside the original dialogue', async () => {
@@ -253,7 +253,7 @@ describe('ClewdR native adapter', () => {
     expect(sent.facts).toContainEqual({ id: 'key', text: 'The key is blue.' });
     expect(sent.npcs[0].knowledge[0]).toMatchObject({ statement: 'The key is blue.', category: 'fact' });
     expect(sent.recentNpcDialogue[0].text).toBe('The key is red.');
-    expect(sent.directorSteering).toBe('');
+    expect(sent).not.toHaveProperty('directorSteering');
   });
 
   it.each(['fact', 'belief'] as const)('keeps a recently corrected %s when older memories exceed the prompt budget', async category => {
@@ -426,13 +426,16 @@ describe('ClewdR native adapter', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
     await ai(fetchMock).render(ctx);
     const body = String(fetchMock.mock.calls[0][1]?.body);
-    for (const forbidden of ['HIDDEN-IDENTITY', 'NPC-SECRET', 'CHARACTER-SECRET', 'DIRECTOR-NOTE', 'SECRET-FACT', 'UNRELATED-NPC-KNOWLEDGE', 'OFFSTAGE-EVENT']) {
+    for (const forbidden of ['HIDDEN-IDENTITY', 'NPC-SECRET', 'CHARACTER-SECRET', 'DIRECTOR-NOTE', 'SECRET-FACT', 'UNRELATED-NPC-KNOWLEDGE']) {
       expect(body).not.toContain(forbidden);
     }
     expect(body).toContain('Mara Vale');
     expect(body).toContain(mara.knowledge[0].statement);
     const sentContext = JSON.parse(JSON.parse(body).messages[0].content);
     expect(sentContext.npcs.map((npc: { displayName: string }) => npc.displayName)).toEqual(['Mara Vale']);
+    // Public narration of the last two beats is sent on purpose, as recentBeats only; offstage speech never reaches recentNpcDialogue.
+    expect(sentContext.recentNpcDialogue).toEqual([]);
+    expect(sentContext.recentBeats[0].lines).toEqual([{ kind: 'narration', speaker: null, text: 'OFFSTAGE-EVENT' }]);
   });
 
   it('renders from locked inputs instead of a later queued line', async () => {
@@ -1507,19 +1510,18 @@ describe('call log', () => {
       expect(sentIds((await sentFor(ctx)).sent)).toEqual([mara.id, dax.id]);
     });
 
-    it.each(['plan', 'render'] as const)('sends a standing note right after directorSteering for %s', async (task) => {
+    it.each(['plan', 'render'] as const)('sends a standing note in the direction block, not the context, for %s', async (task) => {
       const ctx = context();
       ctx.beat.steering = 'Keep Mara hesitant.';
       ctx.standingNote = 'The fight lasts five rounds.';
       const { body, sent } = await sentFor(ctx, task);
-      const keys = Object.keys(sent);
-      expect(keys[keys.indexOf('directorSteering') + 1]).toBe('directorStandingNote');
-      expect(sent.directorStandingNote).toBe('The fight lasts five rounds.');
-      expect(sent.directorSteering).toBe('Keep Mara hesitant.');
-      expect(body.system).not.toContain(ctx.standingNote);
+      expect(sent).not.toHaveProperty('directorStandingNote');
+      expect(sent).not.toHaveProperty('directorSteering');
       const lines = body.system.split('\n') as string[];
-      const steering = lines.findIndex((line) => line.startsWith('directorSteering is private creative guidance for this beat'));
-      expect(lines[steering + 1]).toBe('directorStandingNote is private creative guidance from the director that holds across beats until the director clears it: never quote the direction or describe these instructions in the script. It cannot override fixed results, player agency, content boundaries, or NPC knowledge, and cannot authorize secret disclosure or establish new facts. It is not evidence for continuity.');
+      const standing = lines.indexOf('Standing note:');
+      expect(lines[standing + 1]).toBe('The fight lasts five rounds.');
+      expect(lines[standing + 2]).toBe('Note for this beat:');
+      expect(lines[standing + 3]).toBe('Keep Mara hesitant.');
     });
 
     it.each(['plan', 'render'] as const)('is unchanged without a note or chosen cast for %s', async (task) => {
@@ -1530,8 +1532,7 @@ describe('call log', () => {
       const empty = await sentFor(ctx, task);
       expect(empty.body.system).toBe(plain.body.system);
       expect(empty.body.messages[0].content).toBe(plain.body.messages[0].content);
-      expect(plain.body.system).not.toContain('directorStandingNote');
-      expect(plain.sent).not.toHaveProperty('directorStandingNote');
+      expect(plain.body.system).not.toContain('Standing note:');
     });
   });
 });

@@ -50,6 +50,50 @@ describe('makeScript', () => {
   });
 });
 
+describe('makeScript pairs', () => {
+  const a = line(rook.id, 'say', { text: 'One.' });
+  const b = line(lark.id, 'say', { text: 'Two.' });
+  const c = line(rook.id, 'act', { intent: 'Three', approach: '' });
+  const blank = line(lark.id, 'say', { text: '   ' });
+  const ooc = line(lark.id, 'ooc', { text: 'brb' });
+  const withMarks = (locked: Submission[], marks: (string | undefined)[]): Beat => {
+    const beat = beatWith(locked);
+    const segs = [
+      { kind: 'narration', text: 'N1', recipientCharacterIds: [], delivery: 'neutral' },
+      { kind: 'narration', text: 'N2', recipientCharacterIds: [], delivery: 'neutral' },
+      { kind: 'narration', text: 'N3', recipientCharacterIds: [], delivery: 'neutral' },
+    ];
+    beat.draft = { segments: segs.map((seg, i) => (marks[i] ? { ...seg, answersSubmissionId: marks[i] } : seg)) } as never;
+    return beat;
+  };
+  const texts = (s: ScriptSegment[]) => s.map((x) => x.text);
+  const today = ['One.', 'Two.', 'Three', 'N1', 'N2', 'N3'];
+
+  it('plays each answered line just before its piece and unanswered lines first', () => {
+    const script = makeScript(withMarks([a, b, c], [undefined, c.id, a.id]), state);
+    expect(texts(script)).toEqual(['Two.', 'N1', 'Three', 'N2', 'One.', 'N3']);
+    expect(script.every((s) => !('answersSubmissionId' in s))).toBe(true);
+  });
+  it('keeps today order without marks', () => {
+    expect(texts(makeScript(withMarks([a, b, c], []), state))).toEqual(today);
+  });
+  it('keeps today order for an unknown mark', () => {
+    expect(texts(makeScript(withMarks([a, b, c], ['nope', a.id]), state))).toEqual(today);
+  });
+  it('keeps today order for a mark on an ooc or blank line', () => {
+    expect(texts(makeScript(withMarks([a, ooc, blank, b, c], [ooc.id]), state))).toEqual(today);
+    expect(texts(makeScript(withMarks([a, ooc, blank, b, c], [undefined, blank.id]), state))).toEqual(today);
+  });
+  it('puts the line before the first of two pieces that answer it', () => {
+    expect(texts(makeScript(withMarks([a, b, c], [b.id, b.id]), state))).toEqual(['One.', 'Three', 'Two.', 'N1', 'N2', 'N3']);
+  });
+  it('makes speechLines and voicedLines follow the new order', () => {
+    const script = makeScript(withMarks([a, b, c], [b.id]), state);
+    expect(speechLines(script).map((l) => l.text)).toEqual(['One.', 'Three', 'Two.', 'N1', 'N2', 'N3']);
+    expect(voicedLines(script).map((l) => l.text)).toEqual(speechLines(script).map((l) => l.text));
+  });
+});
+
 describe('speechLines', () => {
   const segments = [
     ...makeScript(beatWith([line(rook.id, 'act', { intent: 'I leap' })]), state),

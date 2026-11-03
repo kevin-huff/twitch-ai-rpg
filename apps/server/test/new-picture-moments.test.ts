@@ -171,11 +171,11 @@ suite('New picture against action rounds', () => {
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: action.id });
   });
 
-  it('cancels a New picture still being made when the round is published, and accepts New picture again', async () => {
+  it('leaves a New picture still being made running when the round is published, shelves it when it finishes late, and accepts New picture again', async () => {
     await boot();
     const show = await liveWithPicture();
     const drafted = await draftedActionRound(show);
-    images.gate('Scene picture');
+    const openPressed = images.gate('Scene picture');
     const pressed = await newPicture(show);
     expect(pressed.statusCode, pressed.body).toBe(202);
     const pressedId = pressed.json().imageId as string;
@@ -186,14 +186,16 @@ suite('New picture against action rounds', () => {
     await publish(show, drafted);
     const action = await actionRow(show);
 
-    // The round is the newer moment, so the unfinished picture is cancelled and its call is stopped once the publish has committed.
-    const cancelled = (await rows(show)).find(row => row.id === pressedId)!;
-    expect(cancelled).toMatchObject({ status: 'cancelled', message: PICTURE_MESSAGES.newerMoment });
-    await waitFor(async () => signal.aborted, 'the new picture call to be stopped');
+    // A place picture has no moment, so publishing the round does not stop it. It finishes behind the round's picture and lands on the shelf.
+    expect((await rows(show)).find(row => row.id === pressedId)).toMatchObject({ status: 'making' });
+    expect(signal.aborted).toBe(false);
     expect(await stageImage(show)).toBe(action.id);
     expect((await director(show)).scenePictureStatus).toMatchObject({ state: 'ready', imageId: action.id });
 
-    images.gates.clear();
+    openPressed();
+    await waitFor(async () => (await rows(show)).find(row => row.id === pressedId)?.status === 'ready', 'the late new picture');
+    expect((await pool.query('SELECT shelf_only FROM images WHERE id=$1', [pressedId])).rows[0].shelf_only).toBe(true);
+    expect(await stageImage(show)).toBe(action.id);
     const again = await newPicture(show);
     expect(again.statusCode, again.body).toBe(202);
     await waitFor(async () => (await rows(show)).find(row => row.id === again.json().imageId)?.status === 'ready', 'the second new picture');

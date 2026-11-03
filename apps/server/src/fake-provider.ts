@@ -109,7 +109,7 @@ export class FakeAiProvider implements AiProvider {
     const write = async (field: FieldGenerationField) => (await this.generateField({ field, seed: prompt })).text;
     return {
       title: await write('scenario.title'), premise: await write('scenario.premise'),
-      genre: 'Mystery', tone: 'Tense but playful', pictureStyle: 'Ink and watercolor storybook art, warm lantern light', directorNotes: 'Keep the pace brisk and let the players lead.',
+      genre: 'Mystery', tone: 'Tense but playful', pictureStyle: 'Ink and watercolor storybook art, warm lantern light', directorNotes: 'Keep the pace brisk and let the players lead.', aiPlan: '',
       playerHooks: ['A stranger asks the party for a favor.'], objectives: ['Find out who is behind the trouble.'],
       discoveries: ['A torn note points to the second place.'], opportunities: ['A quiet moment to talk to the guide.'],
       suggestedBoundaries: ['Keep serious injuries off screen.'],

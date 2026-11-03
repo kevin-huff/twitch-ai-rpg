@@ -119,7 +119,19 @@ function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
   validateSources(parsed.continuity, beat, state);
   return parsed;
 }
-function safeContext(state: SessionState, beat: Beat, selected: Submission[], published: ProviderContext['history'], publicCorrections: PublicCorrection[], guidance: Guidance): ProviderContext {
+// Beats published since the newest scene change (or since the show began), and the title of the place the party just left while no beat has been published since a move to a different place. Place descriptions never leave this function.
+async function sceneArrival(client: PoolClient, sessionId: string, state: SessionState): Promise<{ sceneBeatCount: number; cameFrom?: string }> {
+  const change = (await client.query<{ sequence: string; before: { scene?: SessionState['session']['scene']; locations?: SessionState['locations'] } | null; afterLocationId: string | null }>(
+    "SELECT sequence, data->'before' AS before, data->'after'->'scene'->>'locationId' AS \"afterLocationId\" FROM audit_events WHERE session_id=$1 AND kind='change_scene' ORDER BY sequence DESC LIMIT 1", [sessionId])).rows[0];
+  const count = (await client.query<{ count: string }>(
+    "SELECT count(*) AS count FROM audit_events WHERE session_id=$1 AND kind='beat.published' AND sequence > $2", [sessionId, change?.sequence ?? 0])).rows[0];
+  const sceneBeatCount = Number(count?.count ?? 0);
+  const left = change?.before;
+  if (sceneBeatCount !== 0 || !left?.scene || !Array.isArray(left.locations) || left.scene.locationId === change?.afterLocationId) return { sceneBeatCount };
+  const cameFrom = sceneLocationTitle({ ...state, session: { ...state.session, scene: left.scene }, locations: left.locations });
+  return { sceneBeatCount, ...(cameFrom ? { cameFrom } : {}) };
+}
+function safeContext(state: SessionState, beat: Beat, selected: Submission[], published: ProviderContext['history'], publicCorrections: PublicCorrection[], guidance: Guidance, arrival: { sceneBeatCount: number; cameFrom?: string }): ProviderContext {
   const safe = structuredClone(state);
   const place = sceneLocationTitle(state);
   safe.directorNotes = '';
@@ -132,7 +144,8 @@ function safeContext(state: SessionState, beat: Beat, selected: Submission[], pu
   safe.facts = safe.facts.filter((fact) => fact.visibility === 'public');
   safe.tracks = safe.tracks.filter((track) => track.visibility === 'public');
   return { state: safe, ...(place ? { place } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12),
-    ...(guidance.standingNote ? { standingNote: guidance.standingNote } : {}), ...(chosen.size ? { aiCastNpcIds: [...chosen] } : {}) };
+    ...(guidance.standingNote ? { standingNote: guidance.standingNote } : {}), ...(guidance.storyPlan ? { storyPlan: guidance.storyPlan } : {}), ...(chosen.size ? { aiCastNpcIds: [...chosen] } : {}),
+    sceneBeatCount: arrival.sceneBeatCount, ...(arrival.cameFrom ? { cameFrom: arrival.cameFrom } : {}) };
 }
 
 function validateCorrections(changes: CorrectionChange[], state: SessionState) {
@@ -498,7 +511,14 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session state changed.');
       if (beat && ['locked', 'draft_review'].includes(beat.phase) && command.status === 'ended') conflict('Publish or abandon the beat in progress before ending the show.');
       state.session.status = command.status; state.session.stateRevision++;
-      if (command.status === 'ended') await client.query("UPDATE credentials SET expires_at=LEAST(expires_at, clock_timestamp()+interval '12 hours') WHERE session_id=$1 AND role='player' AND revoked_at IS NULL", [sessionId]);
+      if (command.status === 'ended') {
+        await client.query("UPDATE credentials SET expires_at=LEAST(expires_at, clock_timestamp()+interval '12 hours') WHERE session_id=$1 AND role='player' AND revoked_at IS NULL", [sessionId]);
+        const pinned = (await client.query<{ pinned_image_id: string | null }>('SELECT pinned_image_id FROM sessions WHERE id=$1', [sessionId])).rows[0]?.pinned_image_id ?? null;
+        if (pinned) {
+          await client.query('UPDATE sessions SET pinned_image_id=NULL WHERE id=$1', [sessionId]);
+          await recordEvent(client, sessionId, actor, randomUUID(), 'picture.unpinned', state.session.stateRevision, { imageId: pinned });
+        }
+      }
       if (beat && command.status !== 'ended') { beat.sourceStateRevision = state.session.stateRevision; await saveBeat(client, beat); }
       await saveState(client, state);
     } else {
@@ -523,7 +543,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         } else if (!['locked', 'draft_review'].includes(beat.phase)) conflict('Lock the accepted inputs before rendering.');
         beat.generation++; beat.revision++; beat.lastError = null;
         const selected = task === 'render' ? beat.lockedSubmissions : all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id));
-        const context = safeContext(state, beat, selected, await history(client, sessionId), await corrections(client, sessionId), await readGuidance(client, sessionId));
+        const context = safeContext(state, beat, selected, await history(client, sessionId), await corrections(client, sessionId), await readGuidance(client, sessionId), await sceneArrival(client, sessionId, state));
         const snapshotHash = digest(context);
         const jobId = randomUUID();
         await saveBeat(client, beat);
@@ -534,11 +554,15 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the session before steering a beat.');
         const before = beat.steering ?? '';
         beat.steering = command.text;
-        if (['collecting', 'stakes_review'].includes(beat.phase)) {
-          beat.phase = 'collecting'; beat.classification = null; beat.contracts = []; beat.stakesApproved = false;
-          beat.inputSnapshotHash = null;
-        } else beat.phase = 'locked';
-        beat.draft = null; beat.approvedContinuity = []; beat.lastError = null; beat.generation++;
+        if (beat.phase === 'stakes_review' && beat.stakesApproved) {
+          beat.lastError = null; beat.generation++;
+        } else {
+          if (['collecting', 'stakes_review'].includes(beat.phase)) {
+            beat.phase = 'collecting'; beat.classification = null; beat.contracts = []; beat.stakesApproved = false;
+            beat.inputSnapshotHash = null;
+          } else beat.phase = 'locked';
+          beat.draft = null; beat.approvedContinuity = []; beat.lastError = null; beat.generation++;
+        }
         eventData = { beatId: beat.id, before, after: beat.steering };
         await client.query("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND status='running'", [beat.id]);
       } else if (command.type === 'approve_stakes') {

@@ -206,8 +206,67 @@ describe('beat panel action bar', () => {
     expect(rows[1]!.get('.player-line-tag').text()).toBe('Action');
     expect(rows[1]!.text()).toContain('Climb the fire escape.');
     expect(rows[1]!.text()).toContain('Quietly.');
-    expect(wrapper.text()).toContain('Player lines and actions are read first, word for word, when you publish.');
+    expect(wrapper.text()).toContain('Player lines play word for word when you publish: the lines under Read aloud first play first, and a line shown inside the script plays just before the part that answers it. Only saved script edits will be published.');
     wrapper.unmount();
+  });
+
+  describe('player lines placed next to the pieces that answer them', () => {
+    const say1 = line('say-1');
+    const say2 = line('say-2', 'say', 'pc-1');
+    const say3 = line('say-3');
+    const piece = (text: string, mark?: string) => ({ kind: 'narration', speakerNpcId: null, text, recipientCharacterIds: [], delivery: 'neutral', ...(mark ? { answersSubmissionId: mark } : {}) });
+    const withDraft = (draftSegments: unknown[]) => review({ lockedSubmissions: [say1, say2, say3], draft: { segments: draftSegments, continuity: [], directorSummary: '' } });
+    const readFirstIds = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="player-line"]').map(row => row.text());
+    const inline = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="script-player-line"]');
+
+    it('shows an answered line just above its first answering piece, and the rest under Read aloud first', async () => {
+      const wrapper = await mountPanel(snapshot(withDraft([piece('First reply.', 'say-2'), piece('Second reply.', 'say-2'), piece('Third reply.')])));
+      expect(inline(wrapper)).toHaveLength(1);
+      expect(inline(wrapper)[0]!.text()).toContain('Line say-2');
+      const rows = wrapper.findAll('.segment');
+      expect(rows[0]!.find('[data-testid="script-player-line"]').exists()).toBe(true);
+      expect(rows[1]!.find('[data-testid="script-player-line"]').exists()).toBe(false);
+      const first = readFirstIds(wrapper);
+      expect(first).toHaveLength(2);
+      expect(first.join(' ')).toContain('Line say-1');
+      expect(first.join(' ')).toContain('Line say-3');
+      expect(first.join(' ')).not.toContain('Line say-2');
+      wrapper.unmount();
+    });
+
+    it('keeps every line under Read aloud first when there are no marks', async () => {
+      const wrapper = await mountPanel(snapshot(withDraft([piece('A reply.'), piece('Another.')])));
+      expect(inline(wrapper)).toHaveLength(0);
+      expect(readFirstIds(wrapper)).toHaveLength(3);
+      wrapper.unmount();
+    });
+
+    it('keeps every line under Read aloud first when a mark names no player line', async () => {
+      const wrapper = await mountPanel(snapshot(withDraft([piece('A reply.', 'say-2'), piece('Another.', 'nobody')])));
+      expect(inline(wrapper)).toHaveLength(0);
+      expect(readFirstIds(wrapper)).toHaveLength(3);
+      wrapper.unmount();
+    });
+
+    it('moves the line back up when its answering piece is removed, and keeps the mark through a text edit', async () => {
+      const wrapper = await mountPanel(snapshot(withDraft([piece('Answer.', 'say-2'), piece('Closing.')])));
+      expect(inline(wrapper)).toHaveLength(1);
+      await wrapper.get('[data-testid="script-line-0"]').trigger('click');
+      await wrapper.get('[data-testid="script-segment-0"]').setValue('Edited answer.');
+      expect(inline(wrapper)).toHaveLength(1);
+      expect(readFirstIds(wrapper)).toHaveLength(2);
+      await wrapper.get('[data-testid="script-remove-0"]').trigger('click');
+      expect(inline(wrapper)).toHaveLength(0);
+      expect(readFirstIds(wrapper)).toHaveLength(3);
+      wrapper.unmount();
+    });
+
+    it('hides Read aloud first when every line sits inside the script', async () => {
+      const wrapper = await mountPanel(snapshot(review({ lockedSubmissions: [say1], draft: { segments: [piece('Answer.', 'say-1')], continuity: [], directorSummary: '' } })));
+      expect(wrapper.find('[data-testid="player-lines"]').exists()).toBe(false);
+      expect(inline(wrapper)).toHaveLength(1);
+      wrapper.unmount();
+    });
   });
 
   it('offers Save edits for a hand-written script before any draft exists', async () => {
@@ -1318,6 +1377,18 @@ describe('beat panel when the AI work is thrown away', () => {
     await refuse();
     expect(errorOf(wrapper)).toBe(PAUSED_SCRIPT);
     expect(wrapper.text()).not.toContain('superseded');
+    wrapper.unmount();
+  });
+
+  it('keeps the paused sentence after the show resumes', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const refuse = refuseLater(SERVER_WORDS);
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    await pauseShow(snapshot(beat({ classification: null }), 'paused', lines));
+    await refuse();
+    expect(errorOf(wrapper)).toBe(PAUSED_PLAN);
+    await pauseShow(snapshot(beat({ classification: null }), 'live', lines));
+    expect(errorOf(wrapper)).toBe(PAUSED_PLAN);
     wrapper.unmount();
   });
 
