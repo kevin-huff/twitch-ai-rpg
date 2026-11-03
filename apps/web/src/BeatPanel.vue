@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, toRaw, useId, watch } from 'vue';
 import type { ActionContract, AiSegment, Beat, Command } from '@rpg/contracts';
-import { ActionContractSchema, hasAudioTags, placePlayerLines, playerWords, stripAudioTags } from '@rpg/contracts';
+import { ActionContractSchema, hasAudioTags, placePlayerLines, playerWords, spokenPlayerText, stripAudioTags } from '@rpg/contracts';
 import { useTable } from './table';
 import DraftAudioPanel from './DraftAudioPanel.vue';
 import DirectorGuidance from './DirectorGuidance.vue';
@@ -69,7 +69,7 @@ const working = computed(() => running.value ?? (activeJob.value ? { task: activ
 const voice = ref<VoiceState>({ status: 'checking' });
 const skipFacts = ref(false);
 const waiting = ref<{ beatId: string; draftRevision: number } | null>(null);
-const playerLines = computed(() => (beat.value?.lockedSubmissions ?? []).filter(line => line.kind !== 'ooc' && playerWords(line).trim()).map(line => ({ id: line.id, characterId: line.characterId, action: line.kind === 'act', words: playerWords(line) })));
+const playerLines = computed(() => (beat.value?.lockedSubmissions ?? []).filter(line => line.kind !== 'ooc' && spokenPlayerText(line).trim()).map(line => ({ id: line.id, characterId: line.characterId, action: line.kind === 'act', words: playerWords(line) })));
 const scriptPlayerLines = computed(() => playerLines.value.map(line => ({ id: line.id, name: nameOf(line.characterId), action: line.action, words: line.words })));
 const readFirst = computed(() => { const first = new Set(placePlayerLines(playerLines.value.map(line => line.id), script.value).first); return playerLines.value.filter(line => first.has(line.id)); });
 const hasDraft = computed(() => Boolean(!idle.value && showScript.value && beat.value?.draft));

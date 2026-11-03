@@ -4,7 +4,7 @@ import type { ProducerSummary, PublicCharacter, StreamLinkSummary } from '@rpg/c
 import { api } from './api';
 import { identityPath } from './identity';
 import MyStreamLink from './MyStreamLink.vue';
-import StreamLinkCard from './StreamLinkCard.vue';
+import StreamKit from './StreamKit.vue';
 
 const props = withDefaults(defineProps<{ sessionId: string; characters: PublicCharacter[]; mode?: 'director' | 'player'; ownCharacterId?: string }>(), { mode: 'director', ownCharacterId: undefined });
 const isPlayer = computed(() => props.mode === 'player');
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <MyStreamLink v-if="isPlayer && ownCharacterId" :session-id="sessionId" :own-character-id="ownCharacterId" />
+  <MyStreamLink v-if="isPlayer && ownCharacterId" :session-id="sessionId" :own-character-id="ownCharacterId" :characters="characters" />
   <details v-else-if="!isPlayer" id="stage-links" ref="root" class="lobby-section" data-testid="stream-setup" @toggle="onToggle">
     <summary>Stream this show</summary>
     <p>Paste one of these links into an OBS browser source. Each link keeps working through reloads until you turn it off.</p>
@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
             <p>Turned off.</p>
             <button type="button" class="secondary" :data-testid="`make-new-link-${showLink.id}`" :disabled="working" @click="makeNew(showLink)">Make a new link</button>
           </div>
-          <StreamLinkCard v-else-if="tokens[showLink.id]" :link="showLink" :token="tokens[showLink.id]!" title="Main show link" :busy="working" testid="stream-row-show" @turn-off="turnOff(showLink)" />
+          <StreamKit v-else-if="tokens[showLink.id]" :link="showLink" :token="tokens[showLink.id]!" title="Main show link" :characters="characters" :busy="working" testid="stream-row-show" @turn-off="turnOff(showLink)" />
           <div v-else class="off-row" data-testid="stream-row-show">
             <strong>Main show link</strong>
             <p>This link could not be shown.</p>
@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
               <p>Turned off.</p>
               <button type="button" class="secondary" :data-testid="`make-new-link-${playerLink(character.id)!.id}`" :disabled="working" @click="makeNew(playerLink(character.id)!)">Make a new link</button>
             </div>
-            <StreamLinkCard v-else-if="tokens[playerLink(character.id)!.id]" :link="playerLink(character.id)!" :token="tokens[playerLink(character.id)!.id]!" :title="character.displayName" :busy="working" :testid="`stream-row-player-${character.id}`" @turn-off="turnOff(playerLink(character.id)!)" />
+            <StreamKit v-else-if="tokens[playerLink(character.id)!.id]" :link="playerLink(character.id)!" :token="tokens[playerLink(character.id)!.id]!" :title="character.displayName" :characters="characters" :busy="working" :testid="`stream-row-player-${character.id}`" @turn-off="turnOff(playerLink(character.id)!)" />
             <div v-else class="off-row" :data-testid="`stream-row-player-${character.id}`">
               <strong>{{ character.displayName }}</strong>
               <p>This link could not be shown.</p>
@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
             <p>Turned off.</p>
             <button type="button" class="secondary" :data-testid="`make-new-link-${link.id}`" :disabled="working" @click="makeNew(link)">Make a new link</button>
           </div>
-          <StreamLinkCard v-else-if="tokens[link.id]" :link="link" :token="tokens[link.id]!" :title="otherTitle(link)" :busy="working" :testid="link.subject === 'host' ? 'stream-row-host' : `stream-row-producer-${link.producerGrantId}`" @turn-off="turnOff(link)" />
+          <StreamKit v-else-if="tokens[link.id]" :link="link" :token="tokens[link.id]!" :title="otherTitle(link)" :characters="characters" :busy="working" :testid="link.subject === 'host' ? 'stream-row-host' : `stream-row-producer-${link.producerGrantId}`" @turn-off="turnOff(link)" />
           <div v-else class="off-row" :data-testid="link.subject === 'host' ? 'stream-row-host' : `stream-row-producer-${link.producerGrantId}`">
             <strong>{{ otherTitle(link) }}</strong>
             <p>This link could not be shown.</p>
@@ -225,7 +225,7 @@ onBeforeUnmount(() => {
             <p>Turned off.</p>
             <button type="button" class="secondary" :data-testid="`make-new-link-${ownProducerLink.id}`" :disabled="working" @click="makeNew(ownProducerLink)">Make a new link</button>
           </div>
-          <StreamLinkCard v-else-if="tokens[ownProducerLink.id]" :link="ownProducerLink" :token="tokens[ownProducerLink.id]!" title="Your own stream link" :busy="working" testid="stream-row-own-producer" @turn-off="turnOff(ownProducerLink)" />
+          <StreamKit v-else-if="tokens[ownProducerLink.id]" :link="ownProducerLink" :token="tokens[ownProducerLink.id]!" title="Your own stream link" :characters="characters" :busy="working" testid="stream-row-own-producer" @turn-off="turnOff(ownProducerLink)" />
           <div v-else class="off-row" data-testid="stream-row-own-producer">
             <strong>Your own stream link</strong>
             <p>This link could not be shown.</p>

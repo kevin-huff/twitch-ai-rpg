@@ -586,7 +586,7 @@ onBeforeUnmount(() => {
 .line .line-role { font-family: var(--font-label); font-size: 24px; line-height: 40px; font-weight: 400; color: var(--dust); text-transform: uppercase; letter-spacing: 0; }
 .line .line-text { font-family: var(--font-body); font-size: 40px; line-height: 48px; font-weight: 400; color: var(--bone); white-space: pre-wrap; overflow-wrap: anywhere; }
 .line.narration .line-text, .line.system .line-text { color: var(--dust); }
-.lines.has-active .line:not(.speaking):not(.player_dialogue):not(.player_action) .line-name, .lines.has-active .line:not(.speaking):not(.player_dialogue):not(.player_action) .line-text { color: var(--dust); }
+.lines.has-active .line:not(.speaking) .line-name, .lines.has-active .line:not(.speaking) .line-text { color: var(--dust); }
 .line.speaking::after {
   content: ''; position: absolute; inset: 88px auto auto 8px; width: 12px; height: 20px; background: var(--candle);
   clip-path: polygon(0 0, 4px 0, 4px 4px, 8px 4px, 8px 8px, 12px 8px, 12px 12px, 8px 12px, 8px 16px, 4px 16px, 4px 20px, 0 20px);

@@ -33,7 +33,9 @@ function startTimer() {
 function build() {
   stop();
   if (props.mode === 'off') { emit('status', { presenting: false, listening: false, error: '' }); emit('segment', null); return; }
-  controller.value = createPlaybackController({ sessionId: props.sessionId, beatId: props.beatId, director: false, stage: props.mode === 'present' });
+  controller.value = props.mode === 'follow'
+    ? createPlaybackController({ sessionId: props.sessionId, beatId: undefined, director: false, stage: false })
+    : createPlaybackController({ sessionId: props.sessionId, beatId: props.beatId, director: false, stage: props.mode === 'present' });
   startTimer();
 }
 
@@ -47,6 +49,7 @@ function stop() {
 const state = computed(() => {
   const current = controller.value?.state;
   if (!current) return 'off';
+  if (props.mode === 'follow') return current.error ? 'error' : 'following';
   if (current.presenting) return 'presenting';
   if (current.listening) return 'listening';
   return current.error ? 'error' : 'waiting';
@@ -57,6 +60,7 @@ onBeforeUnmount(stop);
 
 watch(() => [props.sessionId, props.mode], build);
 watch(() => props.beatId, () => {
+  if (props.mode === 'follow') return;
   controller.value?.setContext({ sessionId: props.sessionId, beatId: props.beatId, director: false, stage: props.mode === 'present' });
 });
 

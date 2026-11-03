@@ -565,7 +565,7 @@ describe('StageScene', () => {
     }
   });
 
-  it('never greys a player line or action, but turns narration and character lines dust while another line is speaking', () => {
+  it('turns every line dust, player lines and actions included, while another line is speaking', () => {
     const source = readFileSync(resolve(process.cwd(), 'apps/web/src/StageScene.vue'), 'utf8');
     const css = source.slice(source.indexOf('<style'));
     expect(css).not.toMatch(/opacity:\s*0\.45/);
@@ -579,11 +579,14 @@ describe('StageScene', () => {
     const root = wrapper.element as Element;
     for (const selector of selectors) {
       const greyed = Array.from(root.querySelectorAll(selector)).map(node => node.closest('.line')!.getAttribute('data-segment-id'));
-      expect(new Set(greyed)).toEqual(new Set(['b1-s2']));
+      const expected = wrapper.findAll('.line').map(line => line.attributes('data-segment-id')).filter(id => id !== 'b1-s1');
+      expect(expected).toContain('b1-s4');
+      expect(wrapper.findAll('.line.player_dialogue').length).toBeGreaterThan(0);
+      expect(new Set(greyed)).toEqual(new Set(expected));
     }
     expect(wrapper.get('.line.player_dialogue').classes()).not.toContain('speaking');
-    expect(rule).toContain(':not(.player_dialogue)');
-    expect(rule).toContain(':not(.player_action)');
+    expect(rule).not.toContain(':not(.player_dialogue)');
+    expect(rule).not.toContain(':not(.player_action)');
   });
 
   it('shows a player action with its name and the Action role word', () => {

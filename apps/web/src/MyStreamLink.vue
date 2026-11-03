@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import type { StreamLinkSummary } from '@rpg/contracts';
+import type { PublicCharacter, StreamLinkSummary } from '@rpg/contracts';
 import { api } from './api';
 import { identityPath } from './identity';
-import StreamLinkCard from './StreamLinkCard.vue';
+import StreamKit from './StreamKit.vue';
 
-const props = defineProps<{ sessionId: string; ownCharacterId: string }>();
+const props = withDefaults(defineProps<{ sessionId: string; ownCharacterId: string; characters?: PublicCharacter[] }>(), { characters: () => [] });
 const root = ref<HTMLDetailsElement | null>(null);
 const loading = ref(false);
 const loaded = ref(false);
@@ -72,7 +72,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', openFromHash));
 <template>
   <details id="my-stream-view" ref="root" class="lobby-section" data-testid="my-stream-view" @toggle="onToggle">
     <summary>Stream this show</summary>
-    <p>Make your own link to show the stage in OBS or another browser. It can listen to the narration but never carries the show audio.</p>
+    <p>Your panel starts with a ready-made link that shows the overlay and plays the narration where it is opened. It never carries the show audio.</p>
     <p><a :href="identityPath('/help#streaming-your-own-obs')">OBS setup guide</a></p>
     <p v-if="loading" role="status">Loading your link…</p>
     <div v-else-if="loadError" role="alert">
@@ -80,7 +80,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', openFromHash));
       <button type="button" class="secondary" @click="load">Try again</button>
     </div>
     <template v-else>
-      <StreamLinkCard v-if="link && token" :link="link" :token="token" title="Your own stream link" :busy="working" testid="stream-row-own" @turn-off="turnOff" />
+      <StreamKit v-if="link && token" :link="link" :token="token" title="Your own stream link" :characters="characters" :busy="working" testid="stream-row-own" @turn-off="turnOff" />
       <div v-else-if="turnedOff" data-testid="stream-row-own-off">
         <p>Turned off.</p>
         <button type="button" class="secondary" data-testid="make-new-link" :disabled="working" @click="makeNew">Make a new link</button>

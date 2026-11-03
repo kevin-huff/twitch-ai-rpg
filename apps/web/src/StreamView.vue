@@ -4,11 +4,32 @@ import type { SessionSnapshot, StreamAccessResponse, StreamAudio } from '@rpg/co
 import { api, subscribeToSession } from './api';
 import BroadcastAudio from './BroadcastAudio.vue';
 import { selectIdentity } from './identity';
+import StageBadge from './StageBadge.vue';
+import StageCaptions from './StageCaptions.vue';
+import StageCorrections from './StageCorrections.vue';
+import StageDice from './StageDice.vue';
+import StageFacts from './StageFacts.vue';
 import StageFrame from './StageFrame.vue';
 import StageOverlay from './StageOverlay.vue';
+import StageParty from './StageParty.vue';
+import StagePictureCorner from './StagePictureCorner.vue';
 import StageScene from './StageScene.vue';
 import StageSlate from './StageSlate.vue';
-import { parseStreamLocation } from './stream';
+import StageStakes from './StageStakes.vue';
+import StageTracks from './StageTracks.vue';
+import { parseStreamLocation, pieceInfo } from './stream';
+
+const PIECE_COMPONENTS = {
+  captions: StageCaptions,
+  dice: StageDice,
+  stakes: StageStakes,
+  party: StageParty,
+  tracks: StageTracks,
+  picture: StagePictureCorner,
+  badge: StageBadge,
+  facts: StageFacts,
+  corrections: StageCorrections,
+} as const;
 
 const RENEW_BEFORE_MS = 30 * 60 * 1000;
 const MIN_RENEW_DELAY_MS = 60 * 1000;
@@ -18,19 +39,31 @@ const SLOW_RETRY_MS = 60 * 1000;
 const requested = parseStreamLocation(window.location);
 const layout = requested.layout;
 const token = requested.token;
+const unknownView = requested.view === 'unknown';
+const info = requested.view && !unknownView ? pieceInfo(requested.view) : null;
+const pieceComponent = requested.view && requested.view !== 'unknown' ? PIECE_COMPONENTS[requested.view] : null;
+const rootLayout = requested.view ? 'piece' : layout;
 
 const access = shallowRef<StreamAccessResponse | null>(null);
 const snapshot = shallowRef<SessionSnapshot | null>(null);
 const connected = ref(false);
-const offline = ref(!token);
+const offline = ref(!token || unknownView);
 const identityReady = ref(false);
 const activeSegmentId = ref<string | null>(null);
 
 const inObs = 'obsstudio' in window;
 const audio = computed<StreamAudio>(() => {
   const canPresent = (access.value?.link.canPresent ?? false) && inObs;
-  const wanted = requested.audio ?? (canPresent ? 'present' : 'listen');
+  let wanted: StreamAudio;
+  if (requested.view) wanted = requested.audio ?? 'follow';
+  else if (layout === 'audio') wanted = canPresent ? 'present' : 'listen';
+  else wanted = requested.audio ?? (canPresent ? 'present' : 'listen');
   return wanted === 'present' && !canPresent ? 'listen' : wanted;
+});
+const pieceAllowsAudio = computed(() => {
+  if (!requested.view) return true;
+  if (!info) return false;
+  return audio.value !== 'follow' || info.followsSpeech;
 });
 const beatId = computed(() => {
   const history = snapshot.value?.history ?? [];
@@ -38,7 +71,7 @@ const beatId = computed(() => {
 });
 const showPicture = computed(() => !offline.value && snapshot.value !== null);
 const showTitle = computed(() => snapshot.value?.session.title || 'The Story Table');
-const audioOn = computed(() => identityReady.value && !offline.value && access.value !== null && audio.value !== 'off');
+const audioOn = computed(() => identityReady.value && !offline.value && access.value !== null && audio.value !== 'off' && pieceAllowsAudio.value);
 
 const audioMounted = computed(() => audioOn.value && !!access.value && !offline.value);
 watch(audioMounted, on => {
@@ -193,7 +226,7 @@ async function exchange() {
 
 onMounted(() => {
   document.title = 'Stage';
-  if (token) void exchange();
+  if (token && !unknownView) void exchange();
 });
 
 onBeforeUnmount(() => {
@@ -208,8 +241,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="stream-view" :data-layout="layout">
-    <StageFrame :layout="layout" :checker="requested.checker">
+  <div class="stream-view" :data-layout="rootLayout" :data-view="requested.view ?? undefined">
+    <StageFrame v-if="requested.view" :layout="info ? 'piece' : 'blank'" :checker="requested.checker" :box="info?.box">
+      <component
+        :is="pieceComponent"
+        v-if="pieceComponent && showPicture && snapshot"
+        :snapshot="snapshot"
+        :connected="connected"
+        :active-segment-id="activeSegmentId"
+        :character-id="requested.who"
+      />
+    </StageFrame>
+    <StageFrame v-else-if="layout === 'audio'" layout="blank" :checker="requested.checker" />
+    <StageFrame v-else :layout="layout" :checker="requested.checker">
       <template v-if="showPicture && snapshot">
         <StageOverlay v-if="layout === 'overlay'" :snapshot="snapshot" :connected="connected" :active-segment-id="activeSegmentId" />
         <StageScene v-else :snapshot="snapshot" :connected="connected" :active-segment-id="activeSegmentId" />

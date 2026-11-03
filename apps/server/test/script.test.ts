@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Beat, ScriptSegment, Submission } from '@rpg/contracts';
+import { spokenPlayerText, type Beat, type ScriptSegment, type Submission } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
 import { pictureLines } from '../src/picture-cast';
 import { makeScript, speechLines, voicedLines } from '../src/script';
@@ -113,6 +113,52 @@ describe('speechLines', () => {
   });
 });
 
+describe('answered marks', () => {
+  const a = line(rook.id, 'say', { text: 'One.' });
+  const b = line(lark.id, 'say', { text: 'Two.' });
+  const c = line(rook.id, 'act', { intent: 'Three', approach: '' });
+  const marked = (marks: (string | undefined)[]): Beat => {
+    const beat = beatWith([a, b, c]);
+    const segs = ['N1', 'N2', 'N3'].map((text) => ({ kind: 'narration', text, recipientCharacterIds: [], delivery: 'neutral' }));
+    beat.draft = { segments: segs.map((seg, i) => (marks[i] ? { ...seg, answersSubmissionId: marks[i] } : seg)) } as never;
+    return beat;
+  };
+
+  it('marks only the player lines placed just before the piece answering them', () => {
+    const script = makeScript(marked([undefined, c.id, a.id]), state);
+    expect(script.map((s) => s.text)).toEqual(['Two.', 'N1', 'Three', 'N2', 'One.', 'N3']);
+    expect(script.map((s) => s.answered)).toEqual([undefined, undefined, true, undefined, true, undefined]);
+    expect(script.filter((s) => !s.answered).every((s) => !('answered' in s))).toBe(true);
+  });
+  it('adds no answered key without marks', () => {
+    expect(makeScript(marked([]), state).every((s) => !('answered' in s))).toBe(true);
+  });
+  it('gives speechLines and voicedLines the same output with or without the marks', () => {
+    const script = makeScript(marked([undefined, c.id, a.id]), state);
+    const bare = script.map(({ answered: _answered, ...rest }) => rest);
+    expect(speechLines(script)).toEqual(speechLines(bare));
+    expect(voicedLines(script)).toEqual(voicedLines(bare));
+    expect(speechLines(script).every((l) => !('answered' in l))).toBe(true);
+  });
+});
+
+describe('spokenPlayerText', () => {
+  const words = (kind: Submission['kind'], fields: Partial<Submission>) => spokenPlayerText(line(rook.id, kind, fields));
+  it('keeps a plain Say line exactly as typed', () => {
+    expect(words('say', { text: '  Keep watch.  ' })).toBe('  Keep watch.  ');
+  });
+  it('removes audio tags from a tagged line', () => {
+    expect(words('say', { text: '[laughs] Fine, I will do it.' }).trim()).toBe('Fine, I will do it.');
+  });
+  it('leaves nothing for a line that is only a tag', () => {
+    expect(words('say', { text: '[laughs]' }).trim()).toBe('');
+  });
+  it('joins a Do line intent and approach, and strips its tags', () => {
+    expect(words('act', { intent: 'I climb', approach: 'quietly' })).toBe('I climb\nquietly');
+    expect(words('act', { intent: 'I climb [grunts] up', approach: '' }).replace(/\s+/g, ' ').trim()).toBe('I climb up');
+  });
+});
+
 describe('tags and voices', () => {
   const withVoice = { ...state, characters: state.characters.map((character) => (character.id === rook.id ? { ...character, voiceProfileId: 'eleven:fake-ada' } : character)) };
   const tagged = line(rook.id, 'say', { text: '[laughs] Fine, I will do it.' });
@@ -134,6 +180,11 @@ describe('tags and voices', () => {
   it('skips a line that is only tags', () => {
     const script = makeScript(beatWith([line(rook.id, 'say', { text: '[laughs]' })]), state);
     expect(script.map((s) => s.kind)).toEqual(['narration', 'npc_dialogue']);
+  });
+
+  it('leaves a tags-only line out of the script and keeps the rest', () => {
+    const script = makeScript(beatWith([line(rook.id, 'say', { text: '[laughs]' }), plain]), state);
+    expect(script.map((s) => s.text)).toEqual(['Two  spaces   here.', 'Rain taps the glass.', 'Show me a receipt.']);
   });
 
   it('gives a Say line the speaker voice and a Do line null', () => {

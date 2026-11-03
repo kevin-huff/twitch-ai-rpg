@@ -198,4 +198,26 @@ describe('SeatStory', () => {
     expect(wrapper.html()).not.toContain('[whispers]');
     expect(wrapper.text()).not.toContain('[whispers]');
   });
+
+  it('shows rolls before the first player line when the leading run ends with an answered line, and keeps pairs together', () => {
+    const answered = beat(4, [
+      segment('p1', 'player_dialogue', 'Anyone there?', 'Dash'),
+      { ...segment('p2', 'player_dialogue', 'Hold the door.', 'Dash'), answered: true },
+      segment('x', 'npc_dialogue', 'Who goes there?', 'Guard'),
+    ], [roll('r1', 'c-Dash', 11, 'clean'), roll('r2', 'c-Dash', 7, 'costly')]);
+    const wrapper = mount(SeatStory, { props: { history: [answered], characters } });
+    const order = wrapper.findAll('[data-testid="seat-story-roll"], [data-testid="seat-story-line"]').map(node => node.attributes('data-testid') === 'seat-story-roll' ? 'roll' : node.text());
+    expect(order[0]).toBe('roll');
+    expect(order[1]).toBe('roll');
+    expect(order.slice(2)).toEqual(['Dash Anyone there?', 'Dash Hold the door.', 'Guard Who goes there?']);
+  });
+
+  it('keeps today\'s order for an unanswered leading run and for a beat without rolls', () => {
+    const plain = beat(5, [segment('p1', 'player_dialogue', 'Anyone there?', 'Dash'), segment('x', 'npc_dialogue', 'Who?', 'Guard')], [roll('r1', 'c-Dash', 11, 'clean')]);
+    const order = mount(SeatStory, { props: { history: [plain], characters } }).findAll('[data-testid="seat-story-roll"], [data-testid="seat-story-line"]').map(node => node.attributes('data-testid') === 'seat-story-roll' ? 'roll' : 'line');
+    expect(order).toEqual(['line', 'roll', 'line']);
+    const none = beat(6, [{ ...segment('p1', 'player_dialogue', 'Hi', 'Dash'), answered: true }, segment('x', 'npc_dialogue', 'Who?', 'Guard')]);
+    const lines = mount(SeatStory, { props: { history: [none], characters } }).findAll('[data-testid="seat-story-line"]');
+    expect(lines).toHaveLength(2);
+  });
 });

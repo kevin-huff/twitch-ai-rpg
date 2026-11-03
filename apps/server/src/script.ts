@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { hasAudioTags, isSpokenSegmentKind, placePlayerLines, playerWords, stripAudioTags, type Beat, type ScriptSegment, type SessionState, type SpokenSegmentKind } from '@rpg/contracts';
+import { hasAudioTags, isSpokenSegmentKind, placePlayerLines, playerWords, spokenPlayerText, type Beat, type ScriptSegment, type SessionState, type SpokenSegmentKind } from '@rpg/contracts';
 
 function playerSegments(beat: Beat, state: SessionState): ScriptSegment[] {
   return beat.lockedSubmissions.filter((submission) => submission.kind !== 'ooc').flatMap((submission): ScriptSegment[] => {
     const words = playerWords(submission);
     const tagged = hasAudioTags(words);
-    const text = tagged ? stripAudioTags(words) : words;
+    const text = spokenPlayerText(submission);
     if (!text.trim()) return [];
     const character = state.characters.find((candidate) => candidate.id === submission.characterId)!;
     const say = submission.kind !== 'act';
@@ -33,7 +33,7 @@ export function makeScript(beat: Beat, state: SessionState): ScriptSegment[] {
     ...placement.first.map((id) => playerById.get(id)!),
     ...segments.flatMap((segment, index) => {
       const answered = placement.before[index];
-      return answered ? [playerById.get(answered)!, segment] : [segment];
+      return answered ? [{ ...playerById.get(answered)!, answered: true as const }, segment] : [segment];
     }),
   ];
 }

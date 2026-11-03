@@ -25,6 +25,83 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## Stream pieces update
+
+Built on November 2, 2026. Five tasks from the Story Table board (358, 359, 360, 361, 363) and the fourteen follow-ups found by sprint 3's final reviewers were built together. The stage can now be cut into nine separate pieces, each with a link of its own, so Kevin can build OBS scenes out of them. A silent follow mode lets a piece track the spoken line without playing sound, an audio-only link carries the show sound, and a Stream kit page replaces the old per-link cards. Nothing is committed or deployed yet.
+
+What changed:
+
+- Links and contracts (`packages/contracts/src/access.ts`, `apps/web/src/stream.ts`): the stream layouts gain `audio` (no picture, sound only) and the audio modes gain `follow`. A new `StreamPieceSchema` lists the nine pieces. `stream.ts` gains `pieceUrl`, the `STAGE_PIECES` list with each piece's size and `pieceInfo`; `parseStreamLocation` also reads `view` and `who`. Old links parse as before.
+- Show audio (`BroadcastAudio.vue`): `audio=follow` builds the playback controller without listening, claiming or loading any recording, and still reports the spoken line from the controller's own check, about once a second. It never plays or presents.
+- Piece components (`StageCaptions.vue`, `StageDice.vue`, `StageStakes.vue`, `StageParty.vue`, `StagePictureCorner.vue`, `StageTracks.vue`, `StageBadge.vue`, `StageFacts.vue`, `StageCorrections.vue`): each is one flat piece that takes an optional character and draws nothing when it has nothing to show. `StageOverlay.vue` is rebuilt from the first seven in the same order, with the same styles and the same place on the 1920 by 1080 canvas, so the overlay is the same page. Facts and corrections are new pieces built from the full scene's styles. `StageScene.vue` is unchanged apart from follow-up 12.
+- Stream page (`StreamView.vue`, `StageFrame.vue`): `view=` shows one piece by shifting the canvas inside a new `piece` frame cut to the piece's box and scaled to fit the page, on a see-through background. An unknown view draws nothing and opens no connection. `layout=audio` draws nothing and plays the show audio. Pieces default to `audio=follow`, but only the captions piece runs the follow check, because it is the only piece that marks the spoken line.
+- Stream kit (`StreamKit.vue`, `StreamKitLink.vue`, `StreamLinks.vue`, `MyStreamLink.vue`): both link panels now show the kit. A link that cannot present starts with a ready-made listen-only link. Next comes the old link card under the name Full layouts, with every old label and button. Then a closed fold, Pieces for your own scenes, holds the Sound link card, the AI badge reminder, one card per piece (tag, size, a silent preview, a Who it shows picker for dice, stakes and party, and a copy button) and the OBS steps for pieces. The compact card on the ready strip is unchanged.
+- Help (`apps/web/src/help/content.ts`, `help-labels.test.ts`): new entries for the kit, each piece, the sound link, the follow mode, the OBS steps for pieces and the AI badge reminder; the Stream link, Presenter and glossary entries now match. Six follow-up corrections are listed below.
+- Server and contracts for the follow-ups (`apps/server/src/commands.ts`, `apps/server/src/script.ts`, `packages/contracts/src/index.ts`, `packages/providers/src/index.ts`): see the follow-ups.
+- Browser specs: `tests/browser/stream-pieces.spec.ts` opens every piece by its link and checks its box, the Who it shows picker, an unknown view and the old layouts. `tests/browser/stream-sound.spec.ts` checks the sound link, the cast member's listen-only link, the captions piece following without sound, and (with `MEASURE_LOAD=1`) the load numbers.
+
+Kevin's decisions:
+
+- 294: OBS scenes are built from one link per piece. The cropping parts page was not chosen, and board 362 is cancelled. The October 31 section's "later sprint" note for decision 294 is now done.
+- Old overlay and scene links keep working exactly as they do today. The only visible change on them is follow-up 12: player lines that are not being spoken now dim like the rest.
+- 279: the cast hears the show through the hosting streamer's browser shared into the stream for now. Nothing here feeds narration into the Discord call.
+
+The nine pieces. Links look like `https://<host>/stream?view=<piece>#token=<link token>`. A piece that can show one person takes `&who=<characterId>` (the kit's Who it shows picker adds it). Pieces default to `audio=follow`; `&audio=off` makes any piece fully silent (the kit's previews use it). The sound link is `https://<host>/stream?layout=audio#token=<link token>`. On the Main show link in OBS it presents the show audio; on a cast member's link it only listens. A full layout link already carries sound, so use the sound link only next to pieces.
+
+| Piece (`view=`) | Size | Tag | What it shows |
+| --- | --- | --- | --- |
+| captions | 1440 x 184 | Shared | The latest beat's lines, with the one being spoken marked |
+| dice | 1440 x 144 | Shared, or Just for one person | The latest rolls; past six rolls they take two rows |
+| stakes | 960 x 612 | Shared, or Just for one person | What is at stake before a roll, one person at a time |
+| party | 1344 x 76 | Shared, or Just for one person | Each character's name, portrait and strain |
+| tracks | 352 x 304 | Shared | The first two public tracks |
+| picture | 336 x 192 | Shared | The scene picture, or the picture the director pinned |
+| badge | 336 x 164 | Shared | Says the narration and voices are made by AI, and whether the show is live |
+| facts | 464 x 345 | Shared | What the party knows, newest first |
+| corrections | 1728 x 88 | Shared | The newest correction published |
+
+Load. Each piece is its own OBS source and its own connection, so the load was measured. This is Chromium run by Playwright, standing in for OBS on the streaming PC; request counts carry over because they come from the page's own code, while memory is a rough guide (it is the JavaScript heap, not the whole browser process). The full write-up is `.local/stream-pieces-2026-11-02/load.md`.
+
+| Setup, 60-second replay window | Requests per minute | Sockets | JavaScript heap |
+| --- | ---: | ---: | ---: |
+| Sound link (presents) | 285.9 | 1 | 5.1 MB |
+| Captions piece (follows) | 60.0 | 1 | 4.9 MB |
+| Each of the other seven pieces | 0 | 1 | 3.8 to 3.9 MB |
+| Sound link and eight pieces | 345.9 | 9 | 36.7 MB |
+| One old overlay link that listens, for comparison | 239.9 | 1 | 5.3 MB |
+
+Sound traffic does not grow with the number of pieces, because only the sound link carries it. The only steady extra is the captions piece's once-a-second check. More pieces cost sockets and snapshots: each show change (a published beat, for example) makes every open page fetch one fresh snapshot of the stage, so nine open sources cost nine requests where one overlay link costs one. In OBS each browser source is also its own browser process, which costs far more than its heap, so on a short-memory streaming PC use fewer pieces or the full overlay link.
+
+Sprint 3 follow-ups fixed:
+
+1. Help's Publishing and narration opening (`help/content.ts`) now says that only lines no piece answers go on stream first, and that the director page lists those under Read aloud first.
+2. `sceneArrival` (`commands.ts`) now reads the place where the last published beat happened: the first scene change after the newest published beat, using the places that change recorded as "before". A to B to C names A, a return to A sends nothing, and a same-place scene change after a move keeps the arrival. Three new database tests in `apps/server/test/ai-context.test.ts` cover the three cases.
+3. Help's seat story paragraph says an answered line plays just before its reply.
+4. The wrong-mark texts are corrected in help and in the November 2 section below. If the AI marks nothing, every line plays first. A mark that names no line the AI was given is dropped on its own, so the other pairs stay and only a line left unanswered plays first.
+5. Help's scene picture panel entry quotes the two newer pinned sentences.
+6. Help's What the AI reads names the characters given (ticked under On stage for the AI, plus anyone the selected lines speak to) and no longer says the AI never reads place notes. The scene description, which is filled from a place's arrival text, is read; the private boxes are named exactly.
+7. Published player lines carry an `answered` mark (`ScriptSegmentSchema`, set by `makeScript`), and `SeatStory.vue` shows the rolls before the first player line when the leading run ends with an answered line, so each pair reads together.
+8. One rule decides which player lines play: `spokenPlayerText` in `@rpg/contracts`. `makeScript` and `BeatPanel.vue` both use it, so a line that is only an audio tag such as `[laughs]` is dropped from script review too.
+9. The November 2 prompt growth sentence is corrected below.
+10. The scenario writer's outline prompt (`packages/providers/src/index.ts`) asks for an `aiPlan` of at most about 2,000 characters; `scenario-generation.test.ts` asserts the sentence.
+11. The standing note's help line in `DirectorGuidance.vue` says "Saving keeps the current stakes, dice and script."
+12. Player lines dim on every stream page while another line is spoken (`StageCaptions.vue`, which the overlay uses, and `StageScene.vue`). The speaking line never dims.
+13. No code change. A pin is refused once a show ends (`shelf-routes.ts`), a gallery can be turned on only after the end and `refreshIfOn` writes only ended shows (`galleries.ts`), and each gallery write reads every pin from the show's record. A shelf-only picture pinned during a live show therefore never needs a gallery rewrite, and its "Not shown on stream" tag is right on the first write.
+14. The known limit is recorded in the November 2 section's leftovers.
+
+Deploy notes: no migration. The server code changed (`commands.ts`, `script.ts`, the providers), so redeploy it from a clean export of main after Kevin commits. Reload every OBS browser source, every stream tab, the director page and every player seat, because the stream pages, the link panels and the seat changed. Existing overlay, scene and stream links keep working with no new setup. Rolling back is one-way once a paired beat is published: published player lines now carry `answered: true`, and every earlier build (including the live ffe4d02 and d09f8bf) reads stored beats with a strict schema that rejects that field, so that show's snapshot and narration would fail to load on the older build. Kevin's shared help document, "The Story Table: Help and FAQ", needs the same help changes: the kit, the pieces, the sound link, the follow mode and the six corrected entries.
+
+Known limits:
+
+- There is no holding-screen piece. While a show is paused, captions, dice, stakes and tracks draw nothing, and only the AI badge says so.
+- The tracks piece shows two tracks, the most its box holds.
+- Facts clip beyond 345 pixels tall.
+- OBS on the streaming PC was not measured. The load numbers come from Chromium under Playwright.
+- The captions piece marks the spoken line only while show audio is playing somewhere. Only a presenting page plays it: the Main show link's sound link or full layout in OBS, or a director's Preview tab that took the audio. A cast member's page never presents, and the server refuses to start narration with no presenter.
+
+How it was checked: the baseline at d09f8bf was typecheck clean; `npm test` 3,066 passed and 904 skipped; database suite 1,358 passed in 105 files; browser suite 55 of 55. Each ticket ran its own focused files while the others were half built: the follow mode (`BroadcastAudio.test.ts`, 12 tests), the overlay rebuilt from pieces (`StageOverlay.test.ts`, 84 tests, with only the raw-source import changed and the one dimming test rewritten), the dice and stakes pieces (14), the party and picture pieces (13), the tracks and badge pieces (9), the stream page (`StreamView.test.ts`, 58 tests) and the kit (`StreamKit.test.ts`, 25 tests). The arrival tests ran on the throwaway database. The pieces browser spec passed five runs in a row. The sound spec passed, and the load test ran once with `MEASURE_LOAD=1`.
+Integration found two seams. The stage preview page (`StageView.vue`) passed the parsed layout straight to `StageFrame`, so the new `audio` layout broke the typecheck; it now keeps `overlay` and treats anything else as `scene`, as it did before. One older test in `apps/web/src/api.test.ts` expected the parsed link without the new `view` and `who` fields; it now expects both as null. Final counts, run twice on the finished code: typecheck clean; `npm test` 3,187 passed and 907 skipped (the database tests) in 212 files; database suite 1,369 passed in 105 files; browser suite 57 passed and 1 skipped of 58 (the skipped one is the load test, which runs only with `MEASURE_LOAD=1`).
+
 ## November 2 update: AI direction
 
 Six tasks from the Story Table board (326, 327, 328, 450, 451, 452) and the fourteen follow-ups found by sprint 2's final reviewers were built on November 2. The AI now has a private plan for each show, treats the director's notes as instructions, knows where the party came from and what the last two beats said, hears each on-stage character's motive and goal, and marks which player line each of its pieces answers. Nothing is committed or deployed yet.
@@ -36,7 +113,7 @@ What changed:
 - Server (`commands.ts`, `app.ts`, `script.ts`, `scenario-generation.ts`): a beat note saved after stakes approval keeps the approved stakes and applies at the script. `safeContext` adds the plan; `sceneArrival` counts the beats published since the newest scene change and, while that count is 0 and the place changed, names the place the party left (title only, never a description). A new custom show copies the scenario's `aiPlan` into its guidance when it is made. `makeScript` plays each answered player line just before the first piece that answers it. `scenarioFromDraft` copies a non-blank `aiPlan`.
 - Pictures, server (`images.ts`, `image-jobs.ts`, `picture-views.ts`) and gallery (`gallery-model.ts`, `gallery-view.ts`): see follow-ups 3, 5, 8, 9, 11 and 12.
 - Library and director page (`Library.vue`, `DirectorGuidance.vue`): Fine-tune has a For the AI box above Director notes. The director page has a closed For the AI fold after the standing note, with the box AI plan for this show, Save AI plan and Clear AI plan.
-- Script review and seats (`BeatPanel.vue`, `ScriptEditor.vue`, `SeatStory.vue`): the "Read aloud first, word for word" header lists only the lines no piece answers, an answered line shows just above its first answering piece, and the seat shows the published order with the rolls right after the leading run of player lines.
+- Script review and seats (`BeatPanel.vue`, `ScriptEditor.vue`, `SeatStory.vue`): the "Read aloud first, word for word" header lists only the lines no piece answers, an answered line shows just above its first answering piece, and the seat shows the published order with the rolls right after the leading run of player lines (the Stream pieces update changes that when the run ends with an answered line).
 - Help (`apps/web/src/help/content.ts`): new For the AI and What the AI reads entries, firmer wording for Note for the AI and Standing note, the paired line order, faster conversation planning, a glossary entry, and the corrections listed under the follow-ups. `help-labels.test.ts` checks the new labels.
 - Docs: `docs/ARCHITECTURE.md` has a new "AI direction" section and the corrected picture and script paragraphs. `.local/ai-direction-2026-11-02/prompt-size.mts` measures the plan and script prompts before and after.
 
@@ -46,7 +123,7 @@ Kevin's decisions:
 - 290: each scenario and each show has a private For the AI plan. Director notes stay private and the AI never reads them. A new show copies the scenario's plan, and the director can edit the show's copy during the show.
 - 291: the beat note, the standing note and the plan are followed as instructions. Only the fixed dice, the players' words, the boundaries and what each character knows can limit them. A beat note saved after stakes approval applies at the script and keeps the approved stakes.
 - 432: every plan and script request carries each sent character's motive and goal, and at most one of them per scene may push their own agenda without being spoken to. Twists go in secrets, which still go no further than before.
-- 435: the AI marks which player line each piece answers, and the script plays each line followed by the pieces that answer it. Lines no piece answers play first. The words never change, and today's order is the fallback when marks are missing or wrong.
+- 435: the AI marks which player line each piece answers, and the script plays each line followed by the pieces that answer it. Lines no piece answers play first. The words never change, and with no marks every line plays first, a mark that names no selected line is dropped on its own so only the line left unanswered plays first, and a mark that names a selected line that does not play (one holding only a sound tag) sends that whole beat back to every line first.
 - 303: conversation rounds are planned at the AI's low effort. Action-round plans and every script keep the default effort. Kevin chose this over the recommendation; low effort planned in 29 s instead of 47 to 52 s at the beta, with terser stakes.
 
 Prompt growth, measured by `prompt-size.mts` on beta beat 13 (7 player lines, 2 characters sent, 12 earlier beats of history; no network call; tokens are characters divided by 4). The full table is in `.local/ai-direction-2026-11-02/prompt-sizes.md`.
@@ -56,7 +133,7 @@ Prompt growth, measured by `prompt-size.mts` on beta beat 13 (7 player lines, 2 
 | Plan | 49,647 characters (about 12,412 tokens) | 56,109 (14,027), +6,462 | 61,385 (15,346), +11,738 |
 | Script | 45,040 characters (about 11,260 tokens) | 51,800 (12,950), +6,760 | 57,076 (14,269), +12,036 |
 
-Without a plan the growth is 13.0% on the plan request and 15.0% on the script request. Most of it is the last two beats' text (+6,117 characters in the user part of both requests); the rules and direction wording add 345 to the plan's system part and 643 to the script's. A 4,823-character plan adds 5,276 characters to each request, so the full growth is 23.6% on the plan and 26.7% on the script.
+Without a plan the growth is 13.0% on the plan request and 15.0% on the script request. The user part of both requests grows by 6,117 characters. On beat 13 about 4,650 of those are the last two beats' text and about 1,480 are each sent character's motive and goal. The rules and direction wording add 345 to the plan's system part and 643 to the script's. A 4,823-character plan adds 5,276 characters to each request, so the full growth is 23.6% on the plan and 26.7% on the script.
 
 Sprint 2 follow-ups fixed:
 
@@ -85,7 +162,7 @@ What Kevin should check:
 - Notes are binding now. A Note for this beat or a Standing note that was only a hint before is followed as an instruction, so reread the ones he has saved.
 - Live AI checks the main agent still owes: that ClewdR accepts the low effort setting on conversation plans, that stakes still come back valid and quicker, that the AI follows a For the AI plan and a beat note saved after stakes approval, that the replies carry usable reply marks, and that no more than one character acts unprompted in a scene.
 
-Known leftovers: a reply mark the AI gets wrong is dropped and the beat plays in today's order, so a bad mark costs only the pairing. The last two beats are sent in full, which is most of the prompt growth. A Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
+Known leftovers: the draft check drops a mark that names no selected line, so a bad mark costs only that pair and the line it should have followed plays first. A mark that names a selected line that does not play (one holding only a sound tag) sends the whole beat back to every line first. The last two beats are sent in full, which is about three quarters of the growth in the user part of the prompt. The one-agenda-per-scene rule sees only the last two beats, so in a long scene the AI cannot see a push from three or more beats ago and may let a second character push. A Draw again picture still drawing when the scene changes is dropped, and the gallery files it under the scene where it was drawn. The seat still shows "This turn is locked..." for a box stamped during an abandoned round.
 
 How it was checked: the baseline at d6449c2 was typecheck clean; `npm test` 2,991 passed and 889 skipped; database suite 1,333 passed in 103 files; browser suite 53 of 53. On the finished code, before the integration pass: `npm test` 3,065 passed, 1 failed and 904 skipped (the database tests) in 206 files; database suite 1,357 passed and 1 failed in 105 files; typecheck reported two errors. The failing tests and both type errors shared one cause: the fake scenario writer's draft (`apps/server/src/fake-provider.ts`) and the draft in `apps/server/test/scenario-drafts.test.ts` had no `aiPlan`. Integration gave both an empty `aiPlan`. Final counts: typecheck clean; `npm test` 3,066 passed and 904 skipped (the database tests) in 206 files; database suite 1,358 passed in 105 files; browser suite 55 of 55, including the two new shelf-and-pins tests. Prompt sizes were measured on the final provider with `prompt-size.mts`, and a rerun at integration gave the same figures.
 

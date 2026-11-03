@@ -119,15 +119,20 @@ function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
   validateSources(parsed.continuity, beat, state);
   return parsed;
 }
-// Beats published since the newest scene change (or since the show began), and the title of the place the party just left while no beat has been published since a move to a different place. Place descriptions never leave this function.
+// Beats published since the newest scene change (or since the show began), and the title of the place where the last published beat happened (or where the show started) while the party has moved elsewhere since. The place comes from the first scene change after the newest published beat, so several moves in a row name the place the party last played in, and a return to that place names nothing. Place descriptions never leave this function.
 async function sceneArrival(client: PoolClient, sessionId: string, state: SessionState): Promise<{ sceneBeatCount: number; cameFrom?: string }> {
-  const change = (await client.query<{ sequence: string; before: { scene?: SessionState['session']['scene']; locations?: SessionState['locations'] } | null; afterLocationId: string | null }>(
-    "SELECT sequence, data->'before' AS before, data->'after'->'scene'->>'locationId' AS \"afterLocationId\" FROM audit_events WHERE session_id=$1 AND kind='change_scene' ORDER BY sequence DESC LIMIT 1", [sessionId])).rows[0];
+  const newest = (await client.query<{ sequence: string | null }>(
+    "SELECT max(sequence) AS sequence FROM audit_events WHERE session_id=$1 AND kind='beat.published'", [sessionId])).rows[0];
+  const lastBeat = newest?.sequence ?? 0;
+  const first = (await client.query<{ before: { scene?: SessionState['session']['scene']; locations?: SessionState['locations'] } | null }>(
+    "SELECT data->'before' AS before FROM audit_events WHERE session_id=$1 AND kind='change_scene' AND sequence > $2 ORDER BY sequence ASC LIMIT 1", [sessionId, lastBeat])).rows[0];
+  const latest = (await client.query<{ sequence: string }>(
+    "SELECT sequence FROM audit_events WHERE session_id=$1 AND kind='change_scene' ORDER BY sequence DESC LIMIT 1", [sessionId])).rows[0];
   const count = (await client.query<{ count: string }>(
-    "SELECT count(*) AS count FROM audit_events WHERE session_id=$1 AND kind='beat.published' AND sequence > $2", [sessionId, change?.sequence ?? 0])).rows[0];
+    "SELECT count(*) AS count FROM audit_events WHERE session_id=$1 AND kind='beat.published' AND sequence > $2", [sessionId, latest?.sequence ?? 0])).rows[0];
   const sceneBeatCount = Number(count?.count ?? 0);
-  const left = change?.before;
-  if (sceneBeatCount !== 0 || !left?.scene || !Array.isArray(left.locations) || left.scene.locationId === change?.afterLocationId) return { sceneBeatCount };
+  const left = first?.before;
+  if (!left?.scene || !Array.isArray(left.locations) || left.scene.locationId === state.session.scene.locationId) return { sceneBeatCount };
   const cameFrom = sceneLocationTitle({ ...state, session: { ...state.session, scene: left.scene }, locations: left.locations });
   return { sceneBeatCount, ...(cameFrom ? { cameFrom } : {}) };
 }

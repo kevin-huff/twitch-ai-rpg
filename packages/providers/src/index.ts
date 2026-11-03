@@ -741,6 +741,7 @@ function scenarioOutlineSystem(size: ScenarioSize, withVoices = false): string {
     'Give every place a short unique key. The opening scene and every cast member use one of those keys as locationKey.',
     'Characters who are present start at the opening scene\'s place. Characters who are offstage and talk to the party remotely get a communicationChannel.',
     'Names, roles, appearances, place titles, the opening scene, public tracks and public facts are public. They never hold hidden identities or secrets. Put private notes for the director in directorNotes and private direction for the storyteller in aiPlan; other private material stays in director-only facts and tracks or a cast member\'s concept. aiPlan never names a character\'s secret or hidden identity.',
+    'Keep aiPlan to at most about 2,000 characters: a short plan of where the story is heading and how each scene should push, not a script. A long plan slows this call down.',
     'Start every cast member\'s appearance with apparent age and gender presentation, for example \'A woman in her forties with...\', because portraits are drawn only from appearance and role.',
     'suggestedBoundaries lists at most 10 things to avoid or handle with care in this story, in plain words. They never loosen, contradict, repeat or rephrase the supplied boundaries. A person confirms every suggestion.',
     'Do not write a boundaries field. Do not invent player choices or mechanical effects.',

@@ -79,7 +79,7 @@ function clearPlan() {
     </fieldset>
     <div class="guidance-note">
       <label>Standing note<textarea v-model="noteText" data-testid="standing-note-text" maxlength="3000" rows="3" :aria-describedby="noteHelpId" /></label>
-      <p :id="noteHelpId" class="field-help">Only you see this. It stays on for every beat until you clear it. Saving keeps the current plan, dice and script.</p>
+      <p :id="noteHelpId" class="field-help">Only you see this. It stays on for every beat until you clear it. Saving keeps the current stakes, dice and script.</p>
       <div class="actions">
         <button type="button" class="secondary" data-testid="save-standing-note" :disabled="pending" @click="saveNote">Save standing note</button>
         <button type="button" class="secondary" data-testid="clear-standing-note" :disabled="pending" @click="clearNote">Clear standing note</button>

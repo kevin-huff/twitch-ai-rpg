@@ -120,6 +120,40 @@ suite('where the party came from, and the AI plan on new shows', () => {
     expect(planning.sceneBeatCount).toBe(0);
   });
 
+  it('names the place of the last beat after two moves with no beat between them', async () => {
+    await plan();
+    await renderContext();
+    await publish();
+    await move({ kind: 'new', title: 'The Docks', description: NEW_DESCRIPTION });
+    await move({ kind: 'new', title: 'The Market', description: 'ZZMARKET stalls in the sun' });
+    const planning = await plan();
+    expect(planning.cameFrom).toBe(OLD_PLACE);
+    expect(planning.sceneBeatCount).toBe(0);
+  });
+
+  it('gives no arrival for a move out and straight back with no beat between', async () => {
+    const oldId = snapshot.locations.find((location) => location.title === OLD_PLACE)!.id;
+    await plan();
+    await renderContext();
+    await publish();
+    await move({ kind: 'new', title: 'The Docks', description: NEW_DESCRIPTION });
+    await move({ kind: 'existing', locationId: oldId });
+    const planning = await plan();
+    expect(planning).not.toHaveProperty('cameFrom');
+    expect(planning.sceneBeatCount).toBe(0);
+  });
+
+  it('keeps the arrival when a change within the same place follows a move', async () => {
+    await plan();
+    await renderContext();
+    await publish();
+    await move({ kind: 'new', title: 'The Docks', description: NEW_DESCRIPTION });
+    await move({ kind: 'existing', locationId: snapshot.session.scene.locationId });
+    const planning = await plan();
+    expect(planning.cameFrom).toBe(OLD_PLACE);
+    expect(planning.sceneBeatCount).toBe(0);
+  });
+
   it('never stores a place description in any AI request', async () => {
     await move({ kind: 'new', title: 'The Docks', description: NEW_DESCRIPTION });
     await plan();

@@ -7,7 +7,7 @@ export * from './operations';
 export * from './playback';
 export * from './voices';
 import type { VoiceChoice } from './voices';
-import { VoiceRefSchema, elevenVoiceId, voicedWords } from './voices';
+import { VoiceRefSchema, elevenVoiceId, hasAudioTags, stripAudioTags, voicedWords } from './voices';
 import { ActionPictureStatusSchema, PICTURE_STYLE_MAX, PictureLineSchema, PictureModelIdSchema, PicturePersonSchema, PinnedPictureSchema, PictureSceneSchema, PictureSettingsSchema, PortraitJobSchema, ScenePictureSchema, ScenePictureStatusSchema } from './images';
 import { GalleryStatusSchema } from './gallery';
 import type { FieldGenerationRequest, FieldGenerationResponse } from './field-generation';
@@ -348,6 +348,8 @@ export const ScriptSegmentSchema = z.strictObject({
   speaker: z.strictObject({ entityId: IdSchema, displayName: z.string().min(1).max(80) }).nullable(),
   recipientCharacterIds: z.array(IdSchema), delivery: DeliverySchema, sourceSubmissionIds: z.array(IdSchema),
   voiceProfileId: IdSchema.nullable(), ttsEnabled: z.boolean(), voiceText: TextSchema.optional(),
+  // marks a player line that plays just before the piece answering it
+  answered: z.literal(true).optional(),
 });
 export type ScriptSegment = z.infer<typeof ScriptSegmentSchema>;
 export type PlayerSegmentKind = 'player_dialogue' | 'player_action';
@@ -364,6 +366,11 @@ export function playerWords(line: Pick<Submission, 'kind' | 'text' | 'intent' | 
   const parts = [line.intent, line.approach].filter((part) => part.trim());
   if (parts.length === 2 && parts[0]!.trim() === parts[1]!.trim()) return parts[0]!;
   return parts.join('\n');
+}
+// What a player line says aloud and shows once audio tags are removed; a line only counts as played when this is not blank.
+export function spokenPlayerText(line: Pick<Submission, 'kind' | 'text' | 'intent' | 'approach'>): string {
+  const words = playerWords(line);
+  return hasAudioTags(words) ? stripAudioTags(words) : words;
 }
 const tidySpoken = (value: string) => value
   .replace(/<\/?[a-z][^>]*>/gi, ' ')
@@ -554,7 +561,7 @@ export interface ProviderContext {
   standingNote?: string;
   aiCastNpcIds?: string[];
   storyPlan?: string;   // the show's private 'For the AI' plan; present only when not empty
-  cameFrom?: string;   // title of the place the party just left; only before any beat is published after a move
+  cameFrom?: string;   // title of the place where the last published beat happened; only before any beat is published after a move to a different place
   sceneBeatCount?: number;   // beats published since the newest scene change (or since the show began)
 }
 

@@ -24,7 +24,7 @@ function fakeController(context: unknown) {
 
 const manifest = { beatId: 'beat-1', segments: [{ id: 'one', text: 'Hello.', speaker: 'Narrator', voiceProfileId: 'n', url: '/x' }, { id: 'two', text: 'Hi.', speaker: 'Mara', voiceProfileId: 'm', url: '/y' }] };
 const playback = (extra: Record<string, unknown> = {}) => ({ presenter: { available: false, leaseExpiresAtMs: null }, status: 'idle', segmentIndex: null, manifest: null, ...extra });
-const mountAudio = (mode: 'present' | 'listen' | 'off', beatId = 'beat-1') => mount(BroadcastAudio, { props: { sessionId: 'show', beatId, mode } });
+const mountAudio = (mode: 'present' | 'listen' | 'off' | 'follow', beatId = 'beat-1') => mount(BroadcastAudio, { props: { sessionId: 'show', beatId, mode } });
 
 beforeEach(() => {
   mocks.controllers.length = 0;
@@ -110,6 +110,39 @@ describe('BroadcastAudio', () => {
     expect(wrapper.text()).toBe('');
     expect(wrapper.html()).not.toContain('lease was lost');
     wrapper.unmount();
+  });
+});
+
+describe('BroadcastAudio follow mode', () => {
+  it('builds a silent controller without a beat and never listens or claims', async () => {
+    const wrapper = mountAudio('follow');
+    const [controller] = mocks.controllers;
+    expect(mocks.create).toHaveBeenCalledWith({ sessionId: 'show', beatId: undefined, director: false, stage: false });
+    controller.state.snapshot = playback();
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(controller.listen).not.toHaveBeenCalled();
+    expect(controller.claim).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-testid="broadcast-audio"]').attributes('data-state')).toBe('following');
+    controller.state.error = 'Lost it.';
+    await nextTick();
+    expect(wrapper.get('[data-testid="broadcast-audio"]').attributes('data-state')).toBe('error');
+    wrapper.unmount();
+  });
+
+  it('emits the playing segment, ignores beat changes, and cleans up on unmount', async () => {
+    const wrapper = mountAudio('follow');
+    const [controller] = mocks.controllers;
+    controller.state.snapshot = playback({ status: 'playing', segmentIndex: 1, manifest });
+    await nextTick();
+    expect(wrapper.emitted('segment')?.at(-1)).toEqual(['two']);
+    controller.state.snapshot = playback({ status: 'idle', segmentIndex: null, manifest });
+    await nextTick();
+    expect(wrapper.emitted('segment')?.at(-1)).toEqual([null]);
+    await wrapper.setProps({ beatId: 'beat-2' });
+    expect(controller.setContext).not.toHaveBeenCalled();
+    wrapper.unmount();
+    expect(controller.dispose).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

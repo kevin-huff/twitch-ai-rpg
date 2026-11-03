@@ -101,6 +101,7 @@ describe('ClewdR two-pass scenario writer', () => {
     expect(first.system).toContain('private direction for the storyteller in aiPlan');
     expect(first.system).toContain('aiPlan never names a character\'s secret or hidden identity');
     expect(first.system).toContain('They never hold hidden identities or secrets.');
+    expect(first.system).toContain('Keep aiPlan to at most about 2,000 characters');
     const field = FIELD_GENERATION_FIELDS['scenario.aiPlan'];
     expect(first.system).toContain(`${field.label}: ${field.instruction}`);
     expect(first.system.indexOf(field.instruction)).toBeGreaterThan(first.system.indexOf(FIELD_GENERATION_FIELDS['scenario.directorNotes'].instruction));

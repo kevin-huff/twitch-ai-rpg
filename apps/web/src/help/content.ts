@@ -22,7 +22,7 @@ export const firstSteps: Record<HelpRole, string[]> = {
   ],
   streamer: [
     'Open Stream this show.',
-    'Press Copy overlay link or Copy full-scene link.',
+    'Press Copy ready-made link, or open Full layouts and press Copy overlay link or Copy full-scene link.',
     'Follow How to add this in OBS to paste it into a Browser source.',
   ],
 };
@@ -160,11 +160,11 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Publishing and narration',
         paragraphs: [
-          'Player lines and actions go on stream before the script, in the player\'s own words with any audio tags left out. A Say line is read in the voice its player picked, or by the narrator when they picked none. A Do line is always read by the narrator, after the character\'s name. The director page lists them under Read aloud first, word for word. You cannot change them there. Only the script below them is yours to edit.',
-          'Each player line plays just before the part of the script that answers it, so a reply follows the line it answers. Lines nothing answers play first, as they always did. The words never change. In script review, the lines nothing answers are under Read aloud first, and an answered line shows just above the part that answers it. If the AI marks nothing, or marks a line that is not there, every line plays first.',
+          'Player lines and actions that nothing answers go on stream before the script, in the player\'s own words with any audio tags left out. A line the script answers plays just before the part that answers it instead. A Say line is read in the voice its player picked, or by the narrator when they picked none. A Do line is always read by the narrator, after the character\'s name. The director page lists the lines nothing answers under Read aloud first, word for word. An answered line shows just above the part that answers it in script review. You cannot change them there. Only the script below them is yours to edit.',
+          'Each player line plays just before the part of the script that answers it, so a reply follows the line it answers. Lines nothing answers play first, as they always did. The words never change. In script review, the lines nothing answers are under Read aloud first, and an answered line shows just above the part that answers it. If the AI marks nothing, every line plays first. If it marks a line that is not there, that mark is dropped on its own, so the other pairs stay and only a line left unanswered plays first.',
           'Narration prepares by itself as soon as the script is ready. While it works the gold button reads Preparing voice…, and when it is done the page says Voice ready. If you press Publish while the voice is still preparing, the page says it is waiting for the voice and publishes the moment it is ready. You do not have to press anything twice.',
           'If you edit the script, save the edits under More before you publish. Until you do, Publish is off, because a publish would drop your edits.',
-          'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
+          'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link, or its sound link, loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
           'Press Preview narration to hear the narration yourself before you publish, and Stop preview to stop it. If preparing the voice fails, the beat bar says: The voice could not be prepared. Press Prepare voice again, or Publish without voice. A short network blip does not count as a failure, and the page keeps checking. Prepare voice again tries once more. Publish without voice shows the beat as text only. Viewers read it on the stage.',
           'If the script proposes facts the story must keep true, they are listed under Facts to remember above the bar, and publishing keeps them. Tick Don\'t keep these to publish without them.',
         ],
@@ -220,7 +220,7 @@ export const topics: HelpTopic[] = [
         heading: 'Standing note',
         paragraphs: [
           'A Note for the AI lasts one beat. A Standing note lasts until you clear it, so you can type it once for a five-round fight. It is in the same panel as On stage for the AI. Type it in Standing note and press Save standing note. Press Clear standing note to remove it. While one is set, Standing note on shows above the gold button as a reminder.',
-          'Saving or clearing a standing note keeps the current plan, the dice and the script. The AI reads it the next time it plans or writes a script. If the AI is working right now, that request finishes without it. The AI follows a standing note as an instruction, the same way it follows a Note for the AI. Players and the stream never see it.',
+          'Saving or clearing a standing note keeps the current stakes, the dice and the script. The AI reads it the next time it plans or writes a script. If the AI is working right now, that request finishes without it. The AI follows a standing note as an instruction, the same way it follows a Note for the AI. Players and the stream never see it.',
         ],
       },
       {
@@ -233,8 +233,8 @@ export const topics: HelpTopic[] = [
       {
         heading: 'What the AI reads',
         paragraphs: [
-          'Each time the AI plans or writes a script, it reads the scene and the place, where the party just came from (on the first beat after a move to a different place), the last two beats as the audience saw them, and the characters it is given, with each one\'s personality, motive and goal. It also follows For the AI, the standing note and the Note for this beat. It never reads secrets, hidden identities, Director notes or place notes.',
-          'The characters it is given are the ones ticked under On stage for the AI. With none ticked, they are the characters the players speak to, or up to two who are here when nobody is spoken to. At most one character per scene pushes their own goal without being spoken to, and only a character the AI is given can, so tick a character under On stage for the AI to let them act on their own.',
+          'Each time the AI plans or writes a script, it reads the scene and the place, where the party came from (the place where the last published beat happened, told once after a move to a different place), the last two beats as the audience saw them, and the characters it is given, with each one\'s personality, motive and goal. It also follows For the AI, the standing note and the Note for this beat. It never reads Director notes, characters\' secrets and backstories, non-player characters\' secrets and hidden identities, facts and tracks that are not public, or the places list. It does read the scene description, which a place\'s What the party sees on arrival text can fill.',
+          'The characters it is given are the ones ticked under On stage for the AI, plus anyone the selected lines speak to. With none ticked, they are the characters the players speak to, or up to two who are here when nobody is spoken to. At most one character per scene pushes their own goal without being spoken to, and only a character the AI is given can, so tick a character under On stage for the AI to let them act on their own.',
           'Conversation rounds are planned with less thinking, so the stakes come back faster and shorter. Action rounds and every script are not changed.',
         ],
       },
@@ -506,7 +506,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'The story',
         paragraphs: [
-          'The story sits under the banner on your seat page. It shows the latest beat: the lines players sent, with their names, then the rolls, then the rest of the scene. A Do something line is tagged Action. A roll is written in words, for example Dash rolled 11: Clean success, or Dash rolled 3: Critical failure. It updates by itself when the director publishes a beat.',
+          'The story sits under the banner on your seat page. It shows the latest beat: the lines players sent, with their names, the rolls, and the rest of the scene, in the order they played. A line that is answered plays just before its reply. The rolls come after the first lines players sent, or before them when the last of those lines is answered, so that line and its reply read together. A Do something line is tagged Action. A roll is written in words, for example Dash rolled 11: Clean success, or Dash rolled 3: Critical failure. It updates by itself when the director publishes a beat.',
           'Press Show the whole story to open every beat, oldest first, with the newest at the bottom. Press Hide the whole story to close it again. Before the first beat it says: The story starts when the director publishes the first beat.',
         ],
       },
@@ -573,14 +573,15 @@ export const topics: HelpTopic[] = [
         ],
         steps: [
           'Open Stream this show. Your card is called Your own stream link, and it is made for you the first time you open the panel.',
-          'Press Copy overlay link for captions, cast and dice over your own camera. Press Copy full-scene link for the whole show as one 1920×1080 picture.',
+          'Press Copy ready-made link. It is one link with the overlay and the narration, so one Browser source is all you need.',
+          'Want something else? Under Full layouts, Copy overlay link gives captions, cast and dice over your own camera, and Copy full-scene link gives the whole show as one 1920×1080 picture.',
           'Paste the link into an OBS browser source. How to add this in OBS on the card lists the steps.',
         ],
       },
       {
         heading: 'Hearing the narration twice',
         paragraphs: [
-          'If your seat page is playing the story too, open Sound options on your link\'s card and pick Off, or you\'ll hear it twice. If your link stops working, Stream this show makes a fresh link the next time it loads. Copy it again and paste it into OBS.',
+          'If your seat page is playing the story too, open Sound options under Full layouts on your link\'s card and pick Off, or you\'ll hear it twice. The ready-made link has no sound switch, so use a Full layouts link when this computer also plays the story. If your link stops working, Stream this show makes a fresh link the next time it loads. Copy it again and paste it into OBS.',
         ],
       },
       {
@@ -688,7 +689,8 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Full scene (1920×1080) is a solid picture: story text, dice, facts and the cast. Use it when the stage is the whole screen.',
           'Transparent overlay has no background. It adds captions, dice, the wager and the cast as small panels over your cameras, and keeps the middle of the screen clear except for the wager panel while stakes are up. Use it when you place the stage on top of a camera or game scene.',
-          'You choose the layout for each link, so one show can have both.',
+          'Pieces for your own scenes is a third way. It cuts the stage into separate parts, such as the captions, the dice and the picture, each on a link of its own with a see-through background. Use pieces when you want to place and size each part yourself. The Pieces for your own scenes section below lists them.',
+          'You choose the layout for each link, so one show can have all three.',
         ],
       },
       {
@@ -696,32 +698,84 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Press Stream this show in the header. It is on the seat, pre-show, director and Cast & lobby pages. A director goes to the Stream this show panel in Cast & lobby, and a player goes to their own panel. The panel opens by itself and loads the first time it opens.',
           'Links come in groups. For your stream holds the Main show link. Every new show already has one, made with the show, and Make the main show link appears only when a show has none. For a cast member who streams too lists each cast member with a Make a link button, plus Host view and any producer\'s link. Cast links are not made when you open the panel: press Make a link for a cast member who streams, and one press makes one link. Every link shows the same picture, and a cast member\'s link only listens to the show audio. Only one OBS should load the Main show link, because it carries the show audio. A producer\'s own link is made the first time they open the panel. A producer also sees For your own stream.',
-          'Each card has two copy buttons. Copy overlay link copies captions, cast and dice over your own camera, on a see-through background. Copy full-scene link copies the whole show as one 1920×1080 picture. The page says Copied, or Copy failed with the link selected for you to copy by hand. Treat a link like a password. Anyone who has it can watch that stream view.',
-          'Press Turn off, then Turn off to confirm, to switch a link off. Press Keep link if you change your mind. OBS sources using a turned off link switch to a holding screen within seconds. The row then says Turned off. and offers Make a new link.',
+          'Each link opens as a kit with the same parts. On a cast member\'s link, the host\'s link or a producer\'s link, the kit starts with Ready-made link. Copy ready-made link copies one address that shows the overlay and plays the narration where it is opened, so one Browser source is all they need. The Main show link has no ready-made link, because it carries the show audio. Full layouts holds the two layouts with their copy buttons, Sound options and the OBS steps. Pieces for your own scenes is a closed fold with the sound link and one card for each piece. Turn off sits at the bottom of the kit.',
+          'Under Full layouts, each card has two copy buttons. Copy overlay link copies captions, cast and dice over your own camera, on a see-through background. Copy full-scene link copies the whole show as one 1920×1080 picture. The page says Copied, or Copy failed with the link selected for you to copy by hand. Treat a link like a password. Anyone who has it can watch that stream view.',
+          'Press Turn off, then Turn off to confirm, to switch a link off. Press Keep link if you change your mind. Turning a link off stops every address that comes from it at once: the ready-made link, both layouts, the sound link and every piece. OBS sources using a turned off link switch to a holding screen within seconds, and its pieces go blank. The row then says Turned off. and offers Make a new link.',
           'A stream link lasts 90 days. The main show link made with a new show lasts 90 days too. The OBS source keeps working for that whole time without anyone signing in.',
-          'To check a link, press Preview (silent) on its card. The overlay preview sits on a checker background so you can see it is see-through. Do not open the main show link in an ordinary browser tab.',
+          'To check a link, press Preview (silent) on its card or on a piece\'s card. The overlay preview sits on a checker background so you can see it is see-through. Do not open the main show link in an ordinary browser tab.',
         ],
       },
       {
         heading: 'Choose the audio',
         paragraphs: [
-          'The sound is set for you. The main show link carries the show audio, the narration and character voices. A cast member\'s link plays the narration only where it is opened, and it cannot take over the show audio.',
-          'Only one OBS source should carry the show audio. If two do, viewers hear every line twice. Open Sound options on a card to pick Show audio (main show link only), Listen only or Off. If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice.',
+          'The sound is set for you. The main show link carries the show audio, the narration and character voices. Its sound link carries the same show audio, and is the way to carry it when you build scenes from pieces. A cast member\'s link plays the narration only where it is opened, and it cannot take over the show audio. Pieces never play sound.',
+          'Only one OBS source should carry the show audio. If two do, viewers hear every line twice. Use either a full layout of the Main show link or its sound link in OBS, not both. Open Sound options under Full layouts on a card to pick Show audio (main show link only), Listen only or Off. If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice.',
           'Preview (silent) plays no sound on purpose, so it never takes the audio from OBS.',
         ],
       },
       {
         heading: 'Add the stage to OBS',
         paragraphs: [
-          'Press How to add this in OBS on a card to see these steps.',
+          'Press How to add this in OBS on a card to see these steps. They are for a full layout. A piece uses the size on its own card, and the steps for pieces are under How to add pieces in OBS in the next sections.',
         ],
         steps: [
           'In OBS, open Sources, press +, and choose Browser.',
           'Paste the link into URL.',
           'Set Width to 1920 and Height to 1080.',
           'Untick Shutdown source when not visible and Refresh browser when scene becomes active.',
-          'For the main show link only: Tick Control audio via OBS.',
+          'For the main show link, or its sound link, only: Tick Control audio via OBS.',
           'Do not also capture desktop audio for the same sound. That doubles the narration.',
+        ],
+      },
+      {
+        heading: 'Pieces for your own scenes',
+        paragraphs: [
+          'Open Pieces for your own scenes in a link\'s kit to get one link for each part of the stage. Each piece is its own Browser source with a see-through background, so you can place and size it anywhere in any OBS scene. Pieces never play sound. The Sound link below does that for the whole stream.',
+          'Each piece card shows its name, what it shows, its size and a tag. The tag Shared means everyone sees the same thing. Dice, Stakes and Party can also show one person. Pick a name in Who it shows to make a link just for that person, and the tag then reads Just for with their name. Leave it on Everyone for the shared view. A player\'s own stream link starts with their own name picked.',
+          'Preview (silent) opens the piece on a checker background in a new tab, with no sound. Copy link copies the address for OBS. The page says Copied, or Copy failed with the link selected for you to copy by hand.',
+          'A piece draws nothing when there is nothing to show yet, such as Dice before the first roll or Corrections before one is published. The AI badge always shows. Treat a piece link like a password, the same as the other links.',
+        ],
+      },
+      {
+        heading: 'The pieces',
+        paragraphs: [
+          'Captions, 1440 × 184: the latest beat\'s lines, with the one being spoken marked. The other lines dim while one is spoken.',
+          'Dice, 1440 × 144: the latest rolls. Past six rolls they take two rows. It can show one person\'s rolls.',
+          'Stakes, 960 × 612: what is at stake before a roll, one person at a time. It can show one person\'s stakes.',
+          'Party, 1344 × 76: each character\'s name, portrait and strain. It can show one person.',
+          'Tracks, 352 × 304: the first two public tracks.',
+          'Picture, 336 × 192: the scene picture, or the picture you pinned.',
+          'AI badge, 336 × 164: says the narration and voices are made by AI, and whether the show is live.',
+          'Facts, 464 × 345: what the party knows, newest first.',
+          'Corrections, 1728 × 88: the newest correction you published.',
+        ],
+      },
+      {
+        heading: 'How to add pieces in OBS',
+        paragraphs: [
+          'Press How to add pieces in OBS in the kit to see these steps. A piece scales to fit its source, so a larger Width and Height gives a larger piece with the same shape.',
+        ],
+        steps: [
+          'In OBS, open Sources, press +, and choose Browser.',
+          'Paste the piece\'s link into URL.',
+          'Set Width and Height to the size on the piece\'s card.',
+          'Untick Shutdown source when not visible and Refresh browser when scene becomes active.',
+          'Tick Control audio via OBS for the sound link only, and only on the Main show link.',
+        ],
+      },
+      {
+        heading: 'The sound link',
+        paragraphs: [
+          'Pieces never play sound, so one sound link carries the show audio for the whole stream. It draws nothing. On the Main show link, open Pieces for your own scenes and press Copy sound link. In OBS, add it once as a Browser source in a scene of its own, then add that scene as a source inside every other scene. The sound then plays whichever scene is live.',
+          'Only the Main show link\'s sound link in OBS carries the show audio. On a cast member\'s link, the host\'s link or a producer\'s link, the sound link plays the narration only where it is opened and never carries the show audio. A cast member who builds a scene from pieces adds their own sound link in the same way, so their viewers hear the narration.',
+          'A full layout link already plays sound, so use the sound link only with pieces. Load either a full layout of the Main show link or its sound link in OBS, not both, because only one source should carry the show audio.',
+          'The Captions piece still marks the line being spoken, even though it plays nothing. It follows the show audio without playing it, checking about once a second, so the mark can trail the voice by a moment. It marks a line only while the show audio is playing somewhere.',
+        ],
+      },
+      {
+        heading: 'The AI badge reminder',
+        paragraphs: [
+          'Keep the AI badge on screen whenever the narration or voices play. It tells viewers they are made by AI. Both full layouts already include it. When you build a scene from pieces, add the AI badge piece yourself. The kit shows the same reminder above the piece cards.',
         ],
       },
       {
@@ -734,7 +788,7 @@ export const topics: HelpTopic[] = [
         heading: 'Check that it works',
         paragraphs: [
           'On the director page, a No show audio chip means the main show link is not open in OBS. Its Stream this show link takes you to the links. If the chip reads Can\'t check the show audio, reload the page.',
-          'If a stream link has been turned off or has expired, the stage shows The story continues shortly. Make a new link and paste it into OBS.',
+          'If a stream link has been turned off or has expired, the stage shows The story continues shortly, and its pieces go blank. Make a new link and paste it into OBS.',
         ],
       },
       {
@@ -754,7 +808,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Why you might want your own link',
         paragraphs: [
-          'A cast member who streams can show the story on their own channel. You get a stream link of your own, so your OBS (Open Broadcaster Software) shows the same show as the main one, with captions, dice and the cast over your own camera.',
+          'A cast member who streams can show the story on their own channel. You get a stream link of your own, so your OBS (Open Broadcaster Software) shows the same show as the main one, with captions, dice and the cast over your own camera. Your link also gives you each part of the stage as a piece, if you want to build your own scene.',
           'A stream link needs no sign-in, and the host or you can turn it off at any time.',
         ],
       },
@@ -763,7 +817,8 @@ export const topics: HelpTopic[] = [
         steps: [
           'In Cast & lobby, open Stream this show. If you are on a seat or the pre-show page, press Stream this show there.',
           'Find Your own stream link. It is made for you the first time you open the panel.',
-          'Press Copy overlay link for captions, cast and dice over your own camera on a see-through background. Press Copy full-scene link for the whole show as one 1920×1080 picture.',
+          'Press Copy ready-made link. It comes first on your card. It is one link with the overlay and the narration, so one Browser source is all you need.',
+          'For something else, open Full layouts. Press Copy overlay link for captions, cast and dice over your own camera on a see-through background, or Copy full-scene link for the whole show as one 1920×1080 picture.',
           'Copied appears when the link is on your clipboard. If it says Copy failed, select the link in the box and copy it by hand.',
         ],
       },
@@ -771,6 +826,7 @@ export const topics: HelpTopic[] = [
         heading: 'Add it to OBS',
         paragraphs: [
           'Press How to add this in OBS on the card to see the same steps. Treat the link like a password. Anyone who has it can watch your stream view.',
+          'To build your own scene instead, open Pieces for your own scenes on the card. Your name is already picked in Who it shows on the pieces that can show one person. Press Copy link on each piece you want, and follow How to add pieces in OBS. The Stage and OBS topic lists every piece, its size, and the sound link.',
         ],
         steps: [
           'In OBS, open Sources, press +, and choose Browser.',
@@ -783,14 +839,14 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Sound',
         paragraphs: [
-          'Your own link plays the narration only where it is opened, so your viewers can hear it. Only the main show link in the host\'s OBS carries the show audio.',
-          'If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice. Open Sound options on the card and pick Off.',
+          'Your own link plays the narration only where it is opened, so your viewers can hear it. Only the main show link in the host\'s OBS carries the show audio. Your Sound link works the same way: it plays the narration where it is opened and never carries the show audio. Pieces never play sound, so if you build a scene from pieces, add your Sound link once in a scene of its own and add that scene inside your other scenes.',
+          'If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice. Open Sound options under Full layouts on the card and pick Off. The ready-made link has no sound switch.',
         ],
       },
       {
         heading: 'If your link stops working',
         paragraphs: [
-          'The host can turn your link off. The stage then shows The story continues shortly. Stream this show makes a fresh link by itself the next time it loads. Just copy it again and paste it into OBS.',
+          'The host can turn your link off. The stage then shows The story continues shortly. Your pieces go blank too. Stream this show makes a fresh link by itself the next time it loads. Just copy it again and paste it into OBS.',
         ],
       },
     ],
@@ -827,7 +883,7 @@ export const topics: HelpTopic[] = [
           'Pressing a draw button never cancels another picture. Pictures already on their way keep going, and the newest picture takes the old one\'s place when it is ready. A beat\'s picture waiting for you to publish is never touched by this. It stays held until you publish the beat.',
           'Press Hide picture to take the picture off the stream and the player seats. Hide picture and Show picture work at any time, even while the gold button is busy with a beat. Hide picture also works while a picture is being made, which keeps a new scene\'s picture off the stream before it appears. The panel then says Making the picture... It stays hidden until you press Show picture. Press Show picture to put it back. A hidden scene can always be shown again, and it stays hidden after Draw the place or Draw the last beat until you press Show picture.',
           'Under the buttons the panel says: Draw the place makes a new picture of this scene\'s place. Draw the last beat draws the newest beat in this scene, with everyone who took part. Pictures already on their way keep going. The newest picture takes the old one\'s place when it is ready.',
-          'For each beat the panel also tells you about the beat\'s own picture. While it is being made it says Making this beat\'s picture. Viewers and players see it when you publish the beat. When it is ready it shows a small preview and says This beat\'s picture is ready. Viewers and players see it when you publish the beat. If it fails it says This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now. When the reason is the picture service account, the server\'s key or a refusal to draw the beat, the panel says that instead. For a refusal it says The picture service would not draw this beat. You can still publish it. While you have a picture pinned, the panel says Your pinned picture is on the stream and the player seats instead. Press Release to show this one.',
+          'For each beat the panel also tells you about the beat\'s own picture. While it is being made it says Making this beat\'s picture. Viewers and players see it when you publish the beat. When it is ready it shows a small preview and says This beat\'s picture is ready. Viewers and players see it when you publish the beat. If it fails it says This beat\'s picture could not be made. You can still publish the beat, and the stream keeps the picture it has now. When the reason is the picture service account, the server\'s key or a refusal to draw the beat, the panel says that instead. For a refusal it says The picture service would not draw this beat. You can still publish it. While you have a picture pinned, the panel says Your pinned picture is on the stream and the player seats instead. Press Release to show this one. When the picture shown is the one you pinned, it says This picture is pinned. It stays on the stream and the player seats until you press Release. When a beat\'s picture is ready or being made, it also says that when you publish the beat, it waits behind your pinned picture until you press Release.',
           'Hide picture and Show picture work the same for beat pictures: while the scene is hidden, a published beat\'s picture stays hidden too. Draw the place always draws the scene from its description.',
           'Pictures of a beat take longer than a place picture, because the story AI writes the description first. Expect anywhere from 25 seconds to 2 minutes. The show never waits for a picture.',
           'If something goes wrong, the panel says one of these. For a place picture: The picture could not be made. Press Draw the place to try again. Or: The picture service would not draw this scene. Press Draw the place to try again. For a beat picture: The picture of the last beat could not be made. Press Draw the last beat to try again. Or: The picture service would not draw this beat. Press Draw the last beat to try again. The show never waits for a picture.',
@@ -949,20 +1005,21 @@ export const topics: HelpTopic[] = [
         heading: 'OBS shows "The story continues shortly"',
         paragraphs: [
           'The stage cannot reach the show. The stream link may be switched off, the show may be closed, or the network may have dropped. The stage retries on its own.',
-          'Press Stream this show and look at the link\'s card. If the row says Turned off., press Make a new link and paste the new link into the OBS source.',
+          'Press Stream this show and look at the link\'s card. If the row says Turned off., press Make a new link and paste the new link into the OBS source. A piece whose link was turned off goes blank instead of showing this message.',
         ],
       },
       {
         heading: 'OBS shows a black box or a grey box',
         paragraphs: [
-          'Use the full-scene link for a solid picture and the overlay link over cameras. If a transparent overlay shows a box, check that you left Custom CSS alone and that you are looking at the preview in Studio Mode. Then right-click the source, open Properties and press Refresh cache of current page.',
+          'Use the full-scene link for a solid picture, and the overlay link, the ready-made link or the pieces over cameras. If a transparent overlay shows a box, check that you left Custom CSS alone and that you are looking at the preview in Studio Mode. Then right-click the source, open Properties and press Refresh cache of current page.',
         ],
       },
       {
         heading: 'Nobody hears the narration',
         steps: [
           'Check that you did not press Publish without voice. A beat published without voice has no sound.',
-          'Check that the main show link is the one loaded in OBS. It is the only link that carries the show audio.',
+          'Check that the main show link, or its sound link, is the one loaded in OBS. Those are the only links that carry the show audio. Pieces and the ready-made link never do.',
+          'If you built a scene from pieces, check that the sound link is in a scene of its own, and that this scene is added as a source inside the scene you are streaming.',
           'In OBS, tick Control audio via OBS on that source, and check that it is not muted in the Audio Mixer.',
           'On the director page, look for the No show audio chip, or the line No show audio: the main show link isn\'t open in OBS. If you see either, the main show link is not open in OBS, so open it there. If a Preview (not for OBS) tab has taken the audio, open Audio options on that tab and press Release audio.',
           'To test a link, use Preview (silent) on its card. Do not open the main show link in an ordinary browser tab. A tab like that only listens. It does not play the broadcast audio.',
@@ -977,13 +1034,21 @@ export const topics: HelpTopic[] = [
           'If it is a link on another computer, or a regular browser, press Stop that one. That page cannot take the audio back until it is reloaded.',
           'Your OBS with the main show link takes over within a few seconds. If narration was playing, press Resume shared audio.',
           'If you stopped your own OBS by mistake, the other page takes the show audio within a few seconds. Stop that one too, then reload your OBS browser source so it can take the show audio again.',
-          'If the page says Nobody is playing the show audio right now, load the main show link in OBS.',
+          'If the page says Nobody is playing the show audio right now, load the main show link, or its sound link, in OBS.',
         ],
       },
       {
         heading: 'The narration plays twice',
         paragraphs: [
-          'Two things are playing the same sound. Look for a second source carrying the show audio, another OBS source set to Listen only that is not muted, a cast member\'s own link playing while their seat is also playing the story (open Sound options on the card and pick Off), a desktop audio capture that picks up the first one, or a browser tab still open on the stage with Listen switched on. Turn off the extra ones. Only the main show link should carry the show audio.',
+          'Two things are playing the same sound. Look for a second source carrying the show audio, another OBS source set to Listen only that is not muted, a cast member\'s own link playing while their seat is also playing the story (open Sound options on the card and pick Off), a desktop audio capture that picks up the first one, or a browser tab still open on the stage with Listen switched on, or both a full layout of the main show link and its sound link loaded at once. Turn off the extra ones. Only the main show link, or its sound link, should carry the show audio.',
+        ],
+      },
+      {
+        heading: 'A piece shows nothing',
+        paragraphs: [
+          'A piece draws nothing until it has something to show. Dice stay clear until the first roll, Stakes until stakes are up, and Corrections until you publish one. That is normal. Only the AI badge always shows.',
+          'If a piece stays empty while its content is on the stage, copy the link again with Copy link and paste the whole address, because a cut-off address shows nothing. Check that Who it shows names someone who is in this show. Check that the link was not turned off. A piece with a mistyped name draws nothing.',
+          'If the Captions piece never marks the line being spoken, check that the show audio is playing somewhere, because it follows the audio. See Nobody hears the narration.',
         ],
       },
       {
@@ -1036,7 +1101,7 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Note for the AI', definition: 'A private instruction the AI follows for one beat, under Show tools. Players never see it.' },
   { term: 'For the AI', definition: 'A private plan the AI follows on every round, in the library\'s Fine-tune and on the director page. Players never see it.' },
   { term: 'Input window', definition: 'The time when players can send lines. It opens when you start a conversation or action round and closes when the lines are locked.' },
-  { term: 'Presenter', definition: 'The one browser source allowed to play narration for the audience. It is the main show link in OBS.' },
+  { term: 'Presenter', definition: 'The one browser source allowed to play narration for the audience. It is the main show link in OBS, or its sound link.' },
   { term: 'Listen', definition: 'The Listen in this browser button, which lets a browser play the narration. A player\'s seat has a Play button on each part of the story instead. Browsers stay silent until someone presses it.' },
   { term: 'Text-only beat', definition: 'A beat published with Publish without voice. It has no narration. Viewers read it on the stage.' },
   { term: 'Test seat', definition: 'A seat you open yourself to try a character\'s view. It lets you check the player screen without inviting anyone.' },
@@ -1049,5 +1114,7 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Overlay layout', definition: 'The transparent version of the stage, shown as Transparent overlay, which sits on top of your cameras.' },
   { term: 'Character card', definition: 'The page that describes one character: name, pronouns, look, personality, backstory, four traits, up to three possessions and a private secret. A card counts as soon as it has a name and is saved. You can read any card before the show starts.' },
   { term: 'Character link', definition: 'A private web address a player uses to write a character card before the show. It lasts 30 days. The player can save a draft and submit one card to your library.' },
-  { term: 'Stream link', definition: 'A private web address that OBS loads to show the stage. Each link has its own layout and audio setting, and can be switched off at any time.' },
+  { term: 'Stream link', definition: 'A private web address that OBS loads to show the stage. Each link has its own layout and audio setting, and can be switched off at any time. A link\'s kit also holds a ready-made link, a sound link and one address for each piece.' },
+  { term: 'Piece', definition: 'One part of the stage on a link of its own, such as the captions, the dice or the AI badge, for building your own OBS scene. A piece has a see-through background, shows its own size and never plays sound.' },
+  { term: 'Sound link', definition: 'A link that draws nothing and carries the show audio for a whole stream when you build scenes from pieces. On the main show link it carries the show audio. On any other link it only plays the narration where it is opened.' },
 ];

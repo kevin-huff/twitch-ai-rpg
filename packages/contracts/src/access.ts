@@ -3,10 +3,12 @@ import { z } from 'zod';
 const id = z.string().min(1).max(128);
 const timestamp = z.string();
 
-export const StreamLayoutSchema = z.enum(['scene', 'overlay']);
+export const StreamLayoutSchema = z.enum(['scene', 'overlay', 'audio']);
 export type StreamLayout = z.infer<typeof StreamLayoutSchema>;
-export const StreamAudioSchema = z.enum(['present', 'listen', 'off']);
+export const StreamAudioSchema = z.enum(['present', 'listen', 'off', 'follow']);
 export type StreamAudio = z.infer<typeof StreamAudioSchema>;
+export const StreamPieceSchema = z.enum(['captions', 'dice', 'stakes', 'party', 'tracks', 'picture', 'badge', 'facts', 'corrections']);
+export type StreamPiece = z.infer<typeof StreamPieceSchema>;
 
 export const ViewerSchema = z.strictObject({
   role: z.enum(['host', 'producer', 'player', 'stage']),

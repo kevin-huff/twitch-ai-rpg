@@ -13,7 +13,7 @@ import { useTable } from './table';
 
 const { snapshot, connected, sessionId, latestHistory, error } = useTable();
 const requested = parseStreamLocation(window.location);
-const layout = requested.layout;
+const layout = requested.layout === 'overlay' ? 'overlay' : 'scene';
 const inObs = 'obsstudio' in window;
 const checker = requested.checker || (layout === 'overlay' && !inObs);
 const activeSegmentId = ref<string | null>(null);

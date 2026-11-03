@@ -303,8 +303,8 @@ describe('stream links and producer access', () => {
   it('round-trips stream locations, ignores identity and falls back to scene', () => {
     const url = new URL(streamUrl('https://x.test', 'tok-1', { layout: 'overlay', audio: 'present' }) + '');
     url.searchParams.set('identity', identity);
-    expect(parseStreamLocation(url)).toEqual({ token: 'tok-1', layout: 'overlay', audio: 'present', checker: false, check: false });
-    expect(parseStreamLocation({ search: '?layout=weird&audio=loud&bg=checker&check=1', hash: '' })).toEqual({ token: null, layout: 'scene', audio: null, checker: true, check: true });
+    expect(parseStreamLocation(url)).toEqual({ token: 'tok-1', layout: 'overlay', audio: 'present', checker: false, check: false, view: null, who: null });
+    expect(parseStreamLocation({ search: '?layout=weird&audio=loud&bg=checker&check=1', hash: '' })).toEqual({ token: null, layout: 'scene', audio: null, checker: true, check: true, view: null, who: null });
   });
 
   it('reads hash tokens', () => {

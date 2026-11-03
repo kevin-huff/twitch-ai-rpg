@@ -4,7 +4,16 @@ import { nextTick } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageOverlay from './StageOverlay.vue';
-import overlaySource from './StageOverlay.vue?raw';
+import overlayFile from './StageOverlay.vue?raw';
+import captionsFile from './StageCaptions.vue?raw';
+import diceFile from './StageDice.vue?raw';
+import stakesFile from './StageStakes.vue?raw';
+import partyFile from './StageParty.vue?raw';
+import pictureFile from './StagePictureCorner.vue?raw';
+import tracksFile from './StageTracks.vue?raw';
+import badgeFile from './StageBadge.vue?raw';
+
+const overlaySource = [overlayFile, captionsFile, diceFile, stakesFile, partyFile, pictureFile, tracksFile, badgeFile].join('\n');
 
 const cssRule = (selector: string) => overlaySource.match(new RegExp('\\n' + selector.replace(/\./g, '\\.') + ' \\{([^}]*)\\}'))?.[1] ?? '';
 
@@ -677,7 +686,7 @@ describe('StageOverlay', () => {
     expect(wrapper.findAll('.dim')).toHaveLength(0);
   });
 
-  it('never dims a player line, while narration and npc lines dim whenever another line is active', async () => {
+  it('dims player and action lines like narration and npc lines while another line speaks, and never the speaking line', async () => {
     const line = (id: string, kind: string, speaker: string | null) => ({
       id, kind, text: `Line ${id}.`, speaker: speaker ? { entityId: `e-${id}`, displayName: speaker } : null,
       recipientCharacterIds: [], delivery: 'public', sourceSubmissionIds: [], voiceProfileId: null, ttsEnabled: false
@@ -688,8 +697,8 @@ describe('StageOverlay', () => {
     const byId = (id: string) => wrapper.get(`[data-segment-id="${id}"]`).classes();
     expect(byId('n1')).toContain('speaking');
     expect(byId('n1')).not.toContain('dim');
-    expect(byId('p1')).not.toContain('dim');
-    expect(byId('a1')).not.toContain('dim');
+    expect(byId('p1')).toContain('dim');
+    expect(byId('a1')).toContain('dim');
     expect(byId('d1')).toContain('dim');
     await wrapper.setProps({ activeSegmentId: 'p1' });
     expect(byId('p1')).toContain('speaking');
@@ -697,9 +706,12 @@ describe('StageOverlay', () => {
     expect(byId('n1')).toContain('dim');
     expect(byId('d1')).toContain('dim');
     await wrapper.setProps({ activeSegmentId: 'd1' });
-    expect(byId('p1')).not.toContain('dim');
-    expect(byId('a1')).not.toContain('dim');
+    expect(byId('d1')).not.toContain('dim');
+    expect(byId('p1')).toContain('dim');
+    expect(byId('a1')).toContain('dim');
     expect(byId('n1')).toContain('dim');
+    await wrapper.setProps({ activeSegmentId: null });
+    expect(wrapper.findAll('.dim')).toHaveLength(0);
   });
 
   it('puts the dice in two lines, with the name and breakdown cut first and the outcome never cut', () => {

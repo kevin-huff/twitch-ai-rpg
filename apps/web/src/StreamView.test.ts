@@ -381,6 +381,171 @@ describe('StreamView', () => {
   });
 });
 
+describe('StreamView pieces and the sound link', () => {
+  const VIEWS = [
+    ['captions', 'StageCaptions', { x: 240, y: 836, width: 1440, height: 184 }],
+    ['dice', 'StageDice', { x: 240, y: 686, width: 1440, height: 144 }],
+    ['stakes', 'StageStakes', { x: 480, y: 140, width: 960, height: 612 }],
+    ['party', 'StageParty', { x: 96, y: 60, width: 1344, height: 76 }],
+    ['tracks', 'StageTracks', { x: 1472, y: 240, width: 352, height: 304 }],
+    ['picture', 'StagePictureCorner', { x: 96, y: 184, width: 336, height: 192 }],
+    ['badge', 'StageBadge', { x: 1488, y: 60, width: 336, height: 164 }],
+    ['facts', 'StageFacts', { x: 0, y: 0, width: 464, height: 345 }],
+    ['corrections', 'StageCorrections', { x: 0, y: 0, width: 1728, height: 88 }],
+  ] as const;
+  const NAMES = VIEWS.map(item => item[1]);
+
+  function withObs<T>(run: () => Promise<T>): Promise<T> {
+    (window as unknown as { obsstudio: object }).obsstudio = {};
+    return run().finally(() => { delete (window as unknown as { obsstudio?: object }).obsstudio; });
+  }
+
+  it.each(VIEWS)('view=%s mounts only its piece inside a box-sized canvas', async (view, name, box) => {
+    const page = await open(`/stream?view=${view}&who=c1#token=t`);
+    for (const other of NAMES) expect(page.findComponent({ name: other }).exists()).toBe(other === name);
+    expect(page.findComponent({ name: 'StageScene' }).exists()).toBe(false);
+    expect(page.findComponent({ name: 'StageOverlay' }).exists()).toBe(false);
+    const piece = page.findComponent({ name });
+    expect(piece.props('snapshot')).toMatchObject({ session: { id: 's1' } });
+    expect(piece.props('connected')).toBe(false);
+    expect(piece.props('characterId')).toBe('c1');
+    expect(page.attributes('data-layout')).toBe('piece');
+    expect(page.attributes('data-view')).toBe(view);
+    const canvas = page.get('.stage-canvas').attributes('style') ?? '';
+    expect(canvas).toContain(`width: ${box.width}px`);
+    expect(canvas).toContain(`height: ${box.height}px`);
+    expect(canvas).toContain('left: 0px');
+    expect(canvas).toContain('top: 0px');
+    const origin = page.get('.stage-piece-origin').attributes('style') ?? '';
+    expect(origin).toContain(`left: ${-box.x}px`);
+    expect(origin).toContain(`top: ${-box.y}px`);
+    expect(document.documentElement.classList.contains('stage-transparent')).toBe(true);
+  });
+
+  it('gives the piece no character when who is missing', async () => {
+    const page = await open('/stream?view=dice#token=t');
+    expect(page.findComponent({ name: 'StageDice' }).props('characterId')).toBeNull();
+  });
+
+  it('follows the spoken line on a captions page and passes the active segment', async () => {
+    const page = await open('/stream?view=captions#token=t');
+    expect(mocks.audioMounts).toEqual([{ sessionId: 's1', mode: 'follow', identity: IDENTITY }]);
+    await page.find('[data-testid="broadcast-audio-stub"]').trigger('click');
+    expect(page.findComponent({ name: 'StageCaptions' }).props('activeSegmentId')).toBe('g2');
+  });
+
+  it('mounts no audio on the other pieces by default', async () => {
+    for (const [view] of VIEWS.filter(item => item[0] !== 'captions')) {
+      const page = await open(`/stream?view=${view}#token=t`);
+      expect(page.find('[data-testid="broadcast-audio-stub"]').exists()).toBe(false);
+      page.unmount();
+      wrapper = null;
+    }
+    expect(mocks.audioMounts).toEqual([]);
+  });
+
+  it('listens on a piece that asks to listen', async () => {
+    await open('/stream?view=dice&audio=listen#token=t');
+    expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+  });
+
+  it('presents on a piece only for a link that can present inside OBS', async () => {
+    await withObs(async () => {
+      const page = await open('/stream?view=dice&audio=present#token=t');
+      expect(mocks.audioMounts.map(item => item.mode)).toEqual(['present']);
+      page.unmount();
+      wrapper = null;
+      mocks.audioMounts.length = 0;
+      mocks.streamAccess.mockImplementation(async () => access({ canPresent: false }));
+      await open('/stream?view=dice&audio=present#token=t');
+      expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+    });
+    mocks.audioMounts.length = 0;
+    mocks.streamAccess.mockImplementation(async () => access());
+    wrapper?.unmount();
+    wrapper = null;
+    await open('/stream?view=dice&audio=present#token=t');
+    expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+  });
+
+  it('honours audio=off on a captions page', async () => {
+    await open('/stream?view=captions&audio=off#token=t');
+    expect(mocks.audioMounts).toEqual([]);
+  });
+
+  it('presents the sound link on the show link inside OBS and draws nothing', async () => {
+    await withObs(async () => {
+      const page = await open('/stream?layout=audio#token=t');
+      expect(mocks.audioMounts.map(item => item.mode)).toEqual(['present']);
+      expect(page.attributes('data-layout')).toBe('audio');
+      expect(page.find('.stage-canvas').exists()).toBe(false);
+      expect(page.find('.stage-story').exists()).toBe(false);
+      expect(page.find('[data-kind]').exists()).toBe(false);
+      expect(page.get('.stage-frame').attributes('data-layout')).toBe('blank');
+      expect(document.documentElement.classList.contains('stage-transparent')).toBe(true);
+    });
+  });
+
+  it('only listens on the sound link outside OBS and on a cast link', async () => {
+    const page = await open('/stream?layout=audio#token=t');
+    expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+    page.unmount();
+    wrapper = null;
+    mocks.audioMounts.length = 0;
+    await withObs(async () => {
+      mocks.streamAccess.mockImplementation(async () => access({ canPresent: false }));
+      await open('/stream?layout=audio#token=t');
+      expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+    });
+  });
+
+  it('ignores audio=off on the sound link', async () => {
+    await open('/stream?layout=audio&audio=off#token=t');
+    expect(mocks.audioMounts.map(item => item.mode)).toEqual(['listen']);
+  });
+
+  it('follows on a full layout that asks to follow', async () => {
+    await withObs(async () => {
+      const page = await open('/stream?layout=overlay&audio=follow#token=t');
+      expect(mocks.audioMounts.map(item => item.mode)).toEqual(['follow']);
+      expect(page.findComponent({ name: 'StageOverlay' }).exists()).toBe(true);
+    });
+  });
+
+  it('makes no request, draws nothing and plays nothing for an unknown view', async () => {
+    const page = await open('/stream?view=nonsense&audio=listen#token=t');
+    expect(mocks.streamAccess).not.toHaveBeenCalled();
+    expect(mocks.snapshot).not.toHaveBeenCalled();
+    expect(mocks.subscriptions).toHaveLength(0);
+    expect(page.find('.stage-canvas').exists()).toBe(false);
+    expect(page.text()).toBe('');
+    expect(page.find('[data-testid="broadcast-audio-stub"]').exists()).toBe(false);
+    expect(page.get('.stage-frame').attributes('data-layout')).toBe('blank');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(mocks.streamAccess).not.toHaveBeenCalled();
+  });
+
+  it('draws nothing on a piece page when its link is turned off', async () => {
+    mocks.streamAccess.mockRejectedValue(unauthorized());
+    const page = await open('/stream?view=captions#token=t');
+    for (const name of NAMES) expect(page.findComponent({ name }).exists()).toBe(false);
+    expect(page.text()).toBe('');
+    expect(page.find('[data-testid="broadcast-audio-stub"]').exists()).toBe(false);
+  });
+
+  it('draws nothing on a captions page while the show is paused', async () => {
+    mocks.snapshot.mockImplementation(async () => {
+      const paused = snapshot();
+      paused.session.status = 'paused';
+      return paused;
+    });
+    const page = await open('/stream?view=captions#token=t');
+    expect(page.findComponent({ name: 'StageCaptions' }).exists()).toBe(true);
+    expect(page.find('.stage-story').exists()).toBe(false);
+    expect(page.text()).toBe('');
+  });
+});
+
 describe('main entry', () => {
   afterEach(() => {
     vi.doUnmock('./App.vue');

@@ -268,3 +268,29 @@ describe('Stream this show (player)', () => {
     expect(transport.streamLinks).not.toHaveBeenCalled();
   });
 });
+
+describe('Stream this show (kit)', () => {
+  it('gives the main show row the layouts and pieces but no ready-made link', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [summary()] });
+    mountPanel(); await openPanel();
+    const row = tid('stream-row-show');
+    expect(row.find('[data-testid="kit-layouts"]').exists()).toBe(true);
+    expect(row.find('[data-testid="kit-pieces"]').exists()).toBe(true);
+    expect(row.find('[data-testid="kit-ready"]').exists()).toBe(false);
+  });
+
+  it('gives a cast member the ready-made link', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [playerLink(1)] });
+    mountPanel(); await openPanel();
+    expect(tid('stream-row-player-pc-1').find('[data-testid="kit-ready"]').exists()).toBe(true);
+  });
+
+  it('lists the cast in the dice Who it shows select for a player', async () => {
+    transport.streamLinks.mockResolvedValue({ links: [playerLink(1)] });
+    mountPanel({ mode: 'player', ownCharacterId: 'pc-1' });
+    (wrapper!.get('details').element as HTMLDetailsElement).open = true;
+    await wrapper!.get('details').trigger('toggle'); await flushPromises();
+    const names = tid('kit-piece-dice').findAll('select.kit-who option, [data-testid="kit-who"] option').map(o => o.text());
+    expect(names).toEqual(expect.arrayContaining(['Everyone', 'Aster', 'Briar']));
+  });
+});

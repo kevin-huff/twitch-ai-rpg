@@ -16,6 +16,7 @@ const leadingCount = (beat: PublishedBeat) => {
   return index === -1 ? beat.segments.length : index;
 };
 const leadingLines = (beat: PublishedBeat) => beat.segments.slice(0, leadingCount(beat));
+const rollsFirst = (beat: PublishedBeat) => { const lead = leadingLines(beat); return lead.length > 0 && lead[lead.length - 1]!.answered === true; };
 const laterLines = (beat: PublishedBeat) => beat.segments.slice(leadingCount(beat));
 const showsName = (segment: ScriptSegment) => segment.kind !== 'narration' && segment.kind !== 'system';
 const nameOf = (segment: ScriptSegment) => segment.speaker?.displayName ?? 'Someone';
@@ -56,8 +57,13 @@ function toggleSound(beat: PublishedBeat) {
             <button type="button" class="secondary" data-testid="seat-story-play" :aria-label="`${sound.state.beatId === beat.id ? 'Stop' : 'Play'} beat ${beat.beatNumber}`" :disabled="sound.state.loading === beat.id" @click="toggleSound(beat)">{{ sound.state.beatId === beat.id ? 'Stop' : sound.state.loading === beat.id ? 'Loading…' : 'Play' }}</button>
             <span v-if="sound.state.errorBeatId === beat.id" class="seat-story-sound-note" role="status">{{ sound.state.error }}</span>
           </div>
+          <template v-if="rollsFirst(beat)">
+            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
+          </template>
           <p v-for="segment in leadingLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
-          <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
+          <template v-if="!rollsFirst(beat)">
+            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
+          </template>
           <p v-for="segment in laterLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span v-if="showsName(segment)" class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
         </article>
       </div>
