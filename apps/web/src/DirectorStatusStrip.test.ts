@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirectorSnapshot } from '@rpg/contracts';
 
-const transport = vi.hoisted(() => ({ playback: vi.fn(), releasePicture: vi.fn() }));
+const transport = vi.hoisted(() => ({ playback: vi.fn(), showAudioHolder: vi.fn(), releasePicture: vi.fn() }));
 vi.mock('./api', () => ({ api: transport }));
 
 import DirectorStatusStrip from './DirectorStatusStrip.vue';
@@ -20,7 +20,7 @@ const mountStrip = (patch: Record<string, unknown> = {}) => mount(DirectorStatus
 const audioEvents = (wrapper: ReturnType<typeof mountStrip>) => (wrapper.emitted('audio') ?? []).map(args => args[0]);
 
 describe('DirectorStatusStrip', () => {
-  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); transport.playback.mockReset(); transport.releasePicture.mockReset(); transport.releasePicture.mockResolvedValue({ ok: true }); transport.playback.mockResolvedValue(playback(true)); });
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); transport.playback.mockReset(); transport.releasePicture.mockReset(); transport.showAudioHolder.mockReset(); transport.showAudioHolder.mockResolvedValue({ holder: null }); transport.releasePicture.mockResolvedValue({ ok: true }); transport.playback.mockResolvedValue(playback(true)); });
   afterEach(() => { vi.useRealTimers(); });
 
   it('renders nothing when all is well', async () => {
@@ -145,5 +145,74 @@ describe('DirectorStatusStrip', () => {
     expect(wrapper.get('[data-testid="release-error"]').text()).toBe('No picture is pinned right now.');
     expect(wrapper.get('[data-testid="release-pinned"]').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
+  });
+
+  describe('auto-resume chip', () => {
+    const holder = (patch: Record<string, unknown> = {}) => ({ holderId: '11111111-1111-4111-8111-111111111111', label: 'Stream PC', showTitle: 'Show', browser: 'obs', claimedAt: '2026-10-28T19:59:00.000Z', ...patch });
+    const time = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const at = '2026-10-28T20:00:00.000Z';
+
+    it('names an OBS holder that resumed narration', async () => {
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ resumedAt: at }) });
+      const wrapper = mountStrip();
+      await flushPromises();
+      expect(wrapper.get('[data-testid="auto-resumed"]').text()).toContain(`Narration resumed by itself on Stream PC (OBS) at ${time(at)}.`);
+      wrapper.unmount();
+    });
+
+    it('names a browser holder', async () => {
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ browser: 'browser', label: 'Laptop', resumedAt: at }) });
+      const wrapper = mountStrip();
+      await flushPromises();
+      expect(wrapper.get('[data-testid="auto-resumed"]').text()).toContain(`on Laptop (a browser) at ${time(at)}.`);
+      wrapper.unmount();
+    });
+
+    it('says a page for an unknown holder', async () => {
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ browser: 'unknown', resumedAt: at }) });
+      const wrapper = mountStrip();
+      await flushPromises();
+      expect(wrapper.get('[data-testid="auto-resumed"]').text()).toContain('(a page)');
+      wrapper.unmount();
+    });
+
+    it('shows nothing without resumedAt or without a holder', async () => {
+      transport.showAudioHolder.mockResolvedValue({ holder: holder() });
+      const wrapper = mountStrip();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(false);
+      expect(wrapper.find('.status-strip').exists()).toBe(false);
+      transport.showAudioHolder.mockResolvedValue({ holder: null });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it('hides on Dismiss and shows again for a newer resumedAt', async () => {
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ resumedAt: at }) });
+      const wrapper = mountStrip();
+      await flushPromises();
+      await wrapper.get('[data-testid="auto-resumed-dismiss"]').trigger('click');
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(false);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(false);
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ resumedAt: '2026-10-28T20:10:00.000Z' }) });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it('keeps the other chips and the last good answer when the holder call fails', async () => {
+      transport.playback.mockResolvedValue(playback(false));
+      transport.showAudioHolder.mockResolvedValue({ holder: holder({ resumedAt: at }) });
+      const wrapper = mountStrip();
+      await flushPromises();
+      transport.showAudioHolder.mockRejectedValue(new Error('offline'));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(wrapper.find('[data-testid="warning-no-audio"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="warning-audio-unknown"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="auto-resumed"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
   });
 });

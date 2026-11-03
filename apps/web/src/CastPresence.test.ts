@@ -18,7 +18,7 @@ function snapshot(patch: { status?: string; activeBeat?: unknown; setup?: unknow
 }
 const beat = (phase: string) => ({ id: 'beat1', phase });
 const field = (id: string) => `[data-testid="${id}"]`;
-const mountPanel = (current = snapshot(), busy = false, aiBusy = false) => mount(CastPresence, { props: { snapshot: current, busy, aiBusy } });
+const mountPanel = (current = snapshot(), busy = false) => mount(CastPresence, { props: { snapshot: current, busy } });
 
 describe('Who is here panel', () => {
   it('lists who is here now, or says nobody is', async () => {
@@ -72,14 +72,14 @@ describe('Who is here panel', () => {
   });
 
   describe('gates', () => {
-    it('allows no round and a collecting round', () => {
-      for (const current of [snapshot(), snapshot({ activeBeat: beat('collecting') }), snapshot({ status: 'paused' })]) {
+    it('allows no round, a collecting round and stakes review', () => {
+      for (const current of [snapshot(), snapshot({ activeBeat: beat('collecting') }), snapshot({ activeBeat: beat('stakes_review') }), snapshot({ status: 'paused' })]) {
         const wrapper = mountPanel(current);
-        expect(wrapper.find('.notice').exists()).toBe(false);
+        expect(wrapper.find('.notice:not([data-testid="cast-round-open"])').exists()).toBe(false);
         expect(wrapper.get(field('begin-cast')).attributes('disabled')).toBeUndefined();
       }
     });
-    it.each(['stakes_review', 'locked', 'draft_review'])('blocks a round in %s', phase => {
+    it.each(['locked', 'draft_review'])('blocks a round in %s', phase => {
       const wrapper = mountPanel(snapshot({ activeBeat: beat(phase) }));
       expect(wrapper.text()).toContain('Publish or abandon this round first.');
       expect(wrapper.get(field('begin-cast')).attributes('disabled')).toBeDefined();
@@ -149,22 +149,40 @@ describe('Who is here panel', () => {
     });
   });
 
-  it('reads Waiting for the AI to finish while the AI works, and Saving only during its own save', async () => {
-    const wrapper = mountPanel(snapshot(), false, true);
-    expect(wrapper.get(field('begin-cast')).attributes('disabled')).toBeDefined();
-    await wrapper.setProps({ aiBusy: false });
+  it('reads Saving only during its own save, never Waiting for the AI', async () => {
+    const wrapper = mountPanel();
     await wrapper.get(field('begin-cast')).trigger('click');
     await wrapper.get(field('here-ivy')).setValue(true);
     expect(wrapper.get(field('save-cast')).text()).toBe('Save who is here');
-    await wrapper.setProps({ busy: true });
-    expect(wrapper.get(field('save-cast')).text()).toBe('Save who is here');
-    await wrapper.setProps({ busy: false });
     await wrapper.get('form').trigger('submit');
     expect(wrapper.get(field('save-cast')).text()).toBe('Saving…');
-    await wrapper.setProps({ busy: true });
-    await wrapper.setProps({ busy: false });
-    await wrapper.setProps({ aiBusy: true });
-    expect(wrapper.get(field('save-cast')).text()).toBe('Waiting for the AI to finish');
+    expect(wrapper.text()).not.toContain('Waiting for the AI to finish');
+  });
+
+  describe('a round that is open', () => {
+    const r1 = 'A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.';
+    it('shows the note only while collecting or reviewing stakes', () => {
+      for (const phase of ['collecting', 'stakes_review']) expect(mountPanel(snapshot({ activeBeat: beat(phase) })).get(field('cast-round-open')).text()).toBe(r1);
+      for (const current of [snapshot(), snapshot({ activeBeat: beat('locked') }), snapshot({ activeBeat: beat('draft_review') })]) expect(mountPanel(current).find(field('cast-round-open')).exists()).toBe(false);
+    });
+    it.each(['collecting', 'stakes_review'])('adds the plan-again sentence to the saved notice in %s', async phase => {
+      const wrapper = mountPanel(snapshot({ activeBeat: beat(phase) }));
+      await wrapper.get(field('begin-cast')).trigger('click');
+      await wrapper.get(field('here-ivy')).setValue(true);
+      await wrapper.get('form').trigger('submit');
+      (wrapper.emitted('command')![0] as [unknown, () => void])[1]();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.text()).toContain('Saved who is here. The round went back to taking lines. Press Plan to plan it again.');
+    });
+    it('keeps the short saved notice when no round was open', async () => {
+      const wrapper = mountPanel();
+      await wrapper.get(field('begin-cast')).trigger('click');
+      await wrapper.get(field('here-ivy')).setValue(true);
+      await wrapper.get('form').trigger('submit');
+      (wrapper.emitted('command')![0] as [unknown, () => void])[1]();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get('[role="status"]').text()).toBe('Saved who is here.');
+    });
   });
 
   it('gives every checkbox its own help line over 20 characters, outside its label', async () => {

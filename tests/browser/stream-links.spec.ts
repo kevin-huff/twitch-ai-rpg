@@ -45,7 +45,9 @@ async function expectPictureOnly(page: Page, lines: string[]) {
   const story = page.locator('.stage-story');
   await expect(story).toBeVisible();
   for (const line of lines) await expect(story).toContainText(line);
-  await expect(page.locator('button, input, select, textarea')).toHaveCount(0);
+  // Outside OBS a listening page also offers Start sound, in its own panel outside the stage.
+  await expect(page.locator('button, input, select, textarea').and(page.locator(':not([data-testid="start-sound"])'))).toHaveCount(0);
+  await expect(page.locator('.stage [data-testid="start-sound-panel"]')).toHaveCount(0);
 }
 
 test('main show link and a personal link each draw the latest beat in both layouts, then show the holding screen once turned off', async ({ page, context, browser }) => {

@@ -49,7 +49,7 @@ describe('ClewdR line assist', () => {
     expect(body.system).toContain('Return only one JSON object');
     expect(body.system).toContain('single quotes');
     expect(body.system).toContain('"text"');
-    expect(JSON.parse(body.messages[0].content)).toEqual(input);
+    expect(JSON.parse(body.messages[0].content)).toEqual({ ...input, character: { ...input.character, wearing: [] } });
     expect(JSON.stringify(body.system)).not.toContain('SECRET-MARKER');
     expect(JSON.stringify(body.system)).not.toContain('BOUNDARY-MARKER');
   });

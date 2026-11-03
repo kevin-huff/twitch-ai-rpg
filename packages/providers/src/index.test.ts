@@ -142,6 +142,96 @@ describe('ClewdR native adapter', () => {
     expect(render.sent.characters.find((c: { id: string }) => c.id === render.actor).possessions).toEqual(['Brass key']);
   });
 
+  it('sends wearing, the look note, promises and feelings only when set, after appearance and after strain and possessions', async () => {
+    const run = async (task: 'plan' | 'render', cards: Record<string, unknown>) => {
+      const ctx = context();
+      ctx.state.characters[0].possessions = ['Brass key'];
+      Object.assign(ctx.state.characters[0], cards);
+      ctx.state.characters.push({ ...ctx.state.characters[0], id: 'bystander', displayName: 'Bystander', wearing: undefined, looksChanged: undefined, owes: undefined, feelings: undefined, possessions: ['Lantern'] });
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(task === 'plan' ? singleLinePlan(ctx) : draft(ctx)));
+      await ai(fetchMock)[task](ctx);
+      const sent = JSON.parse(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).messages[0].content);
+      return { actor: sent.characters.find((c: { id: string }) => c.id === ctx.state.characters[0].id), bystander: sent.characters.find((c: { id: string }) => c.id === 'bystander') };
+    };
+    const cards = { wearing: ['Red coat'], looksChanged: 'Soot on the face.', owes: ['Owes Mara a favour'], feelings: ['Dockhands trust them'] };
+    for (const task of ['plan', 'render'] as const) {
+      const { actor, bystander } = await run(task, cards);
+      expect(actor).toMatchObject(cards);
+      const keys = Object.keys(actor);
+      expect(keys.indexOf('wearing')).toBe(keys.indexOf('appearance') + 1);
+      expect(keys.indexOf('looksChanged')).toBe(keys.indexOf('appearance') + 2);
+      expect(keys.indexOf('owes')).toBeGreaterThan(keys.indexOf('strain'));
+      expect(keys.indexOf('owes')).toBeGreaterThan(keys.indexOf('possessions'));
+      expect(keys.indexOf('feelings')).toBe(keys.indexOf('owes') + 1);
+      for (const key of ['wearing', 'looksChanged', 'owes', 'feelings']) expect(bystander).not.toHaveProperty(key);
+      const empty = await run(task, { wearing: [], looksChanged: '', owes: [], feelings: [] });
+      for (const key of ['wearing', 'looksChanged', 'owes', 'feelings']) expect(empty.actor).not.toHaveProperty(key);
+    }
+    // Every character's cards go to the planner, even one with no line this round.
+    const planner = await run('plan', {});
+    expect(planner.bystander).toHaveProperty('possessions');
+  });
+
+  it('gives both prompts the shared card rule and the planner the card and look outcome rules', async () => {
+    const shared = 'Each character\'s wearing list and looksChanged note say how they look now and win over appearance where they disagree. owes lists promises and debts the character owes or is owed, and feelings lists how people feel about them; keep the story consistent with both.';
+    const ctx = context();
+    const planMock = replying(singleLinePlan(ctx));
+    await ai(planMock).plan(ctx);
+    const plan = String(JSON.parse(String(planMock.mock.calls[0][1]?.body)).system);
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderMock).render(ctx);
+    const render = String(JSON.parse(String(renderMock.mock.calls[0][1]?.body)).system);
+    expect(plan).toContain(shared);
+    expect(render).toContain(shared);
+    expect(plan).not.toContain('takes off an item');
+    for (const phrase of [
+      'card_add or card_remove with list "wearing", "owes" or "feelings"',
+      'Putting on a carried thing is inventory_remove plus card_add with list "wearing" in the same branch; taking something off is card_remove with list "wearing", plus inventory_add when the character keeps it.',
+      'Copy an entry exactly from the character\'s list to remove it. To change one, remove it and add the rewritten one. Only one contract per round may change a given entry.',
+      'use looks_set with the whole new note as text (empty text clears it); only one contract per round per character may set it.',
+    ]) { expect(plan).toContain(phrase); expect(render).not.toContain(phrase); }
+    const schemaText = plan.slice(plan.indexOf('Required JSON schema:'));
+    for (const kind of ['card_add', 'card_remove', 'looks_set']) expect(schemaText).toContain(`"${kind}"`);
+  });
+
+  it('tells the picture writer that wearing and looksChanged win over appearance and the reference image, only when a cast member has them', async () => {
+    const rule = 'A cast member\'s wearing list and looksChanged note win over their appearance words and over what the reference image shows them wearing: describe what they wear and how they look from wearing and looksChanged, even for a cast member who is not marked lookEdited.';
+    const base = { style: 'Painterly', scene: { title: 'Harbor', description: 'Fog.', place: 'Harbor' }, lines: [{ kind: 'narration' as const, speaker: null, text: 'Mara steps off the boat.' }], budget: 900 };
+    const person = { name: 'Mara', appearance: 'tall, red coat', role: 'Captain', pronouns: 'she/her', imageNumber: 1 };
+    const run = async (cast: Array<typeof person & Record<string, unknown>>) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ text: 'The person from image 1 stands in fog.' }));
+      await ai(fetchMock).describePicture({ ...base, cast } as never);
+      return String(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).system);
+    };
+    expect(await run([person])).not.toContain('looksChanged');
+    expect(await run([{ ...person, wearing: ['Grey oilskin'] }])).toContain(rule);
+    expect(await run([{ ...person, looksChanged: 'Soot on the face.' }])).toContain(rule);
+    const both = await run([{ ...person, looksChanged: 'Soot', lookEdited: true }]);
+    expect(both).toContain(rule);
+    expect(both).toContain('marked lookEdited has changed how they look');
+  });
+
+  it('tells Help me say it about the wearing list only when the character wears something', async () => {
+    const base = {
+      idea: 'say hello',
+      character: { displayName: 'Mira', pronouns: 'she/her', appearance: 'A courier.', personality: 'Dry.', backstory: 'Docks.', specialty: 'Knots', flaw: 'Stubborn', connection: 'Captain', secret: '', possessions: [] as string[] },
+      talkingTo: [], present: { npcs: [], characters: [] }, scene: { title: 'Gate', description: 'Rain.' }, story: null, facts: [], recentRounds: [], boundaries: [],
+    };
+    const run = async (character: Record<string, unknown>) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse({ text: 'Hello there.' }));
+      await ai(fetchMock).suggestLine({ ...base, character } as never);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      return { system: String(body.system), sent: JSON.parse(body.messages[0].content) };
+    };
+    const rule = 'The character\'s wearing list says what they have on now, and wins over their appearance where the two disagree.';
+    const plain = await run(base.character);
+    expect(plain.system).not.toContain(rule);
+    expect(plain.sent.character.wearing).toEqual([]);
+    const worn = await run({ ...base.character, wearing: ['Red coat'] });
+    expect(worn.system).toContain(rule);
+    expect(worn.sent.character.wearing).toEqual(['Red coat']);
+  });
+
   it('gives the planner every strain rule and keeps the cost, recovery, overflow and countdown rules out of the narrator', async () => {
     const phrases = [
       'The Do line of a character at full strain (strain 8)',

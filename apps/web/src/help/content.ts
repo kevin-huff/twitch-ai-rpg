@@ -22,7 +22,7 @@ export const firstSteps: Record<HelpRole, string[]> = {
   ],
   streamer: [
     'Open Stream this show.',
-    'Press Copy ready-made link, or open Full layouts and press Copy overlay link or Copy full-scene link.',
+    'Press Copy ready-made link, or under Full layouts press Copy overlay link or Copy full-scene link.',
     'Follow How to add this in OBS to paste it into a Browser source.',
   ],
 };
@@ -138,6 +138,8 @@ export const topics: HelpTopic[] = [
           'You can still waive a roll. Set a card to No check, so the action simply works, or to Blocked, so it cannot happen yet. You can also untick a line to leave it out of the round. A ticked line that arrived after the AI began planning is not in the plan yet, so press Plan again to bring it in.',
           'Lock and draft appears only when you set a round to Ordinary conversation, which means no dice and nothing changes. Every other round goes through Approve and roll.',
           'Only action rounds tick countdowns. A conversation round rolls its dice without ticking them.',
+          'The What\'s at risk cards show strain before and after, for example Scrot strain 5 to 7 of 8. Each line is counted from the character\'s strain right now, not added to the other lines. When a hit would pass 8, the line adds how far, for example 2 past full, and the character stops at 8.',
+          'Strain is drawn as a bar, with a notch for each point. It reads Strain 5 of 8, and at 8 it adds Spent. On a player\'s seat the same bar reads Fresh, Worn or Spent, with Fresh in the lower half, Worn from the middle up to just below full, and Spent at 8.',
         ],
       },
       {
@@ -160,11 +162,12 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Publishing and narration',
         paragraphs: [
-          'Player lines and actions that nothing answers go on stream before the script, in the player\'s own words with any audio tags left out. A line the script answers plays just before the part that answers it instead. A Say line is read in the voice its player picked, or by the narrator when they picked none. A Do line is always read by the narrator, after the character\'s name. The director page lists the lines nothing answers under Read aloud first, word for word. An answered line shows just above the part that answers it in script review. You cannot change them there. Only the script below them is yours to edit.',
-          'Each player line plays just before the part of the script that answers it, so a reply follows the line it answers. Lines nothing answers play first, as they always did. The words never change. In script review, the lines nothing answers are under Read aloud first, and an answered line shows just above the part that answers it. If the AI marks nothing, every line plays first. If it marks a line that is not there, that mark is dropped on its own, so the other pairs stay and only a line left unanswered plays first.',
+          'Player lines and actions go on stream in the player\'s own words, with any audio tags left out. A Say line is read in the voice its player picked, or by the narrator when they picked none. A Do line is always read by the narrator, after the character\'s name. The director page lists the lines nothing answers under Read aloud first, word for word. These play before the script. You cannot change them there. Only the script below them is yours to edit.',
+          'A line the script answers plays just before the part that answers it, so a reply follows the line it answers, and in script review it shows just above that part. If the AI marks nothing, or marks a line that is not there, that mark is dropped on its own and the line plays first with the others nothing answers. The words never change.',
           'Narration prepares by itself as soon as the script is ready. While it works the gold button reads Preparing voice…, and when it is done the page says Voice ready. If you press Publish while the voice is still preparing, the page says it is waiting for the voice and publishes the moment it is ready. You do not have to press anything twice.',
           'If you edit the script, save the edits under More before you publish. Until you do, Publish is off, because a publish would drop your edits.',
           'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link, or its sound link, loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
+          'If the show audio drops while narration is playing, for example because the page was closed or lost its connection, the narration pauses. When a page takes the show audio again, the narration picks up from where it stopped by itself, and the status strip on the director page says which page resumed it and when, for example Narration resumed by itself on the main show link (OBS) at 7:42 PM. A pause you pressed yourself, or one you ended with Stop that one, never resumes by itself. Press Resume shared audio for those.',
           'Press Preview narration to hear the narration yourself before you publish, and Stop preview to stop it. If preparing the voice fails, the beat bar says: The voice could not be prepared. Press Prepare voice again, or Publish without voice. A short network blip does not count as a failure, and the page keeps checking. Prepare voice again tries once more. Publish without voice shows the beat as text only. Viewers read it on the stage.',
           'If the script proposes facts the story must keep true, they are listed under Facts to remember above the bar, and publishing keeps them. Tick Don\'t keep these to publish without them.',
         ],
@@ -198,7 +201,7 @@ export const topics: HelpTopic[] = [
         heading: 'Show tools and the stage',
         paragraphs: [
           'Below the beat controls, the closed Show tools fold holds the things you reach for less often: live controls, Who is here, corrections, Rest, Note for the AI, the room, scenario notes, what the party knows, the live state and the cast.',
-          'While the AI is planning or writing, only the beat controls wait. Everything else stays open to look at. Who is here, Rest and Note for the AI wait until the AI finishes, and the buttons of Who is here and Rest read Waiting for the AI to finish meanwhile. The scene form and the correction form still ask you to finish or abandon the round first, because changing the story under the AI would throw its work away.',
+          'While the AI is planning or writing, only the beat controls and the Note for the AI wait. Who is here, Rest and the correction form stay open, and they work even while the AI is planning. Saving one of them sends the round back to taking lines and throws away its plan, even one the AI is still making, so the plan is redone with another AI call. The scene form still asks you to finish or abandon the round first, because changing the scene under the AI would throw its work away.',
           'If the narration does not start after you press Publish, the beat bar says so and offers Play latest reviewed beat. On the stage shows the first line of the latest beat. Show all opens that beat with the audio controls. Audio options, with Present audio and Release audio, is only on a Preview (not for OBS) tab.',
         ],
       },
@@ -235,17 +238,20 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Each time the AI plans or writes a script, it reads the scene and the place, where the party came from (the place where the last published beat happened, told once after a move to a different place), the last two beats as the audience saw them, and the characters it is given, with each one\'s personality, motive and goal. It also follows For the AI, the standing note and the Note for this beat. It never reads Director notes, characters\' secrets and backstories, non-player characters\' secrets and hidden identities, facts and tracks that are not public, or the places list. It does read the scene description, which a place\'s What the party sees on arrival text can fill.',
           'The characters it is given are the ones ticked under On stage for the AI, plus anyone the selected lines speak to. With none ticked, they are the characters the players speak to, or up to two who are here when nobody is spoken to. At most one character per scene pushes their own goal without being spoken to, and only a character the AI is given can, so tick a character under On stage for the AI to let them act on their own.',
+          'For every character it is given, the AI also reads the four card lists when they have something in them: what the character is Wearing, what Changed by the story, their Promises and debts, and How people feel about them. It reads them on every plan and every script, along with the look and the items the character carries. They are short lists, and each entry is kept short.',
           'Conversation rounds are planned with less thinking, so the stakes come back faster and shorter. Action rounds and every script are not changed.',
         ],
       },
       {
         heading: 'Changing a character\'s look and items during the show',
         paragraphs: [
-          'A card is fixed once the show starts, so use Edit look and items on Cast & lobby when something changes in the story, such as a thrown cap or a lost bell. Press it on a character, change the text in Look, then change the list under Carrying. Press Add an item for a new one, Remove to take one off, then Save look and items. Cancel closes the form with nothing changed.',
+          'A card is fixed once the show starts, so use Edit look and items on Cast & lobby when something changes in the story, such as a thrown cap or a lost bell. Press it on a character, change the text in Look, then change the lists under Carrying and Wearing. Press Add an item for a new one, Remove to take one off, then Save look and items. Cancel closes the form with nothing changed.',
+          'The form also holds Changed by the story, a short note on how the story has altered the character\'s look, and two more lists: Promises and debts, what the character owes or is owed, and How people feel, how others feel about them. Wearing, Promises and debts and How people feel each have their own add button: Add something worn, Add a promise or debt and Add a feeling. Wearing and Carrying are separate lists, so putting on something carried means removing it from Carrying and adding it under Wearing. Leave a list empty and it stays out of the AI\'s way.',
+          'Only two things change these lists: outcomes you approve, and your own edits here. The AI\'s narration never adds or removes anything on its own. An approved outcome can put something on or take it off, add or settle a promise or debt, add or drop a feeling, or set or clear the Changed by the story note. An outcome that takes something off, settles a promise or drops a feeling must copy the entry exactly as it is on the card. An outcome cannot add an entry that is already on the list. A full list takes no more: Wearing holds up to 12 entries, Promises and debts up to 8, and How people feel up to 8. The stakes cards show each change before you approve it. Players see their own lists on their seat, folded.',
           'You can do this between rounds, while lines are being collected, while the show is paused, and while the stakes are showing. If the stakes are showing, press Plan again afterwards, because the plan already made does not change by itself. Saving does not clear any lines and posts nothing public.',
           'It is refused while the AI is planning or writing, so wait for it to finish and save again. It is also refused after the dice for the round are rolled. Publish or abandon the round first.',
           'If a published round changes that character\'s items while the form is open, a form you have not typed in updates by itself. If you had typed in it, Save is refused. Press Cancel, then Edit look and items again.',
-          'The AI reads the new look and items from the next plan or script. Pictures of a character whose look you changed draw their clothes from the new words. Their face, hair and build still come from their portrait.',
+          'The AI reads the new look and items from the next plan or script. Pictures of a character whose look you changed draw their clothes from the new words, including Wearing and Changed by the story. Their face, hair and build still come from their portrait.',
         ],
       },
       {
@@ -267,7 +273,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Use Who is here, in Show tools, when people only walk on or off and the place stays the same. It does not start a new scene, draw a new picture or touch the lines players sent. Closed, it reads Here now with the names, or Nobody else is here.',
           'Press Change who is here. Each non-player character has a box. A ticked box means that character is here and players can talk to them. Unticking sends them offstage. Press Save who is here, and the page says Saved who is here. Press Cancel to leave things as they were.',
-          'If the show changes while you are choosing, the page says the show changed. Press Start over to see who is here now. Who is here works while the show is paused, between rounds, or while a round is still taking lines and nothing is planned yet. It waits while the AI is working, with the button reading Waiting for the AI to finish, and it does not work once the round is planned or the dice are rolled. Publish or abandon the round first.',
+          'If the show changes while you are choosing, the page says the show changed. Press Start over to see who is here now. Who is here works while the show is paused, between rounds, while a round is taking lines and while it is showing its stakes, even while the AI is planning. When a round is open, the panel warns you first: A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call. After you save, the page adds that the round went back to taking lines. Your players\' lines stay queued, and nothing is planned again until you press Plan. Once the dice are rolled, it says Publish or abandon this round first.',
         ],
       },
       {
@@ -275,13 +281,22 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'Use Rest, in Show tools, when characters stop to catch their breath. One press sets every character\'s strain back to 0 and keeps every line players sent exactly where it is. The panel lists every character with strain, for example 3 of 8.',
           'Press Rest everyone. The page asks Rest everyone? Every character\'s strain goes back to 0. Press Yes, rest everyone to go ahead, or Keep strain to leave things as they are. The page then says Rest saved. Strain went down. If nobody has strain, it says Nobody has strain to rest.',
-          'Rest works while the show is paused, between rounds, or while a round is still taking lines and nothing is planned yet. It waits while the AI is working, with the button reading Waiting for the AI to finish, and it does not work once the round is planned or the dice are rolled. Publish or abandon the round first. If the show changes while you are deciding, the page says so, and you check the strain and press Rest everyone again.',
+          'Rest works under the same rules as Who is here: while the show is paused, between rounds, while a round is taking lines and while it is showing its stakes, even while the AI is planning. Resting during a round sends it back to taking lines and throws away its plan, so press Plan to plan it again, which is another AI call. Once the dice are rolled, it says Publish or abandon this round first. If the show changes while you are deciding, the page says so, and you check the strain and press Rest everyone again.',
+        ],
+      },
+      {
+        heading: 'Recording a correction',
+        paragraphs: [
+          'Use Corrections, in Show tools, when something already published was wrong. Press Record a correction, choose the beat, write the public note, give a private reason and press Publish correction.',
+          'It follows the same rule as Who is here and Rest. You can record one between rounds, while a round is taking lines and while it is showing its stakes, even while the AI is planning. Publishing it during a round sends the round back to taking lines and throws away its plan, so press Plan to plan it again, which is another AI call. The page warns you of this before you save, and afterwards says the round went back to taking lines.',
+          'Once the dice for the round are rolled, the correction is refused: The dice for this round are already rolled. Publish or abandon the round, then record the correction.',
+          'Players\' queued lines stay. Because the story changed under them, players are asked again with Send it anyway. During a round, your ticks stay as they were. Between rounds, waiting lines still come back unticked.',
         ],
       },
       {
         heading: 'Changes that keep queued lines',
         paragraphs: [
-          'Lines players have sent but you have not locked stay in the queue when the story changes under them. That holds for a correction, a scene change, a character save and a reveal. Each line comes back unticked on your page, so nothing is picked by accident. Tick the ones that still fit. Lines that arrive afterwards are ticked as usual. Change who is here and Rest keep the lines and the ticks exactly as they were. A Note for the AI does not touch the lines either.',
+          'Lines players have sent but you have not locked stay in the queue when the story changes under them. That holds for a correction, a scene change, a character save and a reveal. Between rounds, each line comes back unticked on your page, so nothing is picked by accident. Tick the ones that still fit. Lines that arrive afterwards are ticked as usual. A correction recorded while a round is open is different: it keeps your ticks exactly as they were, the same as Who is here and Rest, and sends the round back to taking lines. A Note for the AI does not touch the lines either.',
           'Abandoning a round sends its lines back to the queue too, even the ones that were already rolled. The dice from the abandoned round are thrown away, so those lines roll again if you pick them later.',
           'A kept line may name someone who has since left. Read the queue before you plan.',
         ],
@@ -493,11 +508,12 @@ export const topics: HelpTopic[] = [
           'Your seat page is for sending lines, and it also shows The story, so you can follow what has happened without leaving it. The page has:',
         ],
         steps: [
-          'The scene your character is in, with a small picture of it once one is made, and who you\'re playing (press Who is (your character)? to see your card and portrait again).',
+          'The scene your character is in, with a small picture of it once one is made, and who you\'re playing (press Who is (your character)? to see your card and portrait again). The card now also shows Changed by the story, Wearing, Promises and debts and How people feel, each one only when it has something in it, and folded until you open it. They show what the story has done to your character, and the director can change them. You cannot.',
+          'Your strain, a small bar under your character\'s name. It reads Fresh, Worn or Spent. Fresh is the low half, Worn is from the middle up to just below full, and Spent is full, which is 8. It goes back to 0 when the director rests everyone. When you are Spent it also says: Your Do lines will help someone else for now. What you say still rolls.',
           'A banner that says what\'s happening right now.',
           'The story, right under the banner. It shows the latest beat.',
           'How this works, a three-step reminder. It starts closed. Press it to open it.',
-          'The form: Say something, Do something, a box to write in, and Send.',
+          'The form: Say something, Do something, a box to write in, and Send. Above it, a closed What I have list holds your items.',
           'What you sent, with the progress of each line.',
           'Ask the director privately and Ask for a pause.',
           'Sound, a closed line that holds the narration controls.',
@@ -527,6 +543,14 @@ export const topics: HelpTopic[] = [
           'When other characters are in the scene, Say something also shows who you are talking to, such as Talking to Mara or Talking to your group. Press Change to pick someone else. Your group means the other players\' characters.',
           'Every line you send can be rolled, whether you say it or do it. Most rolls end well or with a cost. A double 1 is a critical failure, whatever the total, and the story shows it as Critical failure.',
           'You can write at any time. If the story isn\'t taking new lines yet, yours waits for the next turn.',
+        ],
+      },
+      {
+        heading: 'What I have',
+        paragraphs: [
+          'What I have is a closed list on your seat page. Press it to open it. It shows what your character is carrying and what they are wearing. When there is nothing in a list it says Nothing yet.',
+          'Beside each thing you carry are Use, Give, Drop and Put on. Beside each thing you wear is Take off. Pick up something sits under the lists. A button does not do anything by itself. It fills the Do something box with the start of a sentence, for example Use the lockpick to, and you finish it. Use and Give leave the end open for you to write. Drop, Put on and Take off fill in the whole sentence. Nothing goes to the director until you press Send, and it rolls like any other line.',
+          'The lists only change when the director approves an outcome or edits your card. Pressing a button only writes a line.',
         ],
       },
       {
@@ -564,6 +588,7 @@ export const topics: HelpTopic[] = [
         heading: 'Hearing the story',
         paragraphs: [
           'Each part of the story on your seat has a Play button. It plays that part\'s voices on your phone or computer, from the start, whenever you like, and you can play it again as often as you want. Press Stop to stop it, and use your device\'s volume to set how loud it plays. If the stream is also playing near you, you\'ll hear the story twice.',
+          'The page for the whole show works the same way. If a page was opened to listen to the show, outside OBS, it shows a Start sound button and a line saying whether sound is on, until sound plays. Press Start sound once on each page. Browsers block sound until someone presses something. On an iPhone the sound keeps playing after that first press.',
         ],
       },
       {
@@ -576,6 +601,12 @@ export const topics: HelpTopic[] = [
           'Press Copy ready-made link. It is one link with the overlay and the narration, so one Browser source is all you need.',
           'Want something else? Under Full layouts, Copy overlay link gives captions, cast and dice over your own camera, and Copy full-scene link gives the whole show as one 1920×1080 picture.',
           'Paste the link into an OBS browser source. How to add this in OBS on the card lists the steps.',
+        ],
+      },
+      {
+        heading: 'Hearing the show for now',
+        paragraphs: [
+          'For now the cast hears the show the way the beta did: the hosting streamer opened the overlay in Chrome and shared that browser into the stream. That page, like any listening page in a regular browser, shows a Start sound button and a line that says Press Start sound to hear the show on this page. Press the button once, before you share the window. The line changes to Sound is on. The narration plays here when it starts. A few seconds later the panel goes away, so it stays out of what you share. If the browser blocks the sound later, the panel comes back and says so. Press Start sound again. Nothing shows in OBS.',
         ],
       },
       {
@@ -744,10 +775,10 @@ export const topics: HelpTopic[] = [
           'Stakes, 960 × 612: what is at stake before a roll, one person at a time. It can show one person\'s stakes.',
           'Party, 1344 × 76: each character\'s name, portrait and strain. It can show one person.',
           'Tracks, 352 × 304: the first two public tracks.',
-          'Picture, 336 × 192: the scene picture, or the picture you pinned.',
+          'Picture, 336 × 192: the scene picture, or the picture the director pinned.',
           'AI badge, 336 × 164: says the narration and voices are made by AI, and whether the show is live.',
           'Facts, 464 × 345: what the party knows, newest first.',
-          'Corrections, 1728 × 88: the newest correction you published.',
+          'Corrections, 1728 × 88: the newest correction the director published.',
         ],
       },
       {
@@ -767,7 +798,7 @@ export const topics: HelpTopic[] = [
         heading: 'The sound link',
         paragraphs: [
           'Pieces never play sound, so one sound link carries the show audio for the whole stream. It draws nothing. On the Main show link, open Pieces for your own scenes and press Copy sound link. In OBS, add it once as a Browser source in a scene of its own, then add that scene as a source inside every other scene. The sound then plays whichever scene is live.',
-          'Only the Main show link\'s sound link in OBS carries the show audio. On a cast member\'s link, the host\'s link or a producer\'s link, the sound link plays the narration only where it is opened and never carries the show audio. A cast member who builds a scene from pieces adds their own sound link in the same way, so their viewers hear the narration.',
+          'Only the Main show link\'s sound link in OBS carries the show audio. On a cast member\'s link, the host\'s link or a producer\'s link, the sound link plays the narration only where it is opened and never carries the show audio. Outside OBS, a page like that shows Start sound and a line saying whether sound is on until sound plays. Press Start sound once. For now the cast hears the show the way the beta did: the hosting streamer opened the overlay in Chrome and shared that browser into the stream. A cast member who builds a scene from pieces adds their own sound link in the same way, so their viewers hear the narration.',
           'A full layout link already plays sound, so use the sound link only with pieces. Load either a full layout of the Main show link or its sound link in OBS, not both, because only one source should carry the show audio.',
           'The Captions piece still marks the line being spoken, even though it plays nothing. It follows the show audio without playing it, checking about once a second, so the mark can trail the voice by a moment. It marks a line only while the show audio is playing somewhere.',
         ],
@@ -795,7 +826,7 @@ export const topics: HelpTopic[] = [
         heading: 'See who has the show audio',
         paragraphs: [
           'On the director page, open Show all under On the stage. A line there names the link that has the show audio, says whether it is in OBS or in a regular browser, and says since when. Two pages on the same link read the same apart from the time, so compare the time with when you last loaded your OBS. If nothing has it, the page says Nobody is playing the show audio right now.',
-          'Press Stop that one to end that page\'s turn. That page cannot take the show audio back until someone reloads it. Your OBS with the main show link takes over within a few seconds. If narration was playing, press Resume shared audio.',
+          'Press Stop that one to end that page\'s turn. That page cannot take the show audio back until someone reloads it. Your OBS with the main show link takes over within a few seconds. If narration was playing, it stays paused, because a page you stopped never resumes by itself, so press Resume shared audio. Narration resumes by itself only when a page drops the show audio on its own; then the status strip says which page resumed it, with a Dismiss button.',
         ],
       },
     ],
@@ -818,7 +849,7 @@ export const topics: HelpTopic[] = [
           'In Cast & lobby, open Stream this show. If you are on a seat or the pre-show page, press Stream this show there.',
           'Find Your own stream link. It is made for you the first time you open the panel.',
           'Press Copy ready-made link. It comes first on your card. It is one link with the overlay and the narration, so one Browser source is all you need.',
-          'For something else, open Full layouts. Press Copy overlay link for captions, cast and dice over your own camera on a see-through background, or Copy full-scene link for the whole show as one 1920×1080 picture.',
+          'For something else, use Full layouts, which is always shown. Press Copy overlay link for captions, cast and dice over your own camera on a see-through background, or Copy full-scene link for the whole show as one 1920×1080 picture.',
           'Copied appears when the link is on your clipboard. If it says Copy failed, select the link in the box and copy it by hand.',
         ],
       },
@@ -1024,6 +1055,7 @@ export const topics: HelpTopic[] = [
           'On the director page, look for the No show audio chip, or the line No show audio: the main show link isn\'t open in OBS. If you see either, the main show link is not open in OBS, so open it there. If a Preview (not for OBS) tab has taken the audio, open Audio options on that tab and press Release audio.',
           'To test a link, use Preview (silent) on its card. Do not open the main show link in an ordinary browser tab. A tab like that only listens. It does not play the broadcast audio.',
           'If a browser asks you to press Listen in this browser, press it. Browsers block sound until someone does.',
+          'A listening page outside OBS shows Start sound and a line that says Press Start sound to hear the show on this page. Press the button once on that page. If the line says This browser blocked the sound, press it again. For now the cast hears the show the way the beta did: the hosting streamer opened the overlay in Chrome and shared that browser into the stream.',
           'On a player\'s seat there is no such button: each part of the story has its own Play button instead.',
         ],
       },
@@ -1116,5 +1148,5 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Character link', definition: 'A private web address a player uses to write a character card before the show. It lasts 30 days. The player can save a draft and submit one card to your library.' },
   { term: 'Stream link', definition: 'A private web address that OBS loads to show the stage. Each link has its own layout and audio setting, and can be switched off at any time. A link\'s kit also holds a ready-made link, a sound link and one address for each piece.' },
   { term: 'Piece', definition: 'One part of the stage on a link of its own, such as the captions, the dice or the AI badge, for building your own OBS scene. A piece has a see-through background, shows its own size and never plays sound.' },
-  { term: 'Sound link', definition: 'A link that draws nothing and carries the show audio for a whole stream when you build scenes from pieces. On the main show link it carries the show audio. On any other link it only plays the narration where it is opened.' },
+  { term: 'Sound link', definition: 'A link that draws nothing and plays the narration for a whole stream when you build scenes from pieces. It carries the show audio only in OBS on the Main show link. Anywhere else it only listens, and outside OBS it shows Start sound until sound plays.' },
 ];

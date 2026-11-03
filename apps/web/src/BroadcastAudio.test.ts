@@ -14,7 +14,8 @@ vi.mock('./api', () => ({ api: { snapshot: vi.fn() }, subscribeToSession: vi.fn(
 function fakeController(context: unknown) {
   const controller = {
     context,
-    state: reactive({ snapshot: null as any, manifest: null, audioStatus: 'missing', preparing: false, commandPending: false, listening: false, presenting: false, muted: true, volume: 1, error: '' }),
+    state: reactive({ snapshot: null as any, manifest: null, audioStatus: 'missing', preparing: false, commandPending: false, listening: false, presenting: false, muted: true, volume: 1, error: '', sound: 'idle' }),
+    unlock: vi.fn(async () => true),
     claim: vi.fn(async () => {}), listen: vi.fn(), release: vi.fn(async () => {}), mute: vi.fn(), setVolume: vi.fn(), command: vi.fn(), replay: vi.fn(), prepare: vi.fn(),
     refresh: vi.fn(), setContext: vi.fn(), dispose: vi.fn(),
   };
@@ -93,7 +94,7 @@ describe('BroadcastAudio', () => {
     expect(controller.claim).not.toHaveBeenCalled();
   });
 
-  it('emits status and the playing segment id, and never renders anything visible', async () => {
+  it('emits status and the playing segment id, and never renders anything visible in OBS or when presenting', async () => {
     const wrapper = mountAudio('present');
     const [controller] = mocks.controllers;
     controller.state.snapshot = playback({ status: 'playing', segmentIndex: 1, manifest });
@@ -106,9 +107,99 @@ describe('BroadcastAudio', () => {
     controller.state.error = 'Presenter lease was lost.';
     await nextTick();
     expect(wrapper.emitted('status')?.at(-1)).toEqual([{ presenting: true, listening: false, error: 'Presenter lease was lost.' }]);
-    expect(wrapper.element.hasAttribute('hidden')).toBe(true);
+    expect(wrapper.get('[data-testid="broadcast-audio"]').element.hasAttribute('hidden')).toBe(true);
     expect(wrapper.text()).toBe('');
     expect(wrapper.html()).not.toContain('lease was lost');
+    wrapper.unmount();
+    (window as any).obsstudio = {};
+    const inObs = mountAudio('listen');
+    expect(inObs.text()).toBe('');
+    expect(inObs.find('[data-testid="start-sound-panel"]').exists()).toBe(false);
+    inObs.unmount();
+  });
+});
+
+describe('BroadcastAudio Start sound', () => {
+  const panel = (wrapper: ReturnType<typeof mountAudio>) => wrapper.find('[data-testid="start-sound-panel"]');
+
+  it('shows the panel with each status line outside OBS in listen mode', async () => {
+    const wrapper = mountAudio('listen');
+    const [controller] = mocks.controllers;
+    expect(panel(wrapper).exists()).toBe(true);
+    expect(panel(wrapper).attributes('role')).toBe('status');
+    expect(wrapper.get('[data-testid="start-sound-status"]').text()).toBe('Press Start sound to hear the show on this page.');
+    expect(wrapper.get('[data-testid="start-sound"]').text()).toBe('Start sound');
+    controller.state.sound = 'blocked';
+    await nextTick();
+    expect(wrapper.get('[data-testid="start-sound-status"]').text()).toBe('This browser blocked the sound. Press Start sound.');
+    expect(wrapper.find('[data-testid="start-sound"]').exists()).toBe(true);
+    controller.state.sound = 'ready';
+    await nextTick();
+    expect(wrapper.get('[data-testid="start-sound-status"]').text()).toBe('Sound is on. The narration plays here when it starts.');
+    expect(wrapper.find('[data-testid="start-sound"]').exists()).toBe(false);
+    controller.state.sound = 'played';
+    await nextTick();
+    expect(panel(wrapper).exists()).toBe(false);
+    expect(wrapper.find('[data-testid="broadcast-audio"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('steps aside four seconds after sound is on, and comes back when the browser blocks the sound later', async () => {
+    const wrapper = mountAudio('listen');
+    const [controller] = mocks.controllers;
+    controller.state.sound = 'ready';
+    await nextTick();
+    expect(wrapper.get('[data-testid="start-sound-status"]').text()).toBe('Sound is on. The narration plays here when it starts.');
+    vi.advanceTimersByTime(3900);
+    await nextTick();
+    expect(panel(wrapper).exists()).toBe(true);
+    vi.advanceTimersByTime(100);
+    await nextTick();
+    expect(panel(wrapper).exists()).toBe(false);
+    controller.state.sound = 'blocked';
+    await nextTick();
+    expect(wrapper.get('[data-testid="start-sound-status"]').text()).toBe('This browser blocked the sound. Press Start sound.');
+    expect(wrapper.find('[data-testid="start-sound"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('calls unlock inside the click and then listen once it resolves true', async () => {
+    const wrapper = mountAudio('listen');
+    const [controller] = mocks.controllers;
+    let finish: (value: boolean) => void = () => {};
+    controller.unlock.mockImplementation(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    await wrapper.get('[data-testid="start-sound"]').trigger('click');
+    expect(controller.unlock).toHaveBeenCalledTimes(1);
+    expect(controller.listen).not.toHaveBeenCalled();
+    finish(true);
+    await flushPromises();
+    expect(controller.listen).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('does not listen when the browser refuses the sound', async () => {
+    const wrapper = mountAudio('listen');
+    const [controller] = mocks.controllers;
+    controller.unlock.mockResolvedValue(false);
+    await wrapper.get('[data-testid="start-sound"]').trigger('click');
+    await flushPromises();
+    expect(controller.unlock).toHaveBeenCalledTimes(1);
+    expect(controller.listen).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('never shows in OBS or in present, follow or off modes', async () => {
+    for (const mode of ['present', 'follow', 'off'] as const) {
+      const wrapper = mountAudio(mode);
+      expect(panel(wrapper).exists()).toBe(false);
+      expect(wrapper.text()).toBe('');
+      wrapper.unmount();
+    }
+    (window as any).obsstudio = {};
+    const wrapper = mountAudio('listen');
+    await nextTick();
+    expect(panel(wrapper).exists()).toBe(false);
+    expect(wrapper.get('[data-testid="broadcast-audio"]').attributes('data-state')).toBe('waiting');
     wrapper.unmount();
   });
 });

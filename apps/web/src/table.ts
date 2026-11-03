@@ -1,5 +1,6 @@
 import { computed, inject, provide, ref } from 'vue';
 import type { InjectionKey } from 'vue';
+import { STRAIN_MAX } from '@rpg/contracts';
 import type { Command, DirectorSnapshot, Effect, PlayerSnapshot, SessionSnapshot } from '@rpg/contracts';
 import { api, subscribeToSession } from './api';
 import { identityPath, selectIdentity } from './identity';
@@ -42,10 +43,26 @@ export function createTable() {
   const initials = (name: string) => name.split(' ').map(part => part[0]).slice(0, 2).join('').toUpperCase();
   const nameOf = (id: string) => snapshot.value?.characters.find(character => character.id === id)?.displayName ?? 'Player';
   const phaseName = (phase: string) => ({ collecting: 'Collecting input', stakes_review: "What's at risk", locked: 'Locked · dice fixed', draft_review: 'Review script', published: 'Published', aborted: 'Aborted' })[phase] ?? phase;
+  const strainChange = (effect: Effect) => {
+    if (effect.kind !== 'strain_delta') return null;
+    const before = snapshot.value?.characters.find(character => character.id === effect.characterId)?.strain ?? 0;
+    return { before, after: Math.min(STRAIN_MAX, Math.max(0, before + effect.delta)), over: Math.max(0, before + effect.delta - STRAIN_MAX) };
+  };
   const effectLabel = (effect: Effect) => {
     if (effect.kind === 'track_delta') return `${snapshot.value?.tracks.find(track => track.id === effect.trackId)?.label ?? 'Track'} ${effect.delta >= 0 ? '+' : ''}${effect.delta}`;
-    if (effect.kind === 'strain_delta') return `${nameOf(effect.characterId)} strain ${effect.delta >= 0 ? '+' : ''}${effect.delta}`;
+    if (effect.kind === 'strain_delta') {
+      const change = strainChange(effect)!;
+      return `${nameOf(effect.characterId)} strain ${change.before} to ${change.after} of ${STRAIN_MAX}${change.over > 0 ? ` · ${change.over} past full` : ''}`;
+    }
     if (effect.kind === 'fact_add') return `${effect.visibility === 'director' ? 'Private fact' : 'Fact'}: ${effect.text}`;
+    if (effect.kind === 'card_add' || effect.kind === 'card_remove') {
+      const name = nameOf(effect.characterId);
+      const add = effect.kind === 'card_add';
+      if (effect.list === 'wearing') return add ? `${name} puts on ${effect.entry}` : `${name} takes off ${effect.entry}`;
+      if (effect.list === 'owes') return add ? `${name} promise or debt: ${effect.entry}` : `${name} settles: ${effect.entry}`;
+      return add ? `How people feel about ${name}: ${effect.entry}` : `How people feel about ${name}, no longer: ${effect.entry}`;
+    }
+    if (effect.kind === 'looks_set') return `${nameOf(effect.characterId)} changed by the story: ${effect.text ? effect.text : 'cleared'}`;
     return `${nameOf(effect.characterId)} ${effect.kind === 'inventory_add' ? 'gains' : 'loses'} ${effect.item}`;
   };
   const inputContext = () => ({ epoch: snapshot.value?.session.inputEpoch ?? 0, beatId: snapshot.value?.activeBeat && ['collecting', 'stakes_review'].includes(snapshot.value.activeBeat.phase) ? snapshot.value.activeBeat.id : null });
@@ -125,7 +142,7 @@ export function createTable() {
     director, player, setup, latestHistory,
     refresh, work, beatWork, send, restoreSession, dispose, onSnapshot,
     requestPause, setStatus,
-    nameOf, initials, phaseName, effectLabel, inputContext,
+    nameOf, initials, phaseName, effectLabel, strainChange, inputContext,
   };
 }
 

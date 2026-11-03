@@ -56,6 +56,7 @@ export type PlaybackResponse = z.infer<typeof PlaybackResponseSchema>;
 export const ShowAudioHolderSchema = z.strictObject({
   holderId: z.uuid(), label: z.string().min(1).max(80), showTitle: z.string().max(160),
   browser: z.enum(['obs', 'browser', 'unknown']), claimedAt: z.iso.datetime().nullable(),
+  resumedAt: z.iso.datetime().optional(),
 });
 export type ShowAudioHolder = z.infer<typeof ShowAudioHolderSchema>;
 export const ShowAudioHolderResponseSchema = z.strictObject({ holder: ShowAudioHolderSchema.nullable() });

@@ -3,6 +3,11 @@ import {
   AiSegmentSchema,
   CharacterSchema,
   CommandSchema,
+  EffectSchema,
+  CardListSchema,
+  CARD_LIST_MAX,
+  LineAssistInputSchema,
+  cardListChange,
   InvitePreviewRequestSchema,
   InvitePreviewResponseSchema,
   PublicCharacterSchema,
@@ -21,6 +26,7 @@ import {
   RollSchema,
   TraitsSchema,
 } from './index.js';
+import { PicturePersonSchema } from './images.js';
 
 describe('rules and authority contracts', () => {
   it('accepts a tab identity selector without accepting bearer credentials or malformed selectors', () => {
@@ -219,5 +225,64 @@ describe('public beat stakes approval flag', () => {
     expect(PublicBeatSchema.safeParse({ ...beat, stakesApproved: true }).success).toBe(true);
     expect(PublicBeatSchema.safeParse(beat).success).toBe(true);
     expect(PublicBeatSchema.safeParse({ ...beat, stakesApproved: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('card lists and outcome kinds', () => {
+  const base = { id: 'c1', displayName: 'Ana', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 0 };
+  const list = (n: number, text = 'x') => Array.from({ length: n }, () => text);
+  it('parses a stored character without the four card keys and adds none of them', () => {
+    const parsed = CharacterSchema.parse(base);
+    for (const key of ['wearing', 'looksChanged', 'owes', 'feelings']) expect(parsed).not.toHaveProperty(key);
+  });
+  it('keeps the list and note limits', () => {
+    expect(CharacterSchema.safeParse({ ...base, wearing: list(12), owes: list(8), feelings: list(8), looksChanged: 'x'.repeat(300) }).success).toBe(true);
+    expect(CharacterSchema.safeParse({ ...base, wearing: list(13) }).success).toBe(false);
+    expect(CharacterSchema.safeParse({ ...base, owes: list(9) }).success).toBe(false);
+    expect(CharacterSchema.safeParse({ ...base, feelings: list(9) }).success).toBe(false);
+    expect(CharacterSchema.safeParse({ ...base, wearing: ['x'.repeat(161)] }).success).toBe(false);
+    expect(CharacterSchema.safeParse({ ...base, looksChanged: 'x'.repeat(301) }).success).toBe(false);
+    expect(CARD_LIST_MAX).toEqual({ possessions: 20, wearing: 12, owes: 8, feelings: 8 });
+    expect(CardListSchema.safeParse('possessions').success).toBe(false);
+  });
+  it('parses the three new effects and refuses malformed ones', () => {
+    expect(EffectSchema.safeParse({ kind: 'card_add', characterId: 'c1', list: 'wearing', entry: 'red coat' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'card_remove', characterId: 'c1', list: 'owes', entry: 'a favour', incidentId: 'i1' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'looks_set', characterId: 'c1', text: '' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'card_add', characterId: 'c1', list: 'possessions', entry: 'x' }).success).toBe(false);
+    expect(EffectSchema.safeParse({ kind: 'card_add', characterId: 'c1', list: 'wearing', entry: '' }).success).toBe(false);
+    expect(EffectSchema.safeParse({ kind: 'looks_set', characterId: 'c1', text: 'x'.repeat(301) }).success).toBe(false);
+  });
+  it('maps list effects with cardListChange and returns null for others', () => {
+    const c = 'c1';
+    expect(cardListChange({ kind: 'inventory_add', characterId: c, item: 'key' })).toEqual({ list: 'possessions', op: 'add', characterId: c, entry: 'key' });
+    expect(cardListChange({ kind: 'inventory_remove', characterId: c, item: 'key' })).toEqual({ list: 'possessions', op: 'remove', characterId: c, entry: 'key' });
+    for (const l of ['wearing', 'owes', 'feelings'] as const) {
+      expect(cardListChange({ kind: 'card_add', characterId: c, list: l, entry: 'e' })).toEqual({ list: l, op: 'add', characterId: c, entry: 'e' });
+      expect(cardListChange({ kind: 'card_remove', characterId: c, list: l, entry: 'e' })).toEqual({ list: l, op: 'remove', characterId: c, entry: 'e' });
+    }
+    expect(cardListChange({ kind: 'strain_delta', characterId: c, delta: 1 })).toBeNull();
+    expect(cardListChange({ kind: 'looks_set', characterId: c, text: 'x' })).toBeNull();
+  });
+  it('keeps old save_live_character bodies and trims new entries', () => {
+    const old = { type: 'save_live_character', commandId: 'cmd', characterId: 'c1', expectedCharacterRevision: 1, appearance: 'tall', possessions: ['key'] };
+    const parsed = CommandSchema.parse(old);
+    for (const key of ['wearing', 'owes', 'feelings', 'looksChanged']) expect(parsed).not.toHaveProperty(key);
+    const next = CommandSchema.parse({ ...old, wearing: ['  red coat '], owes: [' a favour'], feelings: ['trusted  '], looksChanged: '  singed  ' });
+    expect(next).toMatchObject({ wearing: ['red coat'], owes: ['a favour'], feelings: ['trusted'], looksChanged: 'singed' });
+    expect(CommandSchema.safeParse({ ...old, wearing: ['   '] }).success).toBe(false);
+    expect(CommandSchema.safeParse({ ...old, owes: list(9) }).success).toBe(false);
+  });
+  it('accepts the new fields on picture people and line help', () => {
+    const person = { name: 'Ana', appearance: '', role: '', pronouns: '', portraitId: null, imageNumber: null };
+    expect(PicturePersonSchema.safeParse(person).success).toBe(true);
+    expect(PicturePersonSchema.safeParse({ ...person, wearing: ['red coat'], looksChanged: 'singed' }).success).toBe(true);
+    expect(PicturePersonSchema.safeParse({ ...person, wearing: list(13) }).success).toBe(false);
+    const input = {
+      idea: 'hi', character: { displayName: 'Ana', pronouns: '', appearance: '', personality: '', backstory: '', specialty: '', flaw: '', connection: '', secret: '', possessions: [] },
+      talkingTo: [], present: { npcs: [], characters: [] }, scene: { title: '', description: '' }, story: null, facts: [], recentRounds: [], boundaries: [],
+    };
+    expect(LineAssistInputSchema.parse(input).character.wearing).toEqual([]);
+    expect(LineAssistInputSchema.parse({ ...input, character: { ...input.character, wearing: ['red coat'] } }).character.wearing).toEqual(['red coat']);
   });
 });

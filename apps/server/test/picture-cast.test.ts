@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { type ActionContract, type AiDraft, type Beat, MOMENT_PORTRAIT_MAX, PictureMomentSchema, type ScriptSegment, type SessionState } from '@rpg/contracts';
 import { createLedgerState } from '@rpg/test-fixtures';
-import { fallbackDescription } from '../src/picture-prompts';
+import { fallbackDescription, pictureDescriptionRequest } from '../src/picture-prompts';
 import { type BeatPictureSource, buildPictureMoment, pictureCast, pictureLines } from '../src/picture-cast';
 
 const SETTINGS = { style: 'Soft watercolor', model: 'krea-2-turbo' };
@@ -306,5 +306,55 @@ describe('player actions in a published beat', () => {
     expect(text).toContain('climbs the fire escape');
     expect(text).not.toContain('Lark');
     expect(text).not.toContain('Mara');
+  });
+});
+
+describe('wearing and the story note in pictures', () => {
+  const sourceFor = (state: SessionState): BeatPictureSource => ({
+    beat: beatOf(),
+    published: { segments: [segment('player_dialogue', 'Here.', { entityId: state.characters[0].id, displayName: state.characters[0].displayName })] },
+  });
+
+  it('carries wearing and the note for a character who has them', () => {
+    const state = makeState();
+    state.characters[0].wearing = ['a red scarf', 'muddy boots'];
+    state.characters[0].looksChanged = ' Singed eyebrows. ';
+    const person = buildPictureMoment(state, sourceFor(state), SETTINGS, new Set()).cast[0];
+    expect(person.wearing).toEqual(['a red scarf', 'muddy boots']);
+    expect(person.looksChanged).toBe('Singed eyebrows.');
+  });
+
+  it('leaves a character without them exactly as before', () => {
+    const state = makeState();
+    const person = buildPictureMoment(state, sourceFor(state), SETTINGS, new Set()).cast[0];
+    expect(person).not.toHaveProperty('wearing');
+    expect(person).not.toHaveProperty('looksChanged');
+    state.characters[0].wearing = [];
+    state.characters[0].looksChanged = '  ';
+    expect(buildPictureMoment(state, sourceFor(state), SETTINGS, new Set()).cast[0]).toEqual(person);
+  });
+
+  it('puts the wearing words and the note into the fallback description only for that person', () => {
+    const state = makeState();
+    const plain = buildPictureMoment(state, sourceFor(state), SETTINGS, new Set());
+    const base = fallbackDescription(plain, 4000);
+    state.characters[0].wearing = ['a red scarf'];
+    state.characters[0].looksChanged = 'Singed eyebrows.';
+    const changed = buildPictureMoment(state, sourceFor(state), SETTINGS, new Set());
+    const text = fallbackDescription(changed, 4000);
+    expect(text).toContain('wearing a red scarf');
+    expect(text).toContain('Singed eyebrows.');
+    expect(base).not.toContain('wearing a red scarf');
+    expect(fallbackDescription(buildPictureMoment(makeState(), sourceFor(makeState()), SETTINGS, new Set()), 4000)).toBe(base);
+  });
+
+  it('keeps both fields in the description request', () => {
+    const state = makeState();
+    state.characters[0].wearing = ['a red scarf'];
+    state.characters[0].looksChanged = 'Singed eyebrows.';
+    const request = pictureDescriptionRequest(buildPictureMoment(state, sourceFor(state), SETTINGS, new Set()), 500);
+    expect(request.cast[0].wearing).toEqual(['a red scarf']);
+    expect(request.cast[0].looksChanged).toBe('Singed eyebrows.');
+    expect(request.cast[0]).not.toHaveProperty('portraitId');
   });
 });

@@ -36,7 +36,7 @@ export function lineAssistInput(state: SessionState, history: PublishedBeat[], c
     character: {
       displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance, personality: character.personality,
       backstory: character.backstory, specialty: character.specialty, flaw: character.flaw, connection: character.connection,
-      secret: character.secret, possessions: [...character.possessions],
+      secret: character.secret, possessions: [...character.possessions], wearing: [...(character.wearing ?? [])],
     },
     talkingTo,
     present: {

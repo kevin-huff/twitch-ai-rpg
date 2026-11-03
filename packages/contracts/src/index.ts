@@ -111,6 +111,15 @@ export const ScenarioBriefSchema = z.strictObject({
 export type ScenarioBrief = z.infer<typeof ScenarioBriefSchema>;
 
 export const STRAIN_MAX = 8;
+// These caps keep a card readable on a phone and bound the AI prompt.
+export const CARD_ENTRY_MAX = 160;
+export const WEARING_MAX = 12;
+export const OWES_MAX = 8;
+export const FEELINGS_MAX = 8;
+export const LOOKS_CHANGED_MAX = 300;
+export const CardListSchema = z.enum(['wearing', 'owes', 'feelings']);
+export type CardList = z.infer<typeof CardListSchema>;
+export const CARD_LIST_MAX = { possessions: 20, wearing: WEARING_MAX, owes: OWES_MAX, feelings: FEELINGS_MAX } as const;
 export const CharacterSchema = z.strictObject({
   id: IdSchema, displayName: z.string().min(1).max(80), traits: TraitsSchema,
   strain: z.number().int().min(0).max(STRAIN_MAX), appearance: z.string().max(1000).default(''),
@@ -123,6 +132,10 @@ export const CharacterSchema = z.strictObject({
   acceptedBoundariesRevision: RevisionSchema.nullable().default(null), portraitId: authoredCharacter.portraitId,
   cardSource: z.enum(['host', 'player']).optional(), voiceProfileId: IdSchema.nullable().default(null),
   lookEditedAt: z.string().datetime().nullable().default(null),
+  wearing: z.array(z.string().max(CARD_ENTRY_MAX)).max(WEARING_MAX).optional(),
+  looksChanged: z.string().max(LOOKS_CHANGED_MAX).optional(),
+  owes: z.array(z.string().max(CARD_ENTRY_MAX)).max(OWES_MAX).optional(),
+  feelings: z.array(z.string().max(CARD_ENTRY_MAX)).max(FEELINGS_MAX).optional(),
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
@@ -164,8 +177,21 @@ export const EffectSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('fact_add'), factId: IdSchema, text: TextSchema, visibility: VisibilitySchema, ...incident }),
   z.strictObject({ kind: z.literal('inventory_add'), characterId: IdSchema, item: z.string().min(1).max(160), ...incident }),
   z.strictObject({ kind: z.literal('inventory_remove'), characterId: IdSchema, item: z.string().min(1).max(160), ...incident }),
+  z.strictObject({ kind: z.literal('card_add'), characterId: IdSchema, list: CardListSchema, entry: z.string().min(1).max(CARD_ENTRY_MAX), ...incident }),
+  z.strictObject({ kind: z.literal('card_remove'), characterId: IdSchema, list: CardListSchema, entry: z.string().min(1).max(CARD_ENTRY_MAX), ...incident }),
+  z.strictObject({ kind: z.literal('looks_set'), characterId: IdSchema, text: z.string().max(LOOKS_CHANGED_MAX), ...incident }),
 ]);
 export type Effect = z.infer<typeof EffectSchema>;
+export type CardListChange = { list: 'possessions' | CardList; op: 'add' | 'remove'; characterId: string; entry: string };
+export function cardListChange(effect: Effect): CardListChange | null {
+  switch (effect.kind) {
+    case 'inventory_add': return { list: 'possessions', op: 'add', characterId: effect.characterId, entry: effect.item };
+    case 'inventory_remove': return { list: 'possessions', op: 'remove', characterId: effect.characterId, entry: effect.item };
+    case 'card_add': return { list: effect.list, op: 'add', characterId: effect.characterId, entry: effect.entry };
+    case 'card_remove': return { list: effect.list, op: 'remove', characterId: effect.characterId, entry: effect.entry };
+    default: return null;
+  }
+}
 export const TrackSchema = z.strictObject({
   id: IdSchema, label: z.string().min(1).max(120), kind: z.enum(['progress', 'danger', 'countdown']),
   current: z.number().int().nonnegative(), max: z.number().int().min(1).max(8), visibility: VisibilitySchema,
@@ -520,7 +546,11 @@ export const CommandSchema = z.discriminatedUnion('type', [
     standingNote: z.string().trim().max(3000).optional(), aiCastNpcIds: uniqueNpcIds.optional() })
     .refine(value => value.storyPlan !== undefined || value.standingNote !== undefined || value.aiCastNpcIds !== undefined, 'Send at least one guidance field.'),
   z.strictObject({ type: z.literal('save_live_character'), ...commandBase, characterId: IdSchema, expectedCharacterRevision: RevisionSchema,
-    appearance: z.string().max(1000), possessions: z.array(z.string().trim().min(1).max(160)).max(20) }),
+    appearance: z.string().max(1000), possessions: z.array(z.string().trim().min(1).max(160)).max(20),
+    wearing: z.array(z.string().trim().min(1).max(CARD_ENTRY_MAX)).max(WEARING_MAX).optional(),
+    owes: z.array(z.string().trim().min(1).max(CARD_ENTRY_MAX)).max(OWES_MAX).optional(),
+    feelings: z.array(z.string().trim().min(1).max(CARD_ENTRY_MAX)).max(FEELINGS_MAX).optional(),
+    looksChanged: z.string().trim().max(LOOKS_CHANGED_MAX).optional() }),
   z.strictObject({ type: z.literal('set_voice'), ...commandBase, voiceProfileId: VoiceRefSchema.nullable() }),
   z.strictObject({ type: z.literal('set_status'), ...commandBase, status: z.enum(['live', 'paused', 'ended']), expectedStateRevision: RevisionSchema }),
 ]);
@@ -597,6 +627,7 @@ export const LineAssistInputSchema = z.strictObject({
   character: z.strictObject({
     displayName: z.string(), pronouns: z.string(), appearance: z.string(), personality: z.string(), backstory: z.string(),
     specialty: z.string(), flaw: z.string(), connection: z.string(), secret: z.string(), possessions: z.array(z.string()),
+    wearing: z.array(z.string()).default([]),
   }),
   talkingTo: z.array(z.strictObject({
     displayName: z.string(), role: z.string(), appearance: z.string(), mood: z.string(), personality: z.array(z.string()),
@@ -614,7 +645,7 @@ export const LineAssistInputSchema = z.strictObject({
   })),
   boundaries: z.array(z.string()),
 });
-export type LineAssistInput = z.infer<typeof LineAssistInputSchema>;
+export type LineAssistInput = z.input<typeof LineAssistInputSchema>;
 
 export interface AiProvider {
   generateField?(input: FieldGenerationRequest): Promise<FieldGenerationResponse>;

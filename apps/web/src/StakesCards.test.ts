@@ -30,11 +30,12 @@ function beat(overrides: Record<string, unknown> = {}) {
   };
 }
 
+let skootyStrain = 0;
 function snapshot() {
   return {
     schemaVersion: 1, role: 'director', eventSeq: 0,
     session: { id: 'show', title: 'The Ledger Job', status: 'live', mode: 'conversation', stateRevision: 4, beatNumber: 1, actionRoundNumber: 0, inputEpoch: 0, scene: { id: 'bar', title: 'The Velvet Static', description: 'Find the missing ledger.', locationId: 'bar' } },
-    characters: [{ id: 'pc-1', displayName: 'Skooty' }], npcs: [], tracks: [], facts: [], activeBeat: null, history: [],
+    characters: [{ id: 'pc-1', displayName: 'Skooty', strain: skootyStrain }], npcs: [], tracks: [], facts: [], activeBeat: null, history: [],
     submissions: [], npcDetails: [], characterDetails: [{ id: 'pc-1', displayName: 'Skooty', traits: { force: 0, finesse: 2, wits: 1, presence: 1 } }], jobs: [], directorNotes: '',
   };
 }
@@ -96,7 +97,7 @@ describe('StakesCards', () => {
     expect(card.text()).toContain('10 or more: Clean success');
     expect(card.text()).toContain('The door opens.');
     expect(card.text()).toContain('7 to 9: Success with a cost');
-    expect(card.text()).toContain('Skooty strain +1');
+    expect(card.text()).toContain('Skooty strain 0 to 1 of 8');
     expect(card.text()).toContain('6 or less: Setback');
     expect(card.text()).toContain('Roll: two dice + Finesse (+2)');
     expect(card.find('textarea').exists()).toBe(false);
@@ -148,6 +149,40 @@ describe('StakesCards', () => {
     wrapper.unmount();
   });
 
+  it('shows strain relief, overflow and card labels', async () => {
+    skootyStrain = 3;
+    const relief = contract('c-1');
+    relief.outcomes.costly.effects = [{ kind: 'strain_delta', characterId: 'pc-1', delta: -2 }];
+    let mounted = await mountCards({ contracts: [relief] });
+    expect(mounted.wrapper.text()).toContain('Skooty strain 3 to 1 of 8');
+    expect(mounted.wrapper.find('[data-testid="strain-over"]').exists()).toBe(false);
+    mounted.wrapper.unmount();
+    skootyStrain = 7;
+    const over = contract('c-1');
+    over.outcomes.costly.effects = [{ kind: 'strain_delta', characterId: 'pc-1', delta: 3 }];
+    mounted = await mountCards({ contracts: [over] });
+    const flagged = mounted.wrapper.get('[data-testid="strain-over"]');
+    expect(flagged.text()).toBe('Skooty strain 7 to 8 of 8 · 2 past full');
+    expect(flagged.classes()).toContain('over');
+    mounted.wrapper.unmount();
+    skootyStrain = 0;
+    const cards = contract('c-1');
+    cards.outcomes.clean.effects = [
+      { kind: 'card_add', characterId: 'pc-1', list: 'wearing', entry: 'a red cloak' },
+      { kind: 'card_remove', characterId: 'pc-1', list: 'wearing', entry: 'a red cloak' },
+      { kind: 'card_add', characterId: 'pc-1', list: 'owes', entry: 'owes Vee a favor' },
+      { kind: 'card_remove', characterId: 'pc-1', list: 'owes', entry: 'owes Vee a favor' },
+      { kind: 'card_add', characterId: 'pc-1', list: 'feelings', entry: 'Vee distrusts them' },
+      { kind: 'card_remove', characterId: 'pc-1', list: 'feelings', entry: 'Vee distrusts them' },
+      { kind: 'looks_set', characterId: 'pc-1', text: 'soot-streaked' },
+      { kind: 'looks_set', characterId: 'pc-1', text: '' },
+    ] as never;
+    mounted = await mountCards({ contracts: [cards] });
+    const text = mounted.wrapper.text();
+    for (const line of ['Skooty puts on a red cloak', 'Skooty takes off a red cloak', 'Skooty promise or debt: owes Vee a favor', 'Skooty settles: owes Vee a favor', 'How people feel about Skooty: Vee distrusts them', 'How people feel about Skooty, no longer: Vee distrusts them', 'Skooty changed by the story: soot-streaked', 'Skooty changed by the story: cleared']) expect(text).toContain(line);
+    mounted.wrapper.unmount();
+  });
+
   it('shows the critical row only when the branch exists', async () => {
     const withCritical = contract('c-1');
     (withCritical.outcomes as Record<string, unknown>).critical = { publicText: 'The lock jams for good.', effects: [{ kind: 'strain_delta', characterId: 'pc-1', delta: 3 }] };
@@ -155,7 +190,7 @@ describe('StakesCards', () => {
     const card = wrapper.get('[data-testid="stakes-card-c-1"]');
     expect(card.text()).toContain('Double 1s: Critical failure');
     expect(card.text()).toContain('The lock jams for good.');
-    expect(card.text()).toContain('Skooty strain +3');
+    expect(card.text()).toContain('Skooty strain 0 to 3 of 8');
     expect(wrapper.get('[data-testid="stakes-card-c-2"]').text()).not.toContain('Critical failure');
     wrapper.unmount();
   });

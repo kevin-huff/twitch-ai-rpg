@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ActionContractSchema, type ActionContract, type Effect, type OutcomeBand, type SessionState } from '@rpg/contracts';
-import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, outcomeForTotal, STRAIN_MAX, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits, type ContractLine } from './index';
+import { MAX_ROLLS_PER_ROUND, applyEffects, applyResolution, isCardMismatch, outcomeForTotal, STRAIN_MAX, tooManyRollsMessage, resolveContracts, validateContracts, validateTraits, type ContractLine } from './index';
 
 const state = () => ({
   characters: [
@@ -402,6 +402,243 @@ describe('one action per line', () => {
     const many = Array.from({ length: MAX_ROLLS_PER_ROUND + 1 }, (_, index) => contract({ id: `c${index}` }));
     expect(() => validateContracts(many, state())).toThrow(tooManyRollsMessage(13));
     expect(tooManyRollsMessage(13)).toBe('A round can show at most 12 rolls, and this plan needs 13. Untick some lines and plan again, then plan the rest in the next round.');
+  });
+});
+
+describe('card lists: Wearing, Promises and debts, How people feel, Changed by the story', () => {
+  const lists = ['wearing', 'owes', 'feelings'] as const;
+  const caps = { wearing: 12, owes: 8, feelings: 8 } as const;
+  const lead = (current: SessionState) => current.characters[0];
+  const outcome = (effects: Effect[], overrides: Partial<ActionContract> = {}) => {
+    const value = contract({ ruling: 'no_check', ...overrides });
+    value.outcomes.clean.effects = effects;
+    return value;
+  };
+
+  it.each(lists)('adds and removes %s entries by exact text', list => {
+    const added = applyEffects(state(), [{ kind: 'card_add', characterId: 'lead', list, entry: 'Red scarf' }, { kind: 'card_add', characterId: 'lead', list, entry: 'Owl pin' }]);
+    expect(lead(added)[list]).toEqual(['Red scarf', 'Owl pin']);
+    const removed = applyEffects(added, [{ kind: 'card_remove', characterId: 'lead', list, entry: 'Red scarf' }]);
+    expect(lead(removed)[list]).toEqual(['Owl pin']);
+    expect(lead(added)[list]).toEqual(['Red scarf', 'Owl pin']);
+  });
+
+  it.each(lists)('refuses an unknown %s remove and lists the exact entries', list => {
+    const current = state();
+    Object.assign(lead(current), { [list]: ['Red scarf', 'Owl pin'] });
+    expect(answer(() => applyEffects(current, [{ kind: 'card_remove', characterId: 'lead', list, entry: 'a scarf' }])))
+      .toBe(`Cannot remove an entry the character does not have. Copy one of their ${list} lines exactly: ["Red scarf","Owl pin"]`);
+    expect(answer(() => applyEffects(state(), [{ kind: 'card_remove', characterId: 'lead', list, entry: 'a scarf' }])))
+      .toBe(`Cannot remove an entry the character does not have. Copy one of their ${list} lines exactly: []`);
+  });
+
+  it.each(lists)('refuses a duplicate %s entry', list => {
+    const current = state();
+    Object.assign(lead(current), { [list]: ['Red scarf'] });
+    expect(answer(() => applyEffects(current, [{ kind: 'card_add', characterId: 'lead', list, entry: 'Red scarf' }]))).toBe(`Cannot duplicate an existing ${list} entry.`);
+  });
+
+  it.each(lists)('fills %s to its cap and refuses one more', list => {
+    const current = state();
+    Object.assign(lead(current), { [list]: Array.from({ length: caps[list] - 1 }, (_, index) => `entry ${index}`) });
+    const full = applyEffects(current, [{ kind: 'card_add', characterId: 'lead', list, entry: 'last one' }]);
+    expect(lead(full)[list]).toHaveLength(caps[list]);
+    expect(answer(() => applyEffects(full, [{ kind: 'card_add', characterId: 'lead', list, entry: 'one too many' }]))).toBe(`The ${list} list is full.`);
+  });
+
+  it('keeps every possessions message as it was', () => {
+    const current = state();
+    expect(answer(() => applyEffects(current, [{ kind: 'inventory_remove', characterId: 'lead', item: 'rope' }])))
+      .toBe('Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ["lockpick"]');
+    expect(answer(() => applyEffects(current, [{ kind: 'inventory_add', characterId: 'lead', item: 'lockpick' }]))).toBe('Cannot duplicate an existing inventory item.');
+    expect(answer(() => applyEffects(current, [{ kind: 'inventory_add', characterId: 'lead', item: 'rope' }, { kind: 'inventory_remove', characterId: 'lead', item: 'rope' }])))
+      .toBe('Conflicting inventory changes require a ruling.');
+    lead(current).possessions = Array.from({ length: 20 }, (_, index) => `item ${index}`);
+    expect(answer(() => applyEffects(current, [{ kind: 'inventory_add', characterId: 'lead', item: 'rope' }]))).toBe('Inventory capacity exceeded.');
+  });
+
+  it('refuses two changes to the same entry in one group, but not the same text in different lists or characters', () => {
+    expect(answer(() => applyEffects(state(), [
+      { kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'Owes Mara a favour' },
+      { kind: 'card_remove', characterId: 'lead', list: 'owes', entry: 'Owes Mara a favour' },
+    ]))).toBe('Conflicting owes changes require a ruling.');
+    const next = applyEffects(state(), [
+      { kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'Mara' },
+      { kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'Mara' },
+      { kind: 'card_add', characterId: 'other', list: 'owes', entry: 'Mara' },
+    ]);
+    expect(lead(next)).toMatchObject({ owes: ['Mara'], feelings: ['Mara'] });
+    expect(next.characters[2].owes).toEqual(['Mara']);
+  });
+
+  it('refuses card changes for an unknown character', () => {
+    expect(answer(() => applyEffects(state(), [{ kind: 'card_add', characterId: 'ghost', list: 'wearing', entry: 'Sheet' }]))).toBe('Unknown character in effect.');
+    expect(answer(() => applyEffects(state(), [{ kind: 'looks_set', characterId: 'ghost', text: 'Pale' }]))).toBe('Unknown character in effect.');
+  });
+
+  it('deletes a list key once its last entry is removed and leaves untouched characters as they were', () => {
+    const current = state();
+    Object.assign(lead(current), { wearing: ['Red scarf'], owes: ['Owes Mara a favour'] });
+    const next = applyEffects(current, [{ kind: 'card_remove', characterId: 'lead', list: 'wearing', entry: 'Red scarf' }]);
+    expect('wearing' in lead(next)).toBe(false);
+    expect(lead(next).owes).toEqual(['Owes Mara a favour']);
+    expect(next.characters[1]).toEqual(current.characters[1]);
+    expect(Object.keys(next.characters[1]).some(key => ['wearing', 'owes', 'feelings', 'looksChanged'].includes(key))).toBe(false);
+  });
+
+  it('sets the look note, clears it with empty text and refuses two look changes in one group', () => {
+    const set = applyEffects(state(), [{ kind: 'looks_set', characterId: 'lead', text: 'Soot on her face and a torn sleeve' }]);
+    expect(lead(set).looksChanged).toBe('Soot on her face and a torn sleeve');
+    const cleared = applyEffects(set, [{ kind: 'looks_set', characterId: 'lead', text: '' }]);
+    expect('looksChanged' in lead(cleared)).toBe(false);
+    expect(answer(() => applyEffects(state(), [
+      { kind: 'looks_set', characterId: 'lead', text: 'Soot' },
+      { kind: 'looks_set', characterId: 'lead', text: 'Clean' },
+    ]))).toBe('Conflicting look changes require a ruling.');
+    const both = applyEffects(state(), [{ kind: 'looks_set', characterId: 'lead', text: 'Soot' }, { kind: 'looks_set', characterId: 'other', text: 'Wet' }]);
+    expect([lead(both).looksChanged, both.characters[2].looksChanged]).toEqual(['Soot', 'Wet']);
+  });
+
+  it('refuses two look changes in one outcome before any dice', () => {
+    const roll = vi.fn(() => 6);
+    const action = outcome([{ kind: 'looks_set', characterId: 'lead', text: 'Soot' }, { kind: 'looks_set', characterId: 'lead', text: 'Clean' }]);
+    expect(answer(() => resolveContracts([action], state(), roll))).toBe('Conflicting look changes require a ruling.');
+    expect(roll).not.toHaveBeenCalled();
+  });
+
+  it('puts on a carried thing with inventory_remove plus card_add wearing in one branch, and takes it off again', () => {
+    const current = state();
+    const putOn = outcome([
+      { kind: 'inventory_remove', characterId: 'lead', item: 'lockpick' },
+      { kind: 'card_add', characterId: 'lead', list: 'wearing', entry: 'lockpick' },
+    ]);
+    expect(() => validateContracts([putOn], current)).not.toThrow();
+    const worn = applyResolution(current, resolveContracts([putOn], current, () => 6));
+    expect(lead(worn)).toMatchObject({ possessions: [], wearing: ['lockpick'] });
+    const takeOff = outcome([
+      { kind: 'card_remove', characterId: 'lead', list: 'wearing', entry: 'lockpick' },
+      { kind: 'inventory_add', characterId: 'lead', item: 'lockpick' },
+    ]);
+    const back = applyResolution(worn, resolveContracts([takeOff], worn, () => 6));
+    expect(lead(back).possessions).toEqual(['lockpick']);
+    expect('wearing' in lead(back)).toBe(false);
+  });
+
+  it('refuses unrelated contracts that change the same entry or the same look before any dice', () => {
+    const cases: Effect[] = [
+      { kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'The guards fear her' },
+      { kind: 'looks_set', characterId: 'lead', text: 'Soaked' },
+    ];
+    for (const effect of cases) {
+      const left = outcome([effect], { id: 'left' });
+      const right = outcome([effect.kind === 'looks_set' ? { ...effect, text: 'Dry' } : effect], { id: 'right', actorCharacterId: 'other' });
+      const roll = vi.fn(() => 6);
+      expect(answer(() => resolveContracts([left, right], state(), roll))).toBe('Conflicting nonnumeric changes require a ruling before lock.');
+      expect(roll).not.toHaveBeenCalled();
+    }
+    const different = [outcome([cases[0]], { id: 'left' }), outcome([{ ...cases[0], entry: 'The guards trust her' } as Effect], { id: 'right', actorCharacterId: 'other' })];
+    expect(() => validateContracts(different, state())).not.toThrow();
+    const otherList = [outcome([cases[0]], { id: 'left' }), outcome([{ ...cases[0], list: 'owes' } as Effect], { id: 'right', actorCharacterId: 'other' })];
+    expect(() => validateContracts(otherList, state())).not.toThrow();
+  });
+
+  it('allows the same entry and look along a prerequisite chain, as items are', () => {
+    const parent = outcome([
+      { kind: 'card_add', characterId: 'other', list: 'owes', entry: 'Owes the ferryman a coin' },
+      { kind: 'looks_set', characterId: 'other', text: 'Muddy boots' },
+    ], { id: 'parent' });
+    const child = outcome([
+      { kind: 'card_remove', characterId: 'other', list: 'owes', entry: 'Owes the ferryman a coin' },
+      { kind: 'looks_set', characterId: 'other', text: '' },
+    ], { id: 'child', actorCharacterId: 'other', prerequisites: [{ contractId: 'parent', requirement: 'goal_achieved' }] });
+    const current = state();
+    const result = resolveContracts([child, parent], current, () => 6);
+    const next = applyResolution(current, result);
+    expect(['owes', 'looksChanged'].some(key => key in next.characters[2])).toBe(false);
+    const middle = applyResolution(current, { ...result, effectGroups: [result.effectGroups![0]] });
+    expect(middle.characters[2]).toMatchObject({ owes: ['Owes the ferryman a coin'], looksChanged: 'Muddy boots' });
+  });
+
+  it('refuses a card chain whose prerequisite branch does not supply the entry before rolling', () => {
+    const parent = outcome([{ kind: 'card_add', characterId: 'other', list: 'owes', entry: 'Owes the ferryman a coin' }], { id: 'parent', ruling: 'check' });
+    parent.outcomes.costly.effects = [];
+    const child = outcome([{ kind: 'card_remove', characterId: 'other', list: 'owes', entry: 'Owes the ferryman a coin' }], { id: 'child', actorCharacterId: 'other', prerequisites: [{ contractId: 'parent', requirement: 'goal_achieved' }] });
+    const roll = vi.fn(() => 6);
+    expect(answer(() => resolveContracts([parent, child], state(), roll))).toBe('Cannot remove an entry the character does not have. Copy one of their owes lines exactly: []');
+    expect(roll).not.toHaveBeenCalled();
+  });
+
+  it('refuses combined card list overflow from two contracts before any dice', () => {
+    const current = state();
+    lead(current).feelings = Array.from({ length: 7 }, (_, index) => `feeling ${index}`);
+    const left = outcome([{ kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'first' }], { id: 'left' });
+    const right = outcome([{ kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'second' }], { id: 'right', actorCharacterId: 'other' });
+    expect(answer(() => validateContracts([left, right], current))).toBe('The feelings list is full.');
+  });
+
+  it('applies a rolled card outcome through resolveContracts and applyResolution without touching the live state', () => {
+    const current = state();
+    const action = contract();
+    action.outcomes.costly.effects = [
+      { kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'Owes the archivist silence' },
+      { kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'The archivist distrusts her' },
+      { kind: 'looks_set', characterId: 'lead', text: 'Ink on both hands' },
+    ];
+    const result = resolveContracts([action], current, () => 3);
+    expect(result.outcomes[0].band).toBe('costly');
+    const next = applyResolution(current, result);
+    expect(lead(next)).toMatchObject({ owes: ['Owes the archivist silence'], feelings: ['The archivist distrusts her'], looksChanged: 'Ink on both hands' });
+    expect(['owes', 'feelings', 'looksChanged'].some(key => key in lead(current))).toBe(false);
+  });
+
+  it('matches applyEffects on generated card outcomes', () => {
+    const random = seeded(20261103);
+    const card = (): Effect => {
+      const roll = random.next();
+      const characterId = random.pick(['lead', 'other', 'ghost', 'lead']);
+      if (roll < 0.15) return { kind: 'looks_set', characterId, text: random.pick(['', 'Soot', 'Wet']) };
+      if (roll < 0.35) return { kind: random.pick(['inventory_add', 'inventory_remove'] as const), characterId, item: random.pick(['lockpick', 'scarf']) };
+      return { kind: random.pick(['card_add', 'card_remove'] as const), characterId, list: random.pick(lists), entry: random.pick(['scarf', 'Mara', 'debt', 'lockpick']) };
+    };
+    const seen = new Map<string, number>();
+    for (let run = 0; run < 1000; run++) {
+      const current = state();
+      if (random.next() < 0.5) Object.assign(lead(current), { wearing: ['scarf'], owes: Array.from({ length: 7 }, (_, index) => `debt ${index}`), feelings: ['Mara'] });
+      const effects = Array.from({ length: 1 + random.int(4) }, card);
+      const expected = answer(() => applyEffects(current, effects));
+      expect(answer(() => validateContracts([outcome(effects)], current)), `card plan ${run}`).toBe(expected);
+      const kind = expected.replace(/ Copy one of.*$/, '');
+      seen.set(kind, (seen.get(kind) ?? 0) + 1);
+    }
+    for (const message of ['pass', 'Unknown character in effect.', 'Conflicting look changes require a ruling.', 'Cannot remove an entry the character does not have.', 'Cannot duplicate an existing feelings entry.']) {
+      expect(seen.get(message) ?? 0, message).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('isCardMismatch', () => {
+  it('is true for the three possessions mismatches and the three card mismatches', () => {
+    const current = state();
+    Object.assign(current.characters[0], { owes: Array.from({ length: 8 }, (_, index) => `debt ${index}`), wearing: ['scarf'] });
+    current.characters[0].possessions = Array.from({ length: 20 }, (_, index) => `item ${index}`);
+    const messages = [
+      answer(() => applyEffects(current, [{ kind: 'inventory_remove', characterId: 'lead', item: 'rope' }])),
+      answer(() => applyEffects(current, [{ kind: 'inventory_add', characterId: 'lead', item: 'item 0' }])),
+      answer(() => applyEffects(current, [{ kind: 'inventory_add', characterId: 'lead', item: 'rope' }])),
+      answer(() => applyEffects(current, [{ kind: 'card_remove', characterId: 'lead', list: 'feelings', entry: 'liked' }])),
+      answer(() => applyEffects(current, [{ kind: 'card_add', characterId: 'lead', list: 'wearing', entry: 'scarf' }])),
+      answer(() => applyEffects(current, [{ kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'one more' }])),
+    ];
+    expect(messages.every(message => message !== 'pass')).toBe(true);
+    for (const message of messages) expect(isCardMismatch(message), message).toBe(true);
+  });
+
+  it('is false for other messages', () => {
+    for (const message of [
+      'Conflicting inventory changes require a ruling.', 'Conflicting owes changes require a ruling.', 'Conflicting look changes require a ruling.',
+      'Conflicting nonnumeric changes require a ruling before lock.', 'Unknown character in effect.', 'Unknown track in effect.',
+      'The generation was superseded. Its result was discarded.', 'The hats list is full.', 'Cannot duplicate an existing hats entry.', '',
+    ]) expect(isCardMismatch(message), message).toBe(false);
   });
 });
 

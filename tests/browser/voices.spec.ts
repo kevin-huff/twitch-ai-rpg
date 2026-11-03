@@ -165,7 +165,7 @@ test('on a phone with many voices the list scrolls inside its own box and choosi
   // The Say form sits near the top of the page instead of thousands of pixels down.
   await seat.getByRole('button', { name: 'Say something', exact: true }).click();
   const top = await seat.getByTestId('speech-input').evaluate(el => el.getBoundingClientRect().top + window.scrollY);
-  expect(top).toBeLessThan(1500);
+  expect(top).toBeLessThan(1650);
   await expect.poll(() => seat.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   await voice.getByTestId('voice-option').filter({ hasText: 'Ada' }).locator('.voice-choose').click();

@@ -134,9 +134,49 @@ describe('director corrections', () => {
     expect(new Set(ids).size).toBe(ids.length); wrapper.unmount();
   });
 
-  it.each(['active', 'empty', 'ended', 'not-started'])('blocks corrections when %s', state => {
+  const R1 = 'A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.';
+  const R3 = 'The dice for this round are already rolled. Publish or abandon the round, then record the correction.';
+  const withPhase = (phase: string) => { const current = snapshot(); current.activeBeat = { id: 'active', phase } as unknown as DirectorSnapshot['activeBeat']; return current; };
+
+  it.each(['collecting', 'stakes_review'])('is usable while a round is %s and shows the round-open note', async phase => {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: withPhase(phase), busy: false } });
+    expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeUndefined();
+    expect(wrapper.get(field('correction-round-open')).text()).toBe(R1);
+    await begin(wrapper); await common(wrapper);
+    await wrapper.get(field('save-correction')).trigger('click');
+    expect(command(wrapper)).toMatchObject({ type: 'record_correction' });
+    (wrapper.emitted('command')![0]![1] as () => void)();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[role="status"]').text()).toBe('Correction published. Earlier narration and dice remain unchanged. The round went back to taking lines. Press Plan to plan it again.');
+    wrapper.unmount();
+  });
+
+  it.each(['locked', 'draft_review'])('refuses with the rolled-dice text when a round is %s', phase => {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: withPhase(phase), busy: false } });
+    expect(wrapper.get('.notice').text()).toBe(R3);
+    expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeDefined();
+    expect(wrapper.find(field('correction-round-open')).exists()).toBe(false); wrapper.unmount();
+  });
+
+  it('shows no round-open note between rounds and keeps the plain saved notice', async () => {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } });
+    expect(wrapper.find(field('correction-round-open')).exists()).toBe(false);
+    await begin(wrapper); await common(wrapper);
+    await wrapper.get(field('save-correction')).trigger('click');
+    (wrapper.emitted('command')![0]![1] as () => void)();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[role="status"]').text()).toBe('Correction published. Earlier narration and dice remain unchanged.'); wrapper.unmount();
+  });
+
+  it('draws a strain bar for the value being set', async () => {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } }); await begin(wrapper);
+    await wrapper.get(field('add-correction-strain')).trigger('click');
+    await wrapper.get(field('correction-value-0')).setValue('5');
+    expect(wrapper.get(field('strain-meter-text')).text()).toContain('Strain 5 of 8'); wrapper.unmount();
+  });
+
+  it.each(['empty', 'ended', 'not-started'])('blocks corrections when %s', state => {
     const current = snapshot();
-    if (state === 'active') current.activeBeat = { id: 'active' } as DirectorSnapshot['activeBeat'];
     if (state === 'empty') current.history = [];
     if (state === 'ended') current.session.status = 'ended';
     if (state === 'not-started') current.setup = { started: false } as DirectorSnapshot['setup'];

@@ -10,6 +10,7 @@ import LiveControls from './LiveControls.vue';
 import CorrectionControls from './CorrectionControls.vue';
 import CastPresence from './CastPresence.vue';
 import RestControls from './RestControls.vue';
+import StrainMeter from './StrainMeter.vue';
 import BeatSteering from './BeatSteering.vue';
 import BeatPanel from './BeatPanel.vue';
 import DirectorQueue from './DirectorQueue.vue';
@@ -98,8 +99,9 @@ const endShow = () => work(async () => {
 const changesTheStory = ['record_correction', 'change_scene', 'save_npc', 'reveal_npc'];
 const sendAndUntick = (command: Command, onSaved: () => void) => work(async () => {
   const waiting = pending.value.filter(item => item.kind !== 'ooc').map(item => item.id);
+  const roundOpen = beat.value?.phase === 'collecting' || beat.value?.phase === 'stakes_review';
   await send(command);
-  if (changesTheStory.includes(command.type)) selected.value = selected.value.filter(id => !waiting.includes(id));
+  if (changesTheStory.includes(command.type) && !(command.type === 'record_correction' && roundOpen)) selected.value = selected.value.filter(id => !waiting.includes(id));
   onSaved();
 });
 const sendOnly = (command: Command, onSaved: () => void) => work(async () => { await send(command); onSaved(); });
@@ -181,16 +183,16 @@ onUnmounted(stopListening);
               <summary>Show tools</summary>
               <div class="stack">
                 <LiveControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
-                <CastPresence :snapshot="director" :busy="busy || beatBusy" :ai-busy="aiWorking" @command="sendOnly" />
+                <CastPresence :snapshot="director" :busy="busy" @command="sendOnly" />
                 <CorrectionControls :snapshot="director" :busy="busy" @command="sendAndUntick" />
-                <RestControls :snapshot="director" :busy="busy || beatBusy" :ai-busy="aiWorking" @command="sendOnly" />
+                <RestControls :snapshot="director" :busy="busy" @command="sendOnly" />
                 <BeatSteering :snapshot="director" :busy="busy || beatBusy" @command="sendOnly" />
                 <OperationsPanel :session-id="sessionId" />
                 <section class="panel"><p class="eyebrow">In the room</p><div v-for="npc in director.npcDetails" :key="npc.id" class="queue-item"><h3>{{ npc.displayName }}</h3><p class="muted">{{ npc.role }} · {{ npc.status }}</p><NpcPortraitControls :name="npc.displayName" :image-url="portraitSrc(npc.portraitId)" :state="portraitJob(npc.id)?.state ?? null" :message="portraitJob(npc.id)?.message ?? null" :enabled="picturesOn" :disabled="busy || ended" :can-create="Boolean(npc.appearance?.trim() || npc.role?.trim())" @create="createPortrait(npc.id)" @remove="removePortrait(npc.id)" /><details><summary>Director notes & memory</summary><p class="private-note">{{ npc.goal }}</p><p v-for="secret in npc.secrets" :key="secret" class="private-note">Secret: {{ secret }}</p><p v-for="memory in npc.knowledge" :key="memory.id" class="private-note">{{ memory.category }} · {{ memory.statement }}</p></details></div></section>
                 <section class="panel"><p class="eyebrow">Scenario notes (read-only)</p><p class="private-note">{{ director.directorNotes }}</p></section>
                 <section v-if="snapshot.facts.length" class="panel" data-testid="public-facts"><p class="eyebrow">Known to the party</p><p v-for="fact in snapshot.facts" :key="fact.id" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ fact.text }}</p></section>
                 <section v-if="snapshot.tracks.length" class="panel"><p class="eyebrow">Live state</p><div v-for="track in snapshot.tracks" :key="track.id" class="track" :class="track.kind"><div class="track-label"><span>{{ track.label }}</span><span>{{ track.current }}/{{ track.max }}{{ !track.enabled ? ' · inactive' : '' }}</span></div><div class="track-pips"><span v-for="pip in track.max" :key="pip" :class="{ filled: pip <= track.current }"></span></div></div></section>
-                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong><small>Strain {{ character.strain }}/{{ STRAIN_MAX }}</small></div></div></section>
+                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong><StrainMeter :value="character.strain" :max="STRAIN_MAX" /></div></div></section>
               </div>
             </details>
           </section>

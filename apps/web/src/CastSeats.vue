@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, useId, watch } from 'vue';
-import { CharacterCardDefinitionSchema, CommandSchema, type Character, type CharacterCardDefinition, type Command, type DirectorSnapshot, type FieldGenerationCharacterContext } from '@rpg/contracts';
+import { CARD_ENTRY_MAX, CharacterCardDefinitionSchema, CommandSchema, FEELINGS_MAX, LOOKS_CHANGED_MAX, OWES_MAX, WEARING_MAX, type Character, type CharacterCardDefinition, type Command, type DirectorSnapshot, type FieldGenerationCharacterContext } from '@rpg/contracts';
 import CharacterForm from './CharacterForm.vue';
 import { withDescription } from './card-description';
 import PictureAvatar from './PictureAvatar.vue';
@@ -121,13 +121,26 @@ async function saveChange(character: Character) {
 const liveOpen = reactive<Record<string, boolean>>({});
 const liveLook = reactive<Record<string, string>>({});
 const liveItems = reactive<Record<string, string[]>>({});
+const liveChanged = reactive<Record<string, string>>({});
+type CardListKey = 'wearing' | 'owes' | 'feelings';
+const cardLists: { key: CardListKey; legend: string; add: string; max: number; help: (name: string) => string }[] = [
+  { key: 'wearing', legend: 'Wearing', add: 'Add something worn', max: WEARING_MAX, help: name => `Something ${name} wears now. Outcomes you approve can put things on or take them off.` },
+  { key: 'owes', legend: 'Promises and debts', add: 'Add a promise or debt', max: OWES_MAX, help: name => `A promise or debt ${name} owes or is owed. Outcomes you approve can add or settle it.` },
+  { key: 'feelings', legend: 'How people feel', add: 'Add a feeling', max: FEELINGS_MAX, help: name => `How someone feels about ${name}. Outcomes you approve can change it.` },
+];
+const liveLists = reactive<Record<string, Record<CardListKey, string[]>>>({});
 const liveRevisions = reactive<Record<string, number>>({});
 const liveSaving = reactive<Record<string, boolean>>({});
-const liveLoaded: Record<string, { look: string; items: string[] }> = {};
+interface LiveSnapshot { look: string; items: string[]; changed: string; wearing: string[]; owes: string[]; feelings: string[] }
+const liveLoaded: Record<string, LiveSnapshot> = {};
 const maxLiveItems = 20;
+const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
 function loadLive(character: Character) {
+  const lists = { wearing: [...(character.wearing ?? [])], owes: [...(character.owes ?? [])], feelings: [...(character.feelings ?? [])] };
   liveLook[character.id] = character.appearance; liveItems[character.id] = [...character.possessions]; liveRevisions[character.id] = character.cardRevision;
-  liveLoaded[character.id] = { look: character.appearance, items: [...character.possessions] };
+  liveChanged[character.id] = character.looksChanged ?? '';
+  liveLists[character.id] = { wearing: [...lists.wearing], owes: [...lists.owes], feelings: [...lists.feelings] };
+  liveLoaded[character.id] = { look: character.appearance, items: [...character.possessions], changed: character.looksChanged ?? '', ...lists };
 }
 function openLive(character: Character) {
   loadLive(character);
@@ -135,8 +148,11 @@ function openLive(character: Character) {
 }
 function liveUntouched(id: string) {
   const loaded = liveLoaded[id];
+  if (!loaded) return false;
   const items = (liveItems[id] ?? []).filter(item => item.trim());
-  return !!loaded && liveLook[id] === loaded.look && items.length === loaded.items.length && items.every((item, index) => item === loaded.items[index]);
+  const lists = liveLists[id];
+  return liveLook[id] === loaded.look && (liveChanged[id] ?? '') === loaded.changed && sameList(items, loaded.items)
+    && cardLists.every(list => sameList((lists?.[list.key] ?? []).filter(entry => entry.trim()), loaded[list.key]));
 }
 watch(() => props.snapshot.characterDetails, details => {
   for (const character of details) {
@@ -151,11 +167,19 @@ function addLiveItem(character: Character) {
   if (items && items.length < maxLiveItems) items.push('');
 }
 function removeLiveItem(character: Character, index: number) { liveItems[character.id]?.splice(index, 1); }
+function addLiveEntry(character: Character, key: CardListKey) {
+  const entries = liveLists[character.id]?.[key];
+  const max = cardLists.find(list => list.key === key)?.max ?? 0;
+  if (entries && entries.length < max) entries.push('');
+}
+function removeLiveEntry(character: Character, key: CardListKey, index: number) { liveLists[character.id]?.[key].splice(index, 1); }
+const cleaned = (values: string[] | undefined) => (values ?? []).map(value => value.trim()).filter(Boolean);
 async function saveLive(character: Character) {
   if (liveSaving[character.id]) return;
   errors[character.id] = '';
-  const command = CommandSchema.safeParse({ type: 'save_live_character', commandId: crypto.randomUUID(), characterId: character.id, expectedCharacterRevision: liveRevisions[character.id], appearance: liveLook[character.id] ?? '', possessions: (liveItems[character.id] ?? []).map(value => value.trim()).filter(Boolean) });
-  if (!command.success) { errors[character.id] = 'The look or one of the items is too long. Shorten it and try again.'; return; }
+  const lists = liveLists[character.id];
+  const command = CommandSchema.safeParse({ type: 'save_live_character', commandId: crypto.randomUUID(), characterId: character.id, expectedCharacterRevision: liveRevisions[character.id], appearance: liveLook[character.id] ?? '', possessions: cleaned(liveItems[character.id]), wearing: cleaned(lists?.wearing), owes: cleaned(lists?.owes), feelings: cleaned(lists?.feelings), looksChanged: (liveChanged[character.id] ?? '').trim() });
+  if (!command.success) { errors[character.id] = 'The look or one of the entries is too long. Shorten it and try again.'; return; }
   liveSaving[character.id] = true;
   try {
     if (await queueSave(character.id, command.data)) closeLive(character);
@@ -189,6 +213,10 @@ function removeSeat(character: Character) {
           </template>
           <dt>Traits</dt><dd><span v-for="(value, trait) in shownCard(character)!.traits" :key="trait">{{ trait }} +{{ value }} &nbsp;</span></dd>
           <dt>Possessions</dt><dd>{{ shownCard(character)!.possessions.join(', ') || '—' }}</dd>
+          <template v-if="character.looksChanged"><dt>Changed by the story</dt><dd>{{ character.looksChanged }}</dd></template>
+          <template v-for="list in cardLists" :key="list.key">
+            <template v-if="character[list.key]?.length"><dt>{{ list.legend }}</dt><dd>{{ character[list.key]!.join(', ') }}</dd></template>
+          </template>
         </dl>
         <template v-if="hasCard(character) && editable">
           <button v-if="!changing[character.id]" type="button" class="secondary" :data-testid="`change-card-${character.id}`" @click="openChange(character)">Change this card</button>
@@ -206,6 +234,9 @@ function removeSeat(character: Character) {
         <div v-else class="seat-live-form">
           <label :for="fieldId(`look-${character.id}`)">Look</label>
           <textarea :id="fieldId(`look-${character.id}`)" v-model="liveLook[character.id]" rows="3" maxlength="1000" :data-testid="`live-look-${character.id}`"></textarea>
+          <label :for="fieldId(`changed-${character.id}`)">Changed by the story</label>
+          <textarea :id="fieldId(`changed-${character.id}`)" v-model="liveChanged[character.id]" rows="2" :maxlength="LOOKS_CHANGED_MAX" :aria-describedby="fieldId(`changed-help-${character.id}`)" :data-testid="`live-looks-${character.id}`"></textarea>
+          <p :id="fieldId(`changed-help-${character.id}`)" class="field-help">{{ `How the story changed ${character.displayName}'s look, such as torn or soaked clothes. The AI and pictures read it after the look.` }}</p>
           <fieldset class="seat-items">
             <legend>Carrying</legend>
             <div v-for="(_, index) in liveItems[character.id]" :key="index" class="seat-item">
@@ -213,6 +244,15 @@ function removeSeat(character: Character) {
               <button type="button" class="secondary" :aria-label="`Remove item ${index + 1} for ${character.displayName}`" :data-testid="`live-item-remove-${character.id}-${index}`" @click="removeLiveItem(character, index)">Remove</button>
             </div>
             <button type="button" class="secondary" :disabled="(liveItems[character.id]?.length ?? 0) >= maxLiveItems" :data-testid="`live-item-add-${character.id}`" @click="addLiveItem(character)">Add an item</button>
+          </fieldset>
+          <fieldset v-for="list in cardLists" :key="list.key" class="seat-items">
+            <legend>{{ list.legend }}</legend>
+            <div v-for="(_, index) in liveLists[character.id]?.[list.key]" :key="index" class="seat-item">
+              <input v-model="liveLists[character.id]![list.key][index]" type="text" :maxlength="CARD_ENTRY_MAX" :aria-label="`${list.legend} ${index + 1} for ${character.displayName}`" :aria-describedby="fieldId(`${list.key}-help-${character.id}-${index}`)" :data-testid="`live-${list.key}-${character.id}-${index}`" />
+              <button type="button" class="secondary" :aria-label="`Remove ${list.legend} ${index + 1} for ${character.displayName}`" :data-testid="`live-${list.key}-remove-${character.id}-${index}`" @click="removeLiveEntry(character, list.key, index)">Remove</button>
+              <p :id="fieldId(`${list.key}-help-${character.id}-${index}`)" class="field-help">{{ list.help(character.displayName) }}</p>
+            </div>
+            <button type="button" class="secondary" :disabled="(liveLists[character.id]?.[list.key].length ?? 0) >= list.max" :data-testid="`live-${list.key}-add-${character.id}`" @click="addLiveEntry(character, list.key)">{{ list.add }}</button>
           </fieldset>
           <p class="muted">The AI and pictures use this from the next plan or script. If the stakes are already showing, press Plan again to use it.</p>
           <p v-if="errors[character.id]" role="alert" class="notice error" :data-testid="`live-edit-error-${character.id}`">{{ errors[character.id] }}</p>
@@ -269,6 +309,7 @@ function removeSeat(character: Character) {
 .seat-items { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; justify-items: start; }
 .seat-item { display: flex; gap: 12px; align-items: center; width: 100%; flex-wrap: wrap; }
 .seat-item input { flex: 1 1 200px; min-width: 0; width: auto; }
+.seat-item .field-help { flex: 1 0 100%; margin: 0; }
 .seat-writer { display: grid; gap: 8px; }
 .seat-writer textarea { width: 100%; }
 </style>

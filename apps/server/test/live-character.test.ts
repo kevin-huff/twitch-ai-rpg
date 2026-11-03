@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import type { AiDraft, DirectorSnapshot, PlanResult, ProviderContext, SessionState } from '@rpg/contracts';
+import type { AiDraft, DirectorSnapshot, LineAssistInput, PlanResult, ProviderContext, SessionState } from '@rpg/contracts';
 import { buildApp } from '../src/app';
 import { createPool, transaction } from '../src/database';
 import { readState, saveState } from '../src/repository';
@@ -26,12 +26,14 @@ suite('live look and items for a character', () => {
   let snapshot: DirectorSnapshot;
   let contexts: ProviderContext[];
   let rolls: number;
+  let assistInputs: LineAssistInput[];
   let die: number;
   const fake = new FakeAiProvider();
   let plan: (context: ProviderContext) => Promise<PlanResult>;
   let render: (context: ProviderContext) => Promise<AiDraft>;
   const options = { databaseUrl: databaseUrl!, hostToken, origin, serveStatic: false, providerTimeoutMs: 5000, rollDie: () => { rolls++; return die; },
-    provider: { plan: (context: ProviderContext) => { contexts.push(context); return plan(context); }, render: (context: ProviderContext) => { contexts.push(context); return render(context); } } };
+    provider: { plan: (context: ProviderContext) => { contexts.push(context); return plan(context); }, render: (context: ProviderContext) => { contexts.push(context); return render(context); },
+      suggestLine: async (input: LineAssistInput) => { assistInputs.push(input); return { text: 'A friendly hello' }; } } };
   const cookie = (response: { headers: Record<string, unknown> }) => String(response.headers['set-cookie']).split(';')[0]!;
   const request = (path: string, payload?: Record<string, unknown>, credential = host) => app.inject({ method: payload === undefined ? 'GET' : 'POST', url: path, headers: { origin, cookie: credential }, ...(payload === undefined ? {} : { payload }) });
   const command = (value: Record<string, unknown>, credential = host) => request(`/api/sessions/${sessionId}/commands`, { commandId: randomUUID(), ...value }, credential);
@@ -74,7 +76,7 @@ suite('live look and items for a character', () => {
     host = cookie(await request('/api/auth/host', { token: hostToken }, ''));
   });
   beforeEach(async () => {
-    contexts = []; rolls = 0; die = 4; plan = (value) => fake.plan(value); render = (value) => fake.render(value);
+    contexts = []; assistInputs = []; rolls = 0; die = 4; plan = (value) => fake.plan(value); render = (value) => fake.render(value);
     const created = (await request('/api/sessions', { commandId: randomUUID() })).json(); sessionId = created.sessionId;
     player = cookie(await request('/api/auth/redeem', { token: created.invites[0].token }, ''));
     stage = cookie(await request('/api/auth/redeem', { token: created.invites.at(-1).token }, ''));
@@ -99,8 +101,8 @@ suite('live look and items for a character', () => {
     expect(rows).toHaveLength(1); expect(rows[0].kind).toBe('save_live_character');
     expect(rows[0].data).toEqual({
       characterId: card.id,
-      before: { appearance: 'A tall courier in a red cap', possessions: ['Brass bell', 'Red cap'], lookEditedAt: null },
-      after: { appearance: 'A tall courier, bareheaded', possessions: ['Brass bell', 'Lantern'], lookEditedAt: character().lookEditedAt },
+      before: { appearance: 'A tall courier in a red cap', possessions: ['Brass bell', 'Red cap'], wearing: [], owes: [], feelings: [], looksChanged: '', lookEditedAt: null },
+      after: { appearance: 'A tall courier, bareheaded', possessions: ['Brass bell', 'Lantern'], wearing: [], owes: [], feelings: [], looksChanged: '', lookEditedAt: character().lookEditedAt },
     });
     expect(Number((await pool.query("SELECT count(*) FROM facts WHERE session_id=$1", [sessionId])).rows[0].count)).toBe(before.facts.length);
     expect(snapshot.directorNotes).toBe(before.directorNotes);
@@ -356,6 +358,95 @@ suite('live look and items for a character', () => {
     await ok(edit({ appearance: 'x'.repeat(1000), possessions: Array.from({ length: 20 }, (_, index) => `Item ${index}`) }));
     expect(character().possessions).toHaveLength(20);
     expect(before.characterDetails[0]!.cardRevision + 1).toBe(character().cardRevision);
+  });
+
+  const cardKeys = ['wearing', 'owes', 'feelings', 'looksChanged'] as const;
+  const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(character(), key);
+
+  it('loads a character stored without the four card keys and shows none of them', async () => {
+    for (const key of cardKeys) expect(hasKey(key), key).toBe(false);
+    await mutate((state) => { for (const key of cardKeys) delete (state.characters[0] as Record<string, unknown>)[key]; });
+    for (const key of cardKeys) expect(hasKey(key), key).toBe(false);
+    await ok(edit({ appearance: 'Still loads and saves' }));
+    for (const key of cardKeys) expect(hasKey(key), key).toBe(false);
+  });
+
+  it('sets and clears Wearing, Changed by the story, Promises and debts and How people feel, and stores none that are empty', async () => {
+    const opened = character().cardRevision;
+    const response = await ok(edit({ wearing: ['  Red cap  ', 'Long coat'], owes: ['Owes the ferryman a favor'], feelings: ['The guard distrusts them'], looksChanged: '  Singed sleeves  ' }));
+    expect(character().wearing).toEqual(['Red cap', 'Long coat']);
+    expect(character().owes).toEqual(['Owes the ferryman a favor']);
+    expect(character().feelings).toEqual(['The guard distrusts them']);
+    expect(character().looksChanged).toBe('Singed sleeves');
+    expect(character().lookEditedAt).not.toBeNull();
+    expect(character().cardRevision).toBe(opened + 1);
+    const row = (await pool.query("SELECT data FROM audit_events WHERE command_id=$1", [response.json().commandId])).rows[0].data;
+    expect(row.before).toMatchObject({ wearing: [], owes: [], feelings: [], looksChanged: '' });
+    expect(row.after).toMatchObject({ wearing: ['Red cap', 'Long coat'], owes: ['Owes the ferryman a favor'], feelings: ['The guard distrusts them'], looksChanged: 'Singed sleeves' });
+    const stamp = character().lookEditedAt;
+    await ok(edit({ owes: [] }));
+    expect(hasKey('owes')).toBe(false);
+    expect(character().wearing).toEqual(['Red cap', 'Long coat']);
+    expect(character().feelings).toEqual(['The guard distrusts them']);
+    expect(character().looksChanged).toBe('Singed sleeves');
+    expect(character().lookEditedAt).toBe(stamp);
+    await ok(edit({ wearing: [], feelings: [], looksChanged: '' }));
+    for (const key of cardKeys) expect(hasKey(key), key).toBe(false);
+    const stored = (await readStoredCharacter()) as Record<string, unknown>;
+    for (const key of cardKeys) expect(Object.prototype.hasOwnProperty.call(stored, key), key).toBe(false);
+  });
+
+  async function readStoredCharacter() {
+    return transaction(pool, async (client) => (await readState(client, sessionId)).characters[0]);
+  }
+
+  it('publishes an approved outcome that changes the lists and the note, raises the card revision, stamps the look and shows the next plan', async () => {
+    await ok(edit({ feelings: ['The guard distrusts them'] }));
+    const opened = character().cardRevision, stampBefore = character().lookEditedAt;
+    const id = character().id;
+    await publishRound([
+      { kind: 'inventory_remove', characterId: id, item: 'Red cap' },
+      { kind: 'card_add', characterId: id, list: 'wearing', entry: 'Red cap' },
+      { kind: 'card_add', characterId: id, list: 'owes', entry: 'Owes the ferryman a favor' },
+      { kind: 'card_remove', characterId: id, list: 'feelings', entry: 'The guard distrusts them' },
+      { kind: 'looks_set', characterId: id, text: 'Soot on both sleeves' },
+    ]);
+    expect(character().possessions).toEqual(['Brass bell']);
+    expect(character().wearing).toEqual(['Red cap']);
+    expect(character().owes).toEqual(['Owes the ferryman a favor']);
+    expect(hasKey('feelings')).toBe(false);
+    expect(character().looksChanged).toBe('Soot on both sleeves');
+    expect(character().cardRevision).toBe(opened + 1);
+    expect(character().lookEditedAt).not.toBeNull();
+    expect(character().lookEditedAt).not.toBe(stampBefore);
+    await openAction();
+    contexts = [];
+    await planBeat();
+    const seen = contexts[0]!.state.characters.find((item) => item.id === id)!;
+    expect(seen.wearing).toEqual(['Red cap']);
+    expect(seen.owes).toEqual(['Owes the ferryman a favor']);
+    expect(seen.looksChanged).toBe('Soot on both sleeves');
+    expect(seen.possessions).toEqual(['Brass bell']);
+  });
+
+  it('refuses approval with the stale-stakes text when a card entry is not there, is doubled, or the list is full', async () => {
+    const contracts = await bellContracts();
+    const id = contracts[0]!.actorCharacterId;
+    contracts[0]!.outcomes.clean.effects = [{ kind: 'card_remove', characterId: id, list: 'feelings', entry: 'Nobody likes them' }] as never;
+    await refused(beatCommand('approve_stakes', { classification: 'action', contracts }), 409, messages.stakes);
+    await ok(edit({ owes: ['A debt'], wearing: Array.from({ length: 12 }, (_, index) => `Garment ${index}`) }));
+    contracts[0]!.outcomes.clean.effects = [{ kind: 'card_add', characterId: id, list: 'owes', entry: 'A debt' }] as never;
+    await refused(beatCommand('approve_stakes', { classification: 'action', contracts }), 409, messages.stakes);
+    contracts[0]!.outcomes.clean.effects = [{ kind: 'card_add', characterId: id, list: 'wearing', entry: 'One too many' }] as never;
+    await refused(beatCommand('approve_stakes', { classification: 'action', contracts }), 409, messages.stakes);
+  });
+
+  it('gives Help me say it the Wearing list', async () => {
+    await ok(edit({ wearing: ['Red cap', 'Long coat'] }));
+    const response = await request(`/api/sessions/${sessionId}/line-assist`, { idea: 'say hello' }, player);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(assistInputs).toHaveLength(1);
+    expect(assistInputs[0]!.character.wearing).toEqual(['Red cap', 'Long coat']);
   });
 
   it('shows the next plan the edited look and items', async () => {

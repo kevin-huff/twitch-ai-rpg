@@ -10,19 +10,24 @@ type Context = { sessionId: string; beatId?: string; director: boolean; stage?: 
 type AudioStatus = 'missing' | 'preparing' | 'ready' | 'unavailable';
 type SharedCommand = PlaybackCommand['type'];
 type Lease = { id: string; deadline: number; generation: number };
+type Sound = 'idle' | 'blocked' | 'ready' | 'played';
 // A reply's clock reading can be off by half its round trip, so the fastest reply of the last ten seconds sets the clock.
 const CLOCK_SAMPLE_WINDOW_MS = 10_000;
 // A listener jumps only after staying out of step this long, so one late reading cannot make the audio skip back and forth.
 const LISTENER_DRIFT_PERSIST_MS = 1_500;
 // Only the presenter can say a clip finished, and a lost report would stall the narration, so it is sent again until the server moves on.
 const ENDED_RETRY_MS = 2_000;
+// A twentieth of a second of silence: playing it inside a click is what lets a browser, iPhones included, play the narration on the same element later.
+const SILENT_CLIP = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+const LOST_AUDIO = 'This page lost the show audio. Reclaim audio, and narration that was playing resumes by itself.';
+const errorName = (cause: unknown) => (cause as { name?: unknown } | null)?.name;
 
 export function createPlaybackController(initial: Context) {
   let context = { ...initial };
   const state = reactive({
     snapshot: null as PlaybackSnapshot | null, manifest: null as AudioManifest | null,
     audioStatus: 'missing' as AudioStatus, preparing: false, commandPending: false,
-    listening: false, presenting: false, muted: true, volume: 1, error: '',
+    listening: false, presenting: false, muted: true, volume: 1, error: '', sound: 'idle' as Sound,
   });
   const clientId = crypto.randomUUID();
   let identity: string | undefined;
@@ -40,7 +45,13 @@ export function createPlaybackController(initial: Context) {
   let claimingGeneration: number | null = null;
   let renewing: Lease | null = null;
   let lease: Lease | null = null;
+  // The page's one audio element, made the first time sound is needed; audio is set only while it holds a narration clip.
+  let media: HTMLAudioElement | null = null;
   let audio: HTMLAudioElement | null = null;
+  let unlockSequence = 0;
+  let silentHolder = 0;
+  let pollError = '';
+  let pollErrorSequence = 0;
   let audioKey = '';
   let blockedKey = '';
   let endedKey = '';
@@ -56,13 +67,22 @@ export function createPlaybackController(initial: Context) {
   const now = () => performance.now();
   const endpoint = () => `/api/sessions/${encodeURIComponent(context.sessionId)}/playback`;
 
+  function element() {
+    if (!media) media = new Audio();
+    return media;
+  }
+
+  function empty(clip: HTMLAudioElement) {
+    clip.onended = null; clip.onerror = null; clip.onloadedmetadata = null;
+    clip.pause();
+    if (typeof clip.removeAttribute === 'function') clip.removeAttribute('src'); else clip.src = '';
+    clip.load();
+  }
+
   function halt() {
     audioGeneration++;
     clearTimeout(scheduleTimer); scheduleTimer = undefined;
-    if (audio) {
-      audio.onended = null; audio.onerror = null; audio.onloadedmetadata = null;
-      audio.pause(); audio.src = ''; audio.load(); audio = null;
-    }
+    if (audio) { empty(audio); audio = null; }
     audioKey = ''; started = false; driftSince = null;
   }
 
@@ -81,6 +101,7 @@ export function createPlaybackController(initial: Context) {
     state.snapshot = null; state.manifest = null; state.audioStatus = 'missing';
     state.preparing = false; state.commandPending = false;
     state.listening = false; state.muted = true;
+    pollError = '';
   }
 
   function checkIdentity() {
@@ -148,7 +169,7 @@ export function createPlaybackController(initial: Context) {
 
   function liveLease() {
     if (!lease) return false;
-    if (now() >= lease.deadline) { dropLease('Presenter lease expired. Reclaim audio and ask the director to resume.'); return false; }
+    if (now() >= lease.deadline) { dropLease(LOST_AUDIO); return false; }
     return true;
   }
 
@@ -182,8 +203,11 @@ export function createPlaybackController(initial: Context) {
     }
     halt();
     getIdentity();
-    const clip = new Audio(identityPath(snapshot.manifest.segments[snapshot.segmentIndex].url));
-    audio = clip; audioKey = key; clip.volume = state.volume; clip.muted = state.muted; clip.preload = 'auto';
+    const url = identityPath(snapshot.manifest.segments[snapshot.segmentIndex].url);
+    const clip = element();
+    silentHolder = 0;
+    audio = clip; audioKey = key;
+    clip.src = url; clip.preload = 'auto'; clip.volume = state.volume; clip.muted = state.muted;
     const generation = audioGeneration;
     const owner = lease?.id;
     const valid = () => checkIdentity() && generation === audioGeneration && audio === clip && allowed() &&
@@ -207,12 +231,44 @@ export function createPlaybackController(initial: Context) {
       try {
         const playing = clip.play();
         void Promise.resolve(playing).then(() => {
-          if (!valid()) { clip.pause(); return; }
+          if (!disposed) state.sound = 'played';
+          // A newer clip or a stop already owns the element; pausing here would silence it.
+          if (!valid()) { if (generation === audioGeneration && audio === clip) clip.pause(); return; }
           started = true;
-        }, () => { if (valid()) playbackFailed(key); });
-      } catch { if (valid()) playbackFailed(key); }
+        }, cause => { noteBlocked(cause); if (valid()) playbackFailed(key); });
+      } catch (cause) { noteBlocked(cause); if (valid()) playbackFailed(key); }
     };
     clip.load(); startClip();
+  }
+
+  function noteBlocked(cause: unknown) {
+    if (!disposed && errorName(cause) === 'NotAllowedError') state.sound = 'blocked';
+  }
+
+  // Call it straight from a click: play() must start before anything waits, or the browser no longer counts the click.
+  function unlock(): Promise<boolean> {
+    if (disposed) return Promise.resolve(false);
+    if (audio && started) { if (state.sound !== 'played') state.sound = 'ready'; return Promise.resolve(true); }
+    halt();
+    const clip = element(), token = ++unlockSequence;
+    silentHolder = token;
+    clip.src = SILENT_CLIP; clip.preload = 'auto'; clip.muted = false; clip.volume = state.volume;
+    let playing: Promise<void>;
+    try { playing = Promise.resolve(clip.play()); } catch (cause) { playing = Promise.reject(cause); }
+    const finish = () => {
+      if (silentHolder === token) { silentHolder = 0; if (media === clip && !audio) empty(clip); }
+      if (!disposed) synchronize();
+    };
+    return playing.then(() => {
+      if (disposed) return false;
+      if (state.sound !== 'played') state.sound = 'ready';
+      finish(); return true;
+    }, cause => {
+      if (disposed) return false;
+      // A narration clip that took the element over interrupts the silence; that is not the browser refusing sound.
+      if (errorName(cause) !== 'AbortError') state.sound = 'blocked';
+      finish(); return false;
+    });
   }
 
   function seek(clip: HTMLAudioElement, seconds: number) {
@@ -223,7 +279,7 @@ export function createPlaybackController(initial: Context) {
     const report = telemetry('error'); blockedKey = key; halt();
     if (!context.stage) { state.listening = false; state.muted = true; }
     state.error = context.stage
-      ? 'Playback could not start or the audio was interrupted. Check browser audio permission. Release audio, choose Present audio again, then ask the director to resume.'
+      ? 'Playback could not start or the audio was interrupted. Check browser audio permission. Release audio, choose Present audio again, then ask the director to press Resume shared audio.'
       : 'Playback could not start or the audio was interrupted. Check browser audio permission and try Listen again.';
     void report;
   }
@@ -234,14 +290,17 @@ export function createPlaybackController(initial: Context) {
     return typeof status === 'number' && status >= 400 && status < 500;
   }
 
+  // Returns the message it showed when the failure was this page's own request rather than a lost hold on the show audio.
   function failed(cause: unknown, generation: number) {
-    if (!checkIdentity() || generation !== contextGeneration) return;
+    if (!checkIdentity() || generation !== contextGeneration) return '';
     // A presenting page rides out a blip: the clip keeps playing and the next poll or renewal retries until the lease runs out.
-    if (lease && !refused(cause) && now() < lease.deadline) return;
+    if (lease && !refused(cause) && now() < lease.deadline) return '';
     halt(); state.listening = false; state.muted = true;
-    if (lease) dropLease('Audio connection lost. Reclaim audio and ask the director to resume.');
+    if (lease) { dropLease(LOST_AUDIO); return ''; }
     // A stage page that just lost its lease keeps the reclaim instruction instead of having it overwritten by every later failed poll.
-    else if (!(context.stage && state.error)) state.error = cause instanceof Error ? cause.message : 'Reviewed audio is unavailable. Try Listen again.';
+    if (context.stage && state.error) return '';
+    state.error = cause instanceof Error ? cause.message : 'Reviewed audio is unavailable. Try Listen again.';
+    return state.error;
   }
 
   async function refresh() {
@@ -252,7 +311,13 @@ export function createPlaybackController(initial: Context) {
       const result = await request(endpoint());
       if (!checkIdentity() || generation !== contextGeneration || fence !== responseGeneration) return;
       if (accept(PlaybackSnapshotSchema.parse(result.data), result.start, result.end)) successfulPollSequence = Math.max(successfulPollSequence, sequence);
-    } catch (cause) { if (fence === responseGeneration && sequence >= successfulPollSequence) failed(cause, generation); }
+      // A check that works again clears the message an earlier failed check left, and only that one.
+      if (pollError && sequence > pollErrorSequence) { if (state.error === pollError) state.error = ''; pollError = ''; }
+    } catch (cause) {
+      if (fence !== responseGeneration || sequence < successfulPollSequence) return;
+      const message = failed(cause, generation);
+      if (message) { pollError = message; pollErrorSequence = sequence; }
+    }
     finally { activePolls--; }
   }
 
@@ -286,7 +351,7 @@ export function createPlaybackController(initial: Context) {
   function mute() { state.listening = false; state.muted = true; halt(); }
   function setVolume(value: number) {
     state.volume = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1));
-    if (audio) audio.volume = state.volume;
+    if (media) media.volume = state.volume;
   }
 
   async function command(type: SharedCommand, startBeatId = context.beatId) {
@@ -323,7 +388,7 @@ export function createPlaybackController(initial: Context) {
     const deadline = Math.max(lease?.id === id ? lease.deadline : 0,
       requestStart + Math.max(0, (snapshot.presenter.leaseExpiresAtMs ?? snapshot.serverTimeMs) - snapshot.serverTimeMs));
     if (!snapshot.presenter.available || deadline <= now()) {
-      dropLease('Presenter lease expired. Reclaim audio and ask the director to resume.'); return;
+      dropLease(LOST_AUDIO); return;
     }
     lease = { id, deadline, generation }; state.presenting = true;
     clearTimeout(expiryTimer);
@@ -341,7 +406,7 @@ export function createPlaybackController(initial: Context) {
       });
       if (!checkIdentity() || generation !== contextGeneration || ownerGeneration !== leaseGeneration || fence !== responseGeneration) return;
       const data = PlaybackResponseSchema.parse(result.data);
-      if (!data.leaseId) throw new Error('Presenter lease was not granted. Try Present audio again.');
+      if (!data.leaseId) throw new Error('This page could not take the show audio. Try Present audio again.');
       accept(data.snapshot, result.start, result.end);
       setLease(data.leaseId, data.snapshot, result.start, ownerGeneration);
       if (!lease) return;
@@ -364,7 +429,7 @@ export function createPlaybackController(initial: Context) {
       if (!checkIdentity() || generation !== contextGeneration || lease !== owner || owner.generation !== leaseGeneration) return;
       if (!liveLease()) return;
       const data = PlaybackResponseSchema.parse(result.data);
-      if (data.leaseId && data.leaseId !== owner.id) throw Object.assign(new Error('Presenter lease was lost. Reclaim audio and ask the director to resume.'), { status: 409 });
+      if (data.leaseId && data.leaseId !== owner.id) throw Object.assign(new Error(LOST_AUDIO), { status: 409 });
       accept(data.snapshot, result.start, result.end);
       setLease(owner.id, data.snapshot, result.start, owner.generation);
     } catch (cause) { if (lease === owner) failed(cause, generation); }
@@ -436,6 +501,7 @@ export function createPlaybackController(initial: Context) {
   function dispose() {
     if (disposed) return;
     reset(); disposed = true; clearInterval(pollTimer); clearInterval(positionTimer); clearInterval(manifestTimer);
+    if (media) { empty(media); media = null; }
   }
 
   try { identity = getIdentity(); } catch { /* Refresh exposes invalid identities without starting audio. */ }
@@ -449,5 +515,5 @@ export function createPlaybackController(initial: Context) {
   void refresh(); void loadManifest();
   return { state, refresh, prepare: () => loadManifest(true), listen, mute, setVolume, command,
     replay: () => state.snapshot?.manifest ? command('start', state.snapshot.manifest.beatId) : Promise.resolve(),
-    claim, release, setContext, dispose };
+    claim, release, setContext, unlock, dispose };
 }

@@ -299,7 +299,7 @@ suite('durable coordinated public playback', () => {
     expect(await canonical()).toBe(before);
   });
 
-  it('pauses at the confirmed position on release, error, or expiry and never resumes automatically', async () => {
+  it('pauses at the confirmed position on release, error, or expiry and only an expiry resumes on a later claim', async () => {
     await start();
     await elapseAnchor();
     await ok('/telemetry', telemetry('position', { positionMs: 42 }), stage);
@@ -321,6 +321,113 @@ suite('durable coordinated public playback', () => {
     await get();
     expect(snapshot.sampleRevision).toBe(sample);
     expect((await request('/presenter', owner('renew', { renewalSequence: 1 }), stage)).statusCode).toBe(409);
+  });
+
+  async function playToPosition(positionMs = 42) {
+    await start();
+    await elapseAnchor();
+    await ok('/telemetry', telemetry('position', { positionMs }), stage);
+  }
+  const expireLease = async () => { await pool.query('UPDATE session_playback SET presenter_expires_at_ms=$2 WHERE session_id=$1', [sessionId, Date.now() - 1]); await get(); };
+  const holderOf = async () => (await request('/holder')).json().holder;
+  const plainKeys = ['browser', 'claimedAt', 'holderId', 'label', 'showTitle'];
+
+  it('resumes from the last reported position when the show audio is claimed again after a lapse while playing', async () => {
+    await playToPosition();
+    const epoch = snapshot.playbackId;
+    await expireLease();
+    expect(snapshot).toMatchObject({ status: 'paused', positionMs: 42, anchorTimeMs: null, presenter: { available: false } });
+    const before = Date.now();
+    await claim();
+    expect(snapshot).toMatchObject({ status: 'playing', positionMs: 42, segmentIndex: 0, playbackId: epoch, presenter: { available: true } });
+    expect(snapshot.anchorTimeMs! - snapshot.serverTimeMs).toBe(500);
+    const holder = await holderOf();
+    expect(Object.keys(holder).sort()).toEqual([...plainKeys, 'resumedAt'].sort());
+    expect(new Date(holder.resumedAt).getTime()).toBeGreaterThanOrEqual(before - 1000);
+    await ok('/presenter', owner('release'), stage);
+    expect(snapshot.status).toBe('paused');
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('keeps ordinary holders at five keys and lets the resumed page keep reporting', async () => {
+    await claim();
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+    await ok('/presenter', owner('release'), stage);
+    await playToPosition(7);
+    await expireLease();
+    await claim();
+    await elapseAnchor();
+    await ok('/telemetry', telemetry('position', { positionMs: 90 }), stage);
+    expect(snapshot).toMatchObject({ status: 'playing', positionMs: 90 });
+  });
+
+  it('never resumes by itself after a director pause', async () => {
+    await start();
+    await ok('/commands', command('pause'));
+    await expireLease();
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('never resumes by itself after a release or an error report', async () => {
+    await playToPosition();
+    await ok('/presenter', owner('release'), stage);
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    await ok('/commands', command('resume'));
+    await elapseAnchor();
+    await ok('/telemetry', telemetry('error'), stage);
+    await expireLease();
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('never resumes by itself after Stop that one', async () => {
+    await playToPosition();
+    const stopped = await request('/holder/stop', { commandId: randomUUID(), holderId: leaseId });
+    expect(stopped.statusCode, stopped.body).toBe(200);
+    await get();
+    expect(snapshot.status).toBe('paused');
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('never resumes after a lapse when the director then stops or skips', async () => {
+    await playToPosition();
+    await expireLease();
+    await ok('/commands', command('stop'));
+    await claim();
+    expect(snapshot.status).toBe('stopped');
+    await ok('/commands', command('start'));
+    await expireLease();
+    await ok('/commands', command('skip'));
+    await claim();
+    expect(snapshot).toMatchObject({ status: 'paused', segmentIndex: 1 });
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('does not resume in an ended show', async () => {
+    await playToPosition();
+    await expireLease();
+    await pool.query("UPDATE sessions SET status='ended' WHERE id=$1", [sessionId]);
+    await claim();
+    expect(snapshot).toMatchObject({ status: 'paused', positionMs: 42, presenter: { available: true } });
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+  });
+
+  it('does not mark an expiry that happens while paused', async () => {
+    await playToPosition();
+    await ok('/commands', command('pause'));
+    await expireLease();
+    expect((await pool.query('SELECT lapse_paused FROM session_playback WHERE session_id=$1', [sessionId])).rows[0].lapse_paused).toBe(false);
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
   });
 
   it('checks expiration using post-lock time and persists expiry even if a waiting renewal fails', async () => {

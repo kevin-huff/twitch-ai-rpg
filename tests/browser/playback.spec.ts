@@ -187,7 +187,8 @@ test('one stage presents shared narration while listeners join, refresh, and fol
     expect(replayed.manifest.beatId).toBe(firstBeat);
     expect(replayed.playbackId).not.toBe(playbackId);
     await expect.poll(async () => (await api(page, `${path}/playback`)).status).toBe('complete');
-    expect((await mediaState(nativeStage)).length).toBe(segments.length);
+    // One audio element plays every clip in turn.
+    expect((await mediaState(nativeStage)).length).toBe(1);
     await expect(nativeStage.locator('.audio-panel [role=alert]')).toHaveCount(0);
   } finally { await nativeContext.close(); }
 });

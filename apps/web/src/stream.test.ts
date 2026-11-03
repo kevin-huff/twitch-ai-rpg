@@ -77,10 +77,10 @@ describe('STAGE_PIECES', () => {
     expect(pieceInfo('stakes')?.about).toBe('What is at stake before a roll, one person at a time.');
     expect(pieceInfo('party')?.about).toBe("Each character's name, portrait and strain.");
     expect(pieceInfo('tracks')?.about).toBe('The first two public tracks.');
-    expect(pieceInfo('picture')?.about).toBe('The scene picture, or the picture you pinned.');
+    expect(pieceInfo('picture')?.about).toBe('The scene picture, or the picture the director pinned.');
     expect(pieceInfo('badge')?.about).toBe('Says the narration and voices are made by AI, and whether the show is live.');
     expect(pieceInfo('facts')?.about).toBe('What the party knows, newest first.');
-    expect(pieceInfo('corrections')?.about).toBe('The newest correction you published.');
+    expect(pieceInfo('corrections')?.about).toBe('The newest correction the director published.');
   });
   it('returns null for unknown views', () => {
     expect(pieceInfo('nope')).toBeNull();

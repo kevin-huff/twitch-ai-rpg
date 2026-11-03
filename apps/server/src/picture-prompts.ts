@@ -184,6 +184,13 @@ function momentNarration(moment: PictureMoment, names: string[]): string {
 const lowerArticle = (text: string) => text.replace(/^(A|An|The)(?=\s)/, (word) => word.toLowerCase());
 const trimEnd = (text: string) => text.replace(/[\s.,;:]+$/, '');
 
+const personWords = (person: PicturePerson): string => {
+  const wearing = person.wearing ?? [];
+  const note = (person.looksChanged ?? '').trim();
+  if (wearing.length === 0 && !note) return person.appearance;
+  return [person.appearance, wearing.length > 0 ? `wearing ${wearing.join(', ')}` : '', note].filter((part) => part.trim()).join('; ');
+};
+
 export function fallbackDescription(moment: PictureMoment, budget: number): string {
   if (budget <= 0) return '';
   const names = moment.names;
@@ -194,7 +201,7 @@ export function fallbackDescription(moment: PictureMoment, budget: number): stri
   const words = moment.cast.map((person: PicturePerson) => ({
     numbered: person.imageNumber !== null,
     number: person.imageNumber,
-    text: lowerArticle(momentText(person.appearance, names) || (person.imageNumber === null ? momentText(person.role, names) : '')),
+    text: lowerArticle(momentText(personWords(person), names) || (person.imageNumber === null ? momentText(person.role, names) : '')),
   }));
   const longest = Math.max(0, ...words.map((person) => person.text.length));
   const build = (narrationMax: number, personMax: number) => {

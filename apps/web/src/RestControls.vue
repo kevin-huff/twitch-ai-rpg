@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { CommandSchema, STRAIN_MAX } from '@rpg/contracts';
 import type { Command, DirectorSnapshot } from '@rpg/contracts';
 
-const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean; aiBusy: boolean }>();
+const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
 const emit = defineEmits<{ command: [command: Command, onSaved: () => void] }>();
 
 const confirming = ref(false);
@@ -14,18 +14,18 @@ const saving = ref(false);
 const error = ref('');
 
 const strained = computed(() => props.snapshot.characters.filter(character => character.strain > 0));
+const roundOpen = computed(() => ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat?.phase ?? ''));
 const gate = computed(() => {
   if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the show from Cast & lobby first.';
   if (props.snapshot.session.status === 'ended') return 'The show has ended.';
   if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Open a conversation or an action round first.';
-  if (props.snapshot.activeBeat && props.snapshot.activeBeat.phase !== 'collecting') return 'Publish or abandon this round first.';
+  if (props.snapshot.activeBeat && ['locked', 'draft_review'].includes(props.snapshot.activeBeat.phase)) return 'Publish or abandon this round first.';
   return '';
 });
-const locked = computed(() => props.busy || props.aiBusy || Boolean(gate.value));
+const locked = computed(() => props.busy || Boolean(gate.value));
 const canAsk = computed(() => !locked.value && strained.value.length > 0);
-const waitLabel = computed(() => (saving.value ? 'Saving…' : props.aiBusy ? 'Waiting for the AI to finish' : ''));
-const restLabel = computed(() => waitLabel.value || 'Rest everyone');
-const confirmLabel = computed(() => waitLabel.value || 'Yes, rest everyone');
+const restLabel = computed(() => (saving.value ? 'Saving…' : 'Rest everyone'));
+const confirmLabel = computed(() => (saving.value ? 'Saving…' : 'Yes, rest everyone'));
 
 watch(() => props.snapshot.session.stateRevision, current => {
   if (confirming.value && !saving.value && current !== revision.value) { confirming.value = false; staleNotice.value = true; }
@@ -47,7 +47,8 @@ function confirm() {
   if (!parsed.success) { error.value = 'Check the strain and try again.'; return; }
   error.value = '';
   saving.value = true;
-  emit('command', parsed.data, () => { saving.value = false; confirming.value = false; staleNotice.value = false; savedNotice.value = 'Rest saved. Strain went down.'; });
+  const wasOpen = roundOpen.value;
+  emit('command', parsed.data, () => { saving.value = false; confirming.value = false; staleNotice.value = false; savedNotice.value = wasOpen ? 'Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.' : 'Rest saved. Strain went down.'; });
 }
 </script>
 
@@ -56,6 +57,7 @@ function confirm() {
     <summary>Rest</summary>
     <p class="muted">Let every character catch their breath. Rest sets everyone's strain back to 0. Lines players sent stay where they are.</p>
     <p v-if="savedNotice" class="notice" role="status" data-testid="rest-saved">{{ savedNotice }}</p>
+    <p v-if="roundOpen" class="notice" data-testid="rest-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
     <p v-if="gate" class="notice" data-testid="rest-gate">{{ gate }}</p>
     <p v-if="staleNotice" class="notice" data-testid="rest-stale">The show changed while you were choosing. Check the strain, then press Rest everyone again.</p>
     <div v-for="character in snapshot.characters" :key="character.id" class="rest-row" :data-testid="`rest-row-${character.id}`">

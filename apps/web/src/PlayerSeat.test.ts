@@ -413,9 +413,101 @@ describe('player seat', () => {
     expect(labels).toEqual(['Pronouns', 'Personality', 'Good at', 'Carrying', 'Your secret']);
     expect(w.findAll('dd')[labels.indexOf('Carrying')].text()).toBe('Lockpick, Map');
     const text = w.text();
-    expect(text).not.toContain('Strain');
     for (const trait of ['force', 'finesse', 'wits', 'presence']) expect(text.toLowerCase()).not.toContain(trait);
   });
+  describe('strain on the seat', () => {
+    it.each([[0, 'Fresh'], [3, 'Fresh'], [4, 'Worn'], [7, 'Worn'], [8, 'Spent']])('reads %i of 8 as %s and shows the sentence only at the maximum', async (strain, word) => {
+      const w = await mountSeat(snapshot({}, { strain }));
+      expect(w.get('[data-testid="strain-meter"]').attributes('aria-valuenow')).toBe(String(strain));
+      expect(w.get('[data-testid="strain-meter"]').attributes('aria-valuemax')).toBe('8');
+      expect(w.get('[data-testid="strain-meter-text"]').text()).toBe(word);
+      expect(w.find('[data-testid="seat-spent"]').exists()).toBe(strain === 8);
+      if (strain === 8) expect(w.get('[data-testid="seat-spent"]').text()).toBe('Your Do lines will help someone else for now. What you say still rolls.');
+    });
+  });
+
+  describe('card rows', () => {
+    it('shows the story-changed look, wearing, promises and debts and feelings when filled in', async () => {
+      const w = await mountSeat(snapshot({}, { appearance: 'Tall', looksChanged: 'Singed hair', possessions: ['Map'], wearing: ['Red coat', ' Hat '], owes: ['Owes Rook a favour', 'Is owed ten coins'], feelings: ['Trusted by the guild', 'Feared by Vex'] }));
+      const labels = w.findAll('dt').map(term => term.text());
+      expect(labels).toEqual(['Looks', 'Changed by the story', 'Carrying', 'Wearing', 'Promises and debts', 'How people feel']);
+      const row = (label: string) => w.findAll('dd')[labels.indexOf(label)].text();
+      expect(row('Changed by the story')).toBe('Singed hair');
+      expect(row('Wearing')).toBe('Red coat, Hat');
+      expect(row('Promises and debts')).toBe('Owes Rook a favour; Is owed ten coins');
+      expect(row('How people feel')).toBe('Trusted by the guild; Feared by Vex');
+      expect(w.get('details.card').attributes('open')).toBeUndefined();
+    });
+
+    it('still renders for a character without the new fields', async () => {
+      const w = await mountSeat(snapshot({}, { appearance: 'Tall' }));
+      expect(w.findAll('dt').map(term => term.text())).toEqual(['Looks']);
+      const items = w.get('[data-testid="seat-items"]');
+      expect(items.findAll('.nothing').map(note => note.text())).toEqual(['Nothing yet.', 'Nothing yet.']);
+      expect(w.find('[data-testid="seat-item-pick-up"]').exists()).toBe(true);
+    });
+  });
+
+  describe('What I have', () => {
+    const owned = { possessions: ['Lockpick', 'Map'], wearing: ['Red coat'] };
+
+    it('is folded by default and lists carried and worn things with their buttons', async () => {
+      const w = await mountSeat(snapshot({}, owned));
+      const items = w.get('[data-testid="seat-items"]');
+      expect(items.element.tagName).toBe('DETAILS');
+      expect(items.attributes('open')).toBeUndefined();
+      expect(items.get('summary').text()).toBe('What I have');
+      expect(items.findAll('h3').map(heading => heading.text())).toEqual(['Carrying', 'Wearing']);
+      expect(items.findAll('.item-name').map(entry => entry.text())).toEqual(['Lockpick', 'Map', 'Red coat']);
+      expect(items.find('[data-testid="seat-item-use-1"]').text()).toBe('Use');
+      expect(items.find('[data-testid="seat-item-give-1"]').text()).toBe('Give');
+      expect(items.find('[data-testid="seat-item-drop-1"]').text()).toBe('Drop');
+      expect(items.find('[data-testid="seat-item-put-on-1"]').text()).toBe('Put on');
+      expect(items.find('[data-testid="seat-wear-take-off-0"]').text()).toBe('Take off');
+    });
+
+    it.each([
+      ['seat-item-use-0', 'Use Lockpick to '],
+      ['seat-item-give-1', 'Give Map to '],
+      ['seat-item-drop-0', 'Drop Lockpick'],
+      ['seat-item-put-on-1', 'Put on Map'],
+      ['seat-wear-take-off-0', 'Take off Red coat'],
+      ['seat-item-pick-up', 'Pick up '],
+    ])('%s fills the Do box with the pinned text and sends nothing', async (testid, expected) => {
+      const w = await mountSeat(snapshot({}, owned));
+      expect(pressed(w, 'Say something')).toBe('true');
+      await w.get(`[data-testid="${testid}"]`).trigger('click');
+      await flushPromises();
+      expect(pressed(w, 'Do something')).toBe('true');
+      expect(value(w, 'action-input')).toBe(expected);
+      expect(transport.command).not.toHaveBeenCalled();
+    });
+
+    it('adds to words already in the Do box on a new line and puts the cursor at the end', async () => {
+      const w = await mountSeat(snapshot({}, owned));
+      await click(w, 'Do something');
+      await w.get('[data-testid="action-input"]').setValue('Sneak past the guard');
+      await w.get('[data-testid="seat-item-use-0"]').trigger('click');
+      await flushPromises();
+      const box = w.get('[data-testid="action-input"]').element as HTMLTextAreaElement;
+      expect(box.value).toBe('Sneak past the guard\nUse Lockpick to ');
+      expect(box.selectionStart).toBe(box.value.length);
+      expect(transport.command).not.toHaveBeenCalled();
+    });
+
+    it('disables the buttons while a sent line is being changed', async () => {
+      const w = await mountSeat(snapshot({ submissions: [line({ id: 's1', kind: 'say', text: 'Hello', status: 'queued' })] }, owned));
+      await changeLine(w);
+      expect(w.get('[data-testid="seat-item-use-0"]').attributes('disabled')).toBeDefined();
+      expect(w.get('[data-testid="seat-item-pick-up"]').attributes('disabled')).toBeDefined();
+    });
+
+    it('disables the buttons once the show has ended', async () => {
+      const w = await mountSeat(snapshot({}, owned, { status: 'ended' }));
+      expect(w.get('[data-testid="seat-item-pick-up"]').attributes('disabled')).toBeDefined();
+    });
+  });
+
   describe('pictures', () => {
     const shown = { picturesEnabled: true, scenePicture: { imageId: '11111111-1111-4111-8111-111111111111', sceneId: 'bar' } };
 

@@ -10,6 +10,7 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 const origin = 'http://localhost:3000';
 const hostToken = 'director-corrections-steering-test-credential';
+const rolled = { correction: 'The dice for this round are already rolled. Publish or abandon the round, then record the correction.', live: 'Publish or abandon this round first.' };
 
 suite('director corrections and private beat steering', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -280,10 +281,84 @@ suite('director corrections and private beat steering', () => {
     expect((await command(value)).json()).toEqual(responses[0]!.json());
   });
 
-  it.each(['collecting', 'stakes_review', 'locked', 'draft_review'])('rejects correction during an active %s beat', async phase => {
+  it.each([['collecting', 200], ['stakes_review', 200], ['locked', 409], ['draft_review', 409]] as const)('answers a correction during an active %s beat with %s', async (phase, status) => {
     await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
     await pool.query("UPDATE beats SET phase=$2,data=jsonb_set(data,'{phase}',to_jsonb($2::text)) WHERE id=$1", [snapshot.activeBeat!.id, phase]);
-    expect((await command(correction())).statusCode).toBe(409);
+    await refresh();
+    const response = await command(correction());
+    expect(response.statusCode, response.body).toBe(status);
+    if (status === 409) expect(response.json().message).toBe(rolled.correction);
+    else expect(response.json().snapshot.activeBeat.phase).toBe('collecting');
+  });
+
+  it.each(['collecting', 'stakes_review', 'approved'] as const)('sends a round in %s back to taking lines after a correction, keeps its lines queued and raises the input stamp', async step => {
+    await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
+    await submit('act');
+    const lines = snapshot.submissions.filter(item => item.kind === 'act' && item.status === 'queued').map(item => item.id);
+    expect(lines).toHaveLength(1);
+    if (step !== 'collecting') await ok(beatCommand('plan_beat', { submissionIds: lines }));
+    if (step === 'approved') await ok(beatCommand('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat!.contracts }));
+    const before = structuredClone(snapshot);
+    expect(before.activeBeat!.phase).toBe(step === 'collecting' ? 'collecting' : 'stakes_review');
+    expect(before.activeBeat!.stakesApproved).toBe(step === 'approved');
+    const result = await ok(correction());
+    expect(snapshot.session).toEqual({ ...before.session, stateRevision: before.session.stateRevision + 1, inputEpoch: before.session.inputEpoch + 1 });
+    expect(snapshot.activeBeat).toMatchObject({ id: before.activeBeat!.id, phase: 'collecting', classification: null, contracts: [], stakesApproved: false, inputSnapshotHash: null, draft: null, approvedContinuity: [],
+      lastError: null, selectedSubmissionIds: before.activeBeat!.selectedSubmissionIds, sourceStateRevision: snapshot.session.stateRevision,
+      revision: before.activeBeat!.revision + 1, generation: before.activeBeat!.generation + 1 });
+    for (const id of lines) expect(snapshot.submissions.find(item => item.id === id)).toMatchObject({ status: 'queued', contextBeatId: before.activeBeat!.id });
+    const data = (await pool.query("SELECT data FROM audit_events WHERE command_id=$1 AND kind='correction.recorded'", [result.json().commandId])).rows[0].data;
+    expect(data).toMatchObject({ keptSubmissionIds: lines, resetBeatId: before.activeBeat!.id, cancelledJobIds: [] });
+    expect(snapshot.corrections.at(-1)!.publicText).toBe(correction().publicText);
+    await ok(beatCommand('plan_beat', { submissionIds: lines }));
+    expect(snapshot.activeBeat!.phase).toBe('stakes_review');
+    expect(contexts.at(-1)!.corrections!.at(-1)!.publicText).toBe(correction().publicText);
+  });
+
+  it('cancels a plan the AI is still making when a correction is saved, and the plan answers superseded', async () => {
+    await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
+    await submit();
+    const lines = snapshot.submissions.filter(item => item.kind === 'say' && item.status === 'queued').map(item => item.id);
+    let finish: ((value: PlanResult) => void) | undefined;
+    plan = () => new Promise(resolve => { finish = resolve; });
+    const pending = command(beatCommand('plan_beat', { submissionIds: lines }));
+    try {
+      await vi.waitFor(() => expect(finish).toBeDefined(), { timeout: 1000, interval: 10 });
+      await refresh();
+      const job = snapshot.jobs.at(-1)!;
+      expect(job.status).toBe('running');
+      const result = await ok(correction());
+      const response = await pending;
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'superseded', message: 'The generation was superseded. Its result was discarded.' });
+      await refresh();
+      expect(snapshot.activeBeat).toMatchObject({ phase: 'collecting', classification: null, contracts: [], selectedSubmissionIds: lines });
+      expect(snapshot.jobs.at(-1)).toMatchObject({ id: job.id, status: 'cancelled' });
+      const data = (await pool.query("SELECT data FROM audit_events WHERE command_id=$1 AND kind='correction.recorded'", [result.json().commandId])).rows[0].data;
+      expect(data.cancelledJobIds).toEqual([job.id]);
+    } finally { finish?.({ classification: 'ordinary', contracts: [], directorSummary: '' }); await pending; }
+  });
+
+  it('refuses a correction, Who is here and Rest once the dice are rolled, with the exact texts', async () => {
+    await mutate(state => { state.characters[0]!.strain = 2; });
+    await prepare(); await ok(beatCommand('lock_beat'));
+    const check = async () => {
+      const before = structuredClone(snapshot);
+      for (const [value, message] of [
+        [correction(), rolled.correction],
+        [{ type: 'set_cast', expectedStateRevision: snapshot.session.stateRevision, presentNpcIds: [] }, rolled.live],
+        [{ type: 'rest', expectedStateRevision: snapshot.session.stateRevision }, rolled.live],
+      ] as const) {
+        const response = await command(value);
+        expect(response.statusCode, response.body).toBe(409);
+        expect(response.json().message).toBe(message);
+      }
+      await refresh(); expect(snapshot).toEqual(before);
+    };
+    await check();
+    await ok(beatCommand('render_beat'));
+    expect(snapshot.activeBeat!.phase).toBe('draft_review');
+    await check();
   });
 
   it.each(['lobby', 'ended', 'unstarted'])('rejects both controls in %s sessions', async status => {

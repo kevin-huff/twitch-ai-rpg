@@ -104,6 +104,8 @@ export const PicturePersonSchema = z.strictObject({
   portraitId: ImageIdSchema.nullable(),
   imageNumber: z.number().int().min(1).max(MOMENT_PORTRAIT_MAX).nullable(),
   lookEdited: z.literal(true).optional(),
+  wearing: z.array(z.string().max(160)).max(12).optional(),
+  looksChanged: z.string().max(300).optional(),
 });
 export type PicturePerson = z.infer<typeof PicturePersonSchema>;
 export const PictureMomentSchema = z.strictObject({

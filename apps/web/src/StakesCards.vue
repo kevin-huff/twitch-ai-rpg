@@ -14,7 +14,7 @@ const TRAITS = ['force', 'finesse', 'wits', 'presence'] as const;
 const props = defineProps<{ beat: Beat; contracts: ActionContract[]; classification: 'ordinary' | 'action'; busy: boolean }>();
 const emit = defineEmits<{ 'update:classification': [value: 'ordinary' | 'action'] }>();
 
-const { director, nameOf, effectLabel } = useTable();
+const { director, nameOf, effectLabel, strainChange } = useTable();
 
 const ordinaryEditing = ref(false);
 const editing = ref<string[]>([]);
@@ -94,8 +94,8 @@ function loadJson() {
           <p v-if="contract.helperCharacterIds.length" class="muted"><small>Helpers: {{ contract.helperCharacterIds.map(nameOf).join(', ') }}</small></p>
           <p class="roll-words">{{ rollWords(contract) }}</p>
           <ul class="outcomes">
-            <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
-            <li v-if="contract.ruling === 'check' && contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small></li>
+            <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small></li>
+            <li v-if="contract.ruling === 'check' && contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small></li>
           </ul>
         </template>
         <template v-else>
@@ -117,12 +117,12 @@ function loadJson() {
           <div v-for="band in BANDS" :key="band" class="branch">
             <label>{{ BAND_LABELS[band] }}<textarea v-model="contract.outcomes[band].publicText" :data-testid="`outcome-${band}`" rows="2" placeholder="Write the agreed outcome and consequences" /></label>
             <p v-if="overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS)" class="stage-length over" :data-testid="`stage-length-${band}`">{{ overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS) }}</p>
-            <small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block">{{ effectLabel(effect) }}</small>
+            <small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small>
           </div>
           <div v-if="contract.ruling === 'check'" class="branch">
             <label>{{ CRITICAL_LABEL }}<textarea :value="contract.outcomes.critical?.publicText ?? ''" data-testid="outcome-critical" rows="2" placeholder="Write what happens on double 1s" @input="onCriticalInput(contract, $event)" /></label>
             <p v-if="overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS)" class="stage-length over" data-testid="stage-length-critical">{{ overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS) }}</p>
-            <small v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" style="display: block">{{ effectLabel(effect) }}</small>
+            <small v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small>
           </div>
         </template>
       </article>
@@ -147,5 +147,5 @@ function loadJson() {
 p > strong, .outcomes strong { color: var(--candle); }
 .roll-words { margin: 8px 0; font-weight: 400; }
 .stage-length { margin: 4px 0 12px; color: var(--dust); font-size: 20px; line-height: 24px; }
-.stage-length.over { color: var(--candle); }
+.stage-length.over, small.over { color: var(--candle); }
 </style>

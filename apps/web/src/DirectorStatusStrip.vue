@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { DirectorSnapshot } from '@rpg/contracts';
+import type { DirectorSnapshot, ShowAudioHolder } from '@rpg/contracts';
 import { api } from './api';
 import { identityPath } from './identity';
 
@@ -15,6 +15,8 @@ const audio = ref<AudioState>('checking');
 const now = ref(Date.now());
 const releasing = ref(false);
 const releaseError = ref('');
+const holder = ref<ShowAudioHolder | null>(null);
+const dismissedResume = ref('');
 const firstSeen = new Map<string, number>();
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
@@ -26,7 +28,17 @@ function setAudio(next: AudioState) {
   emit('audio', next);
 }
 
+async function pollHolder() {
+  try {
+    const answer = await api.showAudioHolder(props.sessionId);
+    if (alive) holder.value = answer.holder;
+  } catch {
+    // keep the last good answer
+  }
+}
+
 async function poll() {
+  void pollHolder();
   try {
     const playback = await api.playback(props.sessionId);
     if (!alive) return;
@@ -88,7 +100,14 @@ async function release() {
     releasing.value = false;
   }
 }
-const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unknown' || stuckSeconds.value !== null);
+const resumeNote = computed(() => {
+  const current = holder.value;
+  if (!current?.resumedAt || current.resumedAt === dismissedResume.value) return null;
+  const where = current.browser === 'obs' ? 'OBS' : current.browser === 'browser' ? 'a browser' : 'a page';
+  const time = new Date(current.resumedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return { stamp: current.resumedAt, text: `Narration resumed by itself on ${current.label} (${where}) at ${time}.` };
+});
+const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unknown' || stuckSeconds.value !== null || resumeNote.value !== null);
 </script>
 
 <template>
@@ -96,6 +115,10 @@ const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unk
     <li v-if="audio === 'none'" class="chip" data-testid="warning-no-audio">No show audio · <a :href="identityPath(`/sessions/${sessionId}/lobby#stage-links`)">Stream this show</a></li>
     <li v-if="audio === 'unknown'" class="chip" data-testid="warning-audio-unknown">Can't check the show audio</li>
     <li v-if="stuckSeconds !== null" class="chip" data-testid="warning-stuck" aria-live="polite">The AI is taking longer than usual ({{ stuckSeconds }} s)</li>
+    <li v-if="resumeNote" class="chip" data-testid="auto-resumed">
+      {{ resumeNote.text }}
+      <button type="button" class="quiet" data-testid="auto-resumed-dismiss" @click="dismissedResume = resumeNote.stamp">Dismiss</button>
+    </li>
     <li v-if="pinned" class="chip" data-testid="pinned-line">
       Pinned: {{ pinned.label }}
       <button type="button" class="secondary" data-testid="release-pinned" :disabled="releasing" @click="release">Release</button>

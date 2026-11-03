@@ -33,6 +33,8 @@ interface PlaybackRow {
   presenter_show_title: string | null;
   presenter_agent: 'obs' | 'browser' | null;
   presenter_claimed_at_ms: number | null;
+  lapse_paused: boolean;
+  presenter_resumed_at_ms: number | null;
   renewal_sequence: number;
   telemetry_sequence: number;
 }
@@ -52,6 +54,7 @@ function clearPresenter(row: PlaybackRow) {
   row.presenter_show_title = null;
   row.presenter_agent = null;
   row.presenter_claimed_at_ms = null;
+  row.presenter_resumed_at_ms = null;
   row.renewal_sequence = 0;
   row.telemetry_sequence = 0;
 }
@@ -70,11 +73,12 @@ async function save(client: PoolClient, row: PlaybackRow) {
   await client.query(`UPDATE session_playback SET revision=$2,sample_revision=$3,playback_id=$4,status=$5,
     manifest=$6,segment_index=$7,position_ms=$8,anchor_time_ms=$9,presenter_actor_id=$10,presenter_client_id=$11,
     presenter_lease_id=$12,presenter_expires_at_ms=$13,renewal_sequence=$14,telemetry_sequence=$15,
-    presenter_label=$16,presenter_show_title=$17,presenter_agent=$18,presenter_claimed_at_ms=$19 WHERE session_id=$1`, [
+    presenter_label=$16,presenter_show_title=$17,presenter_agent=$18,presenter_claimed_at_ms=$19,lapse_paused=$20,presenter_resumed_at_ms=$21 WHERE session_id=$1`, [
     row.session_id, row.revision, row.sample_revision, row.playback_id, row.status, row.manifest,
     row.segment_index, row.position_ms, row.anchor_time_ms, row.presenter_actor_id, row.presenter_client_id,
     row.presenter_lease_id, row.presenter_expires_at_ms, row.renewal_sequence, row.telemetry_sequence,
     row.presenter_label, row.presenter_show_title, row.presenter_agent, row.presenter_claimed_at_ms,
+    row.lapse_paused, row.presenter_resumed_at_ms,
   ]);
 }
 function holder(row: PlaybackRow, sessionTitle: string): ShowAudioHolderResponse {
@@ -86,6 +90,7 @@ function holder(row: PlaybackRow, sessionTitle: string): ShowAudioHolderResponse
       showTitle: (row.presenter_show_title ?? sessionTitle).slice(0, 160),
       browser: row.presenter_agent ?? 'unknown',
       claimedAt: row.presenter_claimed_at_ms === null ? null : new Date(row.presenter_claimed_at_ms).toISOString(),
+      ...(row.presenter_resumed_at_ms === null ? {} : { resumedAt: new Date(row.presenter_resumed_at_ms).toISOString() }),
     },
   };
 }
@@ -102,6 +107,7 @@ async function stopHolder(client: PoolClient, row: PlaybackRow, command: StopSho
   if (!row.presenter_lease_id || row.presenter_lease_id !== command.holderId) conflict('The show audio moved to another page. Check who has it now.');
   if (row.presenter_client_id) await client.query('INSERT INTO playback_stopped_clients(session_id,client_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [row.session_id, row.presenter_client_id]);
   clearPresenter(row);
+  row.lapse_paused = false;
   if (row.status === 'playing') pause(row);
   changed(row);
   return { holder: null };
@@ -151,6 +157,7 @@ async function preparedManifest(client: PoolClient, sessionId: string, beatId: s
 async function control(client: PoolClient, row: PlaybackRow, actor: Actor, command: PlaybackCommand, sessionStatus: string, now: number) {
   if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the director can control shared playback.');
   checkRevision(row, command);
+  row.lapse_paused = false;
   if (command.type === 'start') {
     if (sessionStatus === 'ended') conflict('An ended session cannot start playback.');
     if (!row.presenter_lease_id) conflict('Enable a presenter before starting playback.');
@@ -179,7 +186,7 @@ function checkPresenterRole(actor: Actor) {
   if (actor.role !== 'host' && actor.role !== 'stage') throw new AppError(403, 'forbidden', 'Only the director or stage can present narration.');
   if (actor.role === 'stage' && actor.can_present === false) throw new AppError(403, 'forbidden', 'This stream view can listen but cannot present the show audio.');
 }
-function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, now: number, details?: PresenterDetails) {
+function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, now: number, sessionStatus: string, details?: PresenterDetails) {
   checkPresenterRole(actor);
   if (command.type === 'claim') {
     checkRevision(row, command);
@@ -189,6 +196,13 @@ function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, no
     row.renewal_sequence = 0; row.telemetry_sequence = 0;
     row.presenter_label = details?.label ?? null; row.presenter_show_title = details?.showTitle ?? null;
     row.presenter_agent = details?.agent ?? null; row.presenter_claimed_at_ms = details ? now : null;
+    row.presenter_resumed_at_ms = null;
+    // Only a pause caused by a lapsed lease resumes by itself, and never in an ended show.
+    if (row.lapse_paused && row.status === 'paused' && row.segment_index !== null && row.manifest && sessionStatus !== 'ended') {
+      row.status = 'playing'; row.anchor_time_ms = now + PLAYBACK_SCHEDULE_LEAD_MS;
+      row.presenter_resumed_at_ms = now;
+    }
+    row.lapse_paused = false;
     changed(row);
     return row.presenter_lease_id;
   }
@@ -200,6 +214,7 @@ function presenter(row: PlaybackRow, actor: Actor, command: PresenterCommand, no
     changed(row, false);
   } else {
     clearPresenter(row);
+    row.lapse_paused = false;
     if (row.status === 'playing') pause(row);
     changed(row);
   }
@@ -228,7 +243,7 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
       await authorize(client, sessionId, initialActor);
       await client.query('INSERT INTO session_playback(session_id) VALUES($1) ON CONFLICT(session_id) DO NOTHING', [sessionId]);
       const row: PlaybackRow = (await client.query('SELECT * FROM session_playback WHERE session_id=$1 FOR UPDATE', [sessionId])).rows[0];
-      for (const key of ['revision', 'sample_revision', 'anchor_time_ms', 'presenter_expires_at_ms', 'presenter_claimed_at_ms', 'renewal_sequence', 'telemetry_sequence'] as const) if (row[key] !== null) row[key] = Number(row[key]);
+      for (const key of ['revision', 'sample_revision', 'anchor_time_ms', 'presenter_expires_at_ms', 'presenter_claimed_at_ms', 'presenter_resumed_at_ms', 'renewal_sequence', 'telemetry_sequence'] as const) if (row[key] !== null) row[key] = Number(row[key]);
       // Receipt keys are global to the actor, including requests for different sessions.
       if (command) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([initialActor.actor_id, command.commandId])]);
       const actor = await authenticate(request, client);
@@ -237,7 +252,7 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
       const priorSample = row.sample_revision;
       if (row.presenter_expires_at_ms !== null && row.presenter_expires_at_ms <= now) {
         clearPresenter(row);
-        if (row.status === 'playing') pause(row);
+        if (row.status === 'playing') { pause(row); row.lapse_paused = true; }
         changed(row);
         await save(client, row);
       }
@@ -267,7 +282,7 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
               if ((await client.query('SELECT 1 FROM playback_stopped_clients WHERE session_id=$1 AND client_id=$2', [sessionId, presenterCommand.clientId])).rowCount) conflict('This page was stopped from the director page. Reload it to play the show audio here again.');
               details = await presenterDetails(client, request, actor, session.title);
             }
-            leaseId = presenter(row, actor, presenterCommand, now, details);
+            leaseId = presenter(row, actor, presenterCommand, now, session.status, details);
           } else report(row, actor, command as PlaybackTelemetry, now);
           response = { snapshot: snapshot(row, now), ...(leaseId ? { leaseId } : {}) };
         }

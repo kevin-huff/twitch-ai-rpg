@@ -232,10 +232,15 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
     })),
     characters: context.state.characters.map((character) => ({
       id: character.id, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance,
+      // The card lists and the look note are sent only when they hold something; each is capped by the character card itself (12 worn, 300 characters of note, 8 promises, 8 feelings).
+      ...(character.wearing?.length ? { wearing: character.wearing } : {}),
+      ...(character.looksChanged ? { looksChanged: character.looksChanged } : {}),
       traits: character.traits, strain: character.strain,
       ...(actors.has(character.id) ? { specialty: character.specialty } : {}),
       // The planner writes item changes, so it needs every character's exact entries; the narrator only needs the actors'.
       ...(task === 'plan' || actors.has(character.id) ? { possessions: character.possessions } : {}),
+      ...(character.owes?.length ? { owes: character.owes } : {}),
+      ...(character.feelings?.length ? { feelings: character.feelings } : {}),
     })),
     npcs: npcs.map((npc) => ({
       id: npc.id, displayName: npc.displayName, role: npc.role, appearance: npc.appearance,
@@ -449,6 +454,7 @@ export class ClewdrAiProvider implements AiProvider {
       'Never write any name.',
       "Refer to a cast member who has an imageNumber as 'the person from image N' plus a few words of their appearance, and to everyone else by appearance.",
       ...(request.cast.some((member) => member.lookEdited) ? ['A cast member marked lookEdited has changed how they look since their reference image was made: describe what they wear and carry from their appearance words, never from the reference image.'] : []),
+      ...(request.cast.some((member) => member.wearing?.length || member.looksChanged) ? ['A cast member\'s wearing list and looksChanged note win over their appearance words and over what the reference image shows them wearing: describe what they wear and how they look from wearing and looksChanged, even for a cast member who is not marked lookEdited.'] : []),
       'Include every cast member, keeping each one short when the cast is large.',
       'No visible lettering, signs or text.',
       'Everyone fully clothed.',
@@ -543,6 +549,7 @@ export class ClewdrAiProvider implements AiProvider {
       'Add no new decisions, actions or promises that the idea does not imply. Write no lines for anyone else. Settle no outcome: do not say whether anything works, succeeds or fails.',
       'Respect the content boundaries: avoid everything they rule out.',
       'Never reveal the character\'s secret unless the idea itself does.',
+      ...(request.character.wearing.length ? ['The character\'s wearing list says what they have on now, and wins over their appearance where the two disagree.'] : []),
       'Use only the facts supplied here. Do not invent hidden information about other characters.',
       'You may add a few Eleven v4 audio tags in square brackets, at most one per clause, for emotions, delivery, pauses and reactions, such as [warmly], [whispers], [pause] or [sighs]. No sound effects and no accent tags. Never use parentheses, braces or angle brackets for tags.',
       'Return only one JSON object containing a text string. No Markdown fences, commentary, tool calls, commands, or private reasoning.',
@@ -631,8 +638,10 @@ export class ClewdrAiProvider implements AiProvider {
       task === 'render' && !selected.submissions.length ? `This beat has no player lines: it narrates the scene so the players know where they are. From ${context.place ? 'scene.place, ' : ''}scene.title and scene.description, the scenario premise, genre and tone, the player characters and any participating NPCs, write three to six narration segments, about 120 to 220 words in all: where the characters are, what they see, hear and feel, who else is here, and what is happening right now. Introduce each participating NPC by appearance; one of them may speak one short line. Never decide what a player character does, says, thinks or feels. End on a moment that invites the players to act. Leave continuity empty.` : '',
       'For rendering, write concise third-person narration and actual attributed NPC words. Answer the question or make refusal explicit, then leave an opening for a player response.',
       context.place ? 'scene.place names where the party is now; when scene.description disagrees with it, scene.place wins.' : '',
+      'Each character\'s wearing list and looksChanged note say how they look now and win over appearance where they disagree. owes lists promises and debts the character owes or is owed, and feelings lists how people feel about them; keep the story consistent with both.',
       `Honor fixed results and declared outcomes. Costly success achieves its goal.${task === 'render' ? ' Do not add effects, dice, inventory, facts, or consequences beyond approved results.' : ''}`,
-      task === 'plan' ? 'When an action gives away, throws, loses, breaks, uses up, picks up or takes off an item, the matching outcome branch carries inventory_remove or inventory_add with the item text copied exactly from that character\'s possessions. To change part of an entry, remove the whole entry and add the rewritten one. Only one contract per round may change a given item.' : '',
+      task === 'plan' ? 'When an action gives away, throws, loses, breaks, uses up or picks up an item, the matching outcome branch carries inventory_remove or inventory_add with the item text copied exactly from that character\'s possessions. To change part of an entry, remove the whole entry and add the rewritten one. Only one contract per round may change a given item.' : '',
+      task === 'plan' ? 'When an outcome puts clothing on or takes it off, makes or settles a promise or debt, or changes how someone feels about a character, its branch carries card_add or card_remove with list "wearing", "owes" or "feelings" and the entry text. Putting on a carried thing is inventory_remove plus card_add with list "wearing" in the same branch; taking something off is card_remove with list "wearing", plus inventory_add when the character keeps it. Copy an entry exactly from the character\'s list to remove it. To change one, remove it and add the rewritten one. Only one contract per round may change a given entry. For a change of look the lists do not cover, use looks_set with the whole new note as text (empty text clears it); only one contract per round per character may set it.' : '',
       'Continuity updates must cite supplied submission IDs. Heard assertions are claims or beliefs, never newly proven facts. Only npc_knowledge continuity is supported. Do not propose world_fact updates; the server applies approved mechanical facts itself.',
       'For npc_knowledge, use category "fact" only when statement exactly matches a supplied facts[].text or an approved public fact_add text in fixedResults.effects. All other new statements, including questions or requests heard in this beat, must use category "claim" or "belief".',
       ...directionBlock(context),

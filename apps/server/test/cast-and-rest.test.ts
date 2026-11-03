@@ -14,7 +14,7 @@ const messages = {
   castLobby: 'Start the show before changing who is here.',
   restLobby: 'Start the show before anyone rests.',
   rolled: 'Publish or abandon this round first.',
-  running: 'The AI is planning or writing right now. Wait for it to finish, then try again.',
+  superseded: 'The generation was superseded. Its result was discarded.',
   stale: 'The show changed. Look again, then save.',
   unknownNpc: 'A chosen character is not in this show.',
   noChange: 'Nobody changed. Tick or untick someone first.',
@@ -67,6 +67,11 @@ suite('who is here and rest', () => {
   }
   const queued = () => snapshot.submissions.filter((item) => item.status === 'queued' || item.status === 'selected').map((item) => item.id);
   const auditRows = async (commandId: string) => (await pool.query('SELECT kind,data FROM audit_events WHERE command_id=$1', [commandId])).rows;
+  const auditData = async (commandId: string) => (await auditRows(commandId))[0].data;
+  // What a round looks like after a live change sent it back to taking lines.
+  const resetFrom = (before: DirectorSnapshot) => ({ id: before.activeBeat!.id, phase: 'collecting', classification: null, contracts: [], stakesApproved: false, inputSnapshotHash: null, draft: null,
+    approvedContinuity: [], lastError: null, selectedSubmissionIds: before.activeBeat!.selectedSubmissionIds, sourceStateRevision: snapshot.session.stateRevision,
+    revision: before.activeBeat!.revision + 1, generation: before.activeBeat!.generation + 1 });
   const auditCount = async (kind: string) => Number((await pool.query('SELECT count(*) FROM audit_events WHERE session_id=$1 AND kind=$2', [sessionId, kind])).rows[0].count);
 
   beforeAll(async () => {
@@ -134,13 +139,15 @@ suite('who is here and rest', () => {
     expect(npc(here).status).toBe('offstage');
   });
 
-  it('works while paused and while a round is collecting, and keeps the pause', async () => {
+  it('works while paused and while a round is collecting, sends the round back to taking lines, and keeps the pause', async () => {
     await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
     await line('say');
     const collecting = snapshot;
-    await ok(cast([away]));
-    expect(snapshot.activeBeat).toEqual(collecting.activeBeat);
+    const response = await ok(cast([away]));
+    expect(snapshot.activeBeat).toMatchObject(resetFrom(collecting));
     expect(snapshot.submissions).toEqual(collecting.submissions);
+    expect(snapshot.session.inputEpoch).toBe(collecting.session.inputEpoch);
+    expect(await auditData(response.json().commandId)).toEqual({ before: [here], after: [away], resetBeatId: collecting.activeBeat!.id, cancelledJobIds: [] });
     await ok({ type: 'set_status', status: 'paused', expectedStateRevision: snapshot.session.stateRevision });
     await ok(cast([here]));
     expect(snapshot.session.status).toBe('paused');
@@ -161,42 +168,86 @@ suite('who is here and rest', () => {
     await refused(cast([away]), 409, messages.castLobby);
   });
 
-  it('refuses once the dice are rolled', async () => {
+  it('throws away planned and approved stakes when a round in stakes review changes, and refuses once the dice are rolled', async () => {
     await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
     await line('act');
-    await ok(beatCommand('plan_beat', { submissionIds: queued() }));
-    await refused(cast([away]), 409, messages.rolled);
+    const lines = queued();
+    await ok(beatCommand('plan_beat', { submissionIds: lines }));
+    let before = snapshot;
+    expect(before.activeBeat!.phase).toBe('stakes_review');
+    expect(before.activeBeat!.contracts.length).toBeGreaterThan(0);
+    await ok(cast([away]));
+    expect(snapshot.activeBeat).toMatchObject(resetFrom(before));
+    expect(queued()).toEqual(lines);
+    await ok(beatCommand('plan_beat', { submissionIds: lines }));
+    await ok(beatCommand('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat!.contracts }));
+    before = snapshot;
+    expect(before.activeBeat!.stakesApproved).toBe(true);
+    await ok(rest());
+    expect(snapshot.activeBeat).toMatchObject(resetFrom(before));
+    expect(strain()).toBe(0);
+    expect(queued()).toEqual(lines);
+    expect(snapshot.session.inputEpoch).toBe(before.session.inputEpoch);
+    await mutate((state) => { state.characters[0]!.strain = 3; });
+    await ok(beatCommand('plan_beat', { submissionIds: lines }));
     await ok(beatCommand('approve_stakes', { classification: 'action', contracts: snapshot.activeBeat!.contracts }));
     await ok(beatCommand('lock_beat'));
-    await refused(cast([away]), 409, messages.rolled);
+    const locked = snapshot;
+    await refused(cast([here]), 409, messages.rolled);
     await refused(rest(), 409, messages.rolled);
     await ok(beatCommand('render_beat'));
-    await refused(cast([away]), 409, messages.rolled);
-    expect(hereNow()).toEqual([here]);
+    await refused(cast([here]), 409, messages.rolled);
+    await refused(rest(), 409, messages.rolled);
+    await refresh();
+    expect(hereNow()).toEqual([away]);
+    expect(strain()).toBe(locked.characters.find((item) => item.id === characterId())!.strain);
   });
 
-  it('refuses while the AI is planning, and works once it finishes', async () => {
-    await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
-    await line('say');
-    let finish!: (result: PlanResult) => void;
-    let started: ProviderContext | undefined;
-    plan = (context) => { started = context; return new Promise<PlanResult>((resolve) => { finish = resolve; }); };
-    const pending = command(beatCommand('plan_beat', { submissionIds: queued() }));
-    const deadline = Date.now() + 3000;
-    while (!started && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(started).toBeDefined();
-    const response = await refused(cast([away]), 409, messages.running);
-    expect(response.json().recoverable).toBe(true);
-    await refused(rest(), 409, messages.running);
-    finish(await fake.plan(started!));
-    expect((await pending).statusCode).toBe(200);
-    await refresh();
-    expect(hereNow()).toEqual([here]);
-    expect(strain()).toBe(3);
-    await refused(cast([away]), 409, messages.rolled);
-    await ok(beatCommand('abort_beat', { reason: 'Start this round over.' }));
-    await ok(cast([away]));
-    expect(hereNow()).toEqual([away]);
+  it.each(['set_cast', 'rest'] as const)('answers a plan the AI is still making with superseded within 2 seconds of a %s save, while the provider call is still pending', async (kind) => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    const settle: { current?: { resolve: (result: PlanResult) => void; reject: (error: Error) => void } } = {};
+    try {
+      await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
+      await line('say');
+      const lines = queued();
+      let started: ProviderContext | undefined;
+      plan = (context) => { started = context; return new Promise<PlanResult>((resolve, reject) => { settle.current = { resolve, reject }; }); };
+      let answeredAt = 0;
+      const pending = command(beatCommand('plan_beat', { submissionIds: lines })).then((response) => { answeredAt = Date.now(); return response; });
+      const deadline = Date.now() + 3000;
+      while (!started && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(started).toBeDefined();
+      await refresh();
+      const planning = snapshot;
+      const job = planning.jobs.at(-1)!;
+      expect(job.status).toBe('running');
+      const savedAt = Date.now();
+      const response = await ok(kind === 'set_cast' ? cast([away]) : rest());
+      const planned = await pending;
+      expect(answeredAt - savedAt).toBeLessThan(2000);
+      expect(planned.statusCode, planned.body).toBe(409);
+      expect(planned.json()).toMatchObject({ code: 'superseded', message: messages.superseded });
+      await refresh();
+      expect(snapshot.activeBeat).toMatchObject(resetFrom(planning));
+      expect(snapshot.jobs.at(-1)).toMatchObject({ id: job.id, status: 'cancelled' });
+      expect(queued()).toEqual(lines);
+      expect(snapshot.session.inputEpoch).toBe(planning.session.inputEpoch);
+      expect(await auditData(response.json().commandId)).toMatchObject({ resetBeatId: planning.activeBeat!.id, cancelledJobIds: [job.id] });
+      const attempt = (await pool.query('SELECT r.status FROM usage_attempts a JOIN usage_attempt_results r ON r.attempt_id=a.id WHERE a.operation_id=$1', [job.id])).rows;
+      expect(attempt).toEqual([{ status: 'interrupted' }]);
+      settle.current!.reject(new Error('The provider answered after the round changed.'));
+      delete settle.current;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+      plan = (value) => fake.plan(value);
+      await ok(beatCommand('plan_beat', { submissionIds: lines }));
+      expect(snapshot.activeBeat!.phase).toBe('stakes_review');
+    } finally {
+      settle.current?.resolve({ classification: 'ordinary', contracts: [], directorSummary: '' });
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('refuses players and stream pages for both commands and writes no audit row', async () => {
@@ -240,12 +291,12 @@ suite('who is here and rest', () => {
     });
   });
 
-  it('works while paused and while a round is collecting', async () => {
+  it('works while paused and while a round is collecting, and sends the round back to taking lines', async () => {
     await ok({ type: 'open_beat', kind: 'action', expectedInputEpoch: snapshot.session.inputEpoch });
     await line('act');
     const collecting = snapshot;
     await ok(rest());
-    expect(snapshot.activeBeat).toEqual(collecting.activeBeat);
+    expect(snapshot.activeBeat).toMatchObject(resetFrom(collecting));
     expect(snapshot.submissions).toEqual(collecting.submissions);
     expect(snapshot.session.inputEpoch).toBe(collecting.session.inputEpoch);
     await mutate((state) => { state.characters[0]!.strain = 2; });

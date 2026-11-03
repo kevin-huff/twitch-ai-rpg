@@ -5,7 +5,7 @@ import {
   type ContinuityUpdate, type CorrectionChange, type Guidance, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission, type VoiceSource,
 } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
-import { MAX_ROLLS_PER_ROUND, applyResolution, resolveContracts, tooManyRollsMessage, validateContracts } from '@rpg/rules';
+import { MAX_ROLLS_PER_ROUND, applyResolution, isCardMismatch, resolveContracts, tooManyRollsMessage, validateContracts } from '@rpg/rules';
 import { transaction } from './database';
 import { attachPreparedAudio } from './draft-audio';
 import { makeScript } from './script';
@@ -16,14 +16,18 @@ import { RELEASED } from './picture-views';
 import { AppError, authorize, conflict, corrections, currentBeat, history, project, readGuidance, readState, saveBeat, saveGuidance, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
 const staleStakes = "These stakes no longer match what the characters carry, for example after Edit look and items. Press Plan again for new stakes, or fix the items under Edit typed effects and approve again.";
-const itemErrors = ['Cannot duplicate an existing inventory item.', 'Inventory capacity exceeded.'];
 function itemErrorOrConflict<T>(run: () => T): T {
   try { return run(); } catch (error) {
     if (error instanceof AppError || !(error instanceof Error)) throw error;
-    if (error.message.startsWith('Cannot consume an item the character does not possess') || itemErrors.includes(error.message)) return conflict(staleStakes);
+    if (isCardMismatch(error.message)) return conflict(staleStakes);
     throw error;
   }
 }
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
+function setCardList(character: Character, list: 'wearing' | 'owes' | 'feelings', entries: readonly string[]) {
+  if (entries.length) character[list] = [...entries]; else delete character[list];
+}
+const cardSnapshot = (character: Character) => ({ possessions: [...character.possessions], wearing: [...(character.wearing ?? [])], owes: [...(character.owes ?? [])], feelings: [...(character.feelings ?? [])], looksChanged: character.looksChanged ?? '' });
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
 const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character', 'set_cast', 'rest']);
 function dropBlankCritical<T extends { outcomes: { critical?: { publicText: string; effects: readonly unknown[] } } }>(contract: T): T {
@@ -85,6 +89,29 @@ async function keepWaitingLines(client: PoolClient, all: Submission[]) {
   }
   return kept;
 }
+// A correction, Who is here or Rest during an open round sends it back to taking lines, throws away its plan and stakes, and cancels its AI work. Lines and ticks stay.
+async function resetOpenRound(client: PoolClient, beat: Beat, stateRevision: number) {
+  beat.phase = 'collecting'; beat.classification = null; beat.contracts = []; beat.stakesApproved = false; beat.inputSnapshotHash = null;
+  beat.draft = null; beat.approvedContinuity = []; beat.lastError = null; beat.sourceStateRevision = stateRevision; beat.generation++; beat.revision++;
+  await saveBeat(client, beat);
+  const cancelled = await client.query<{ id: string }>("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND status IN ('queued','running') RETURNING id", [beat.id]);
+  return { resetBeatId: beat.id, cancelledJobIds: cancelled.rows.map((row) => row.id) };
+}
+const isOpenRound = (beat: Beat | null): beat is Beat => Boolean(beat && ['collecting', 'stakes_review'].includes(beat.phase));
+const isRolled = (beat: Beat | null) => Boolean(beat && ['locked', 'draft_review'].includes(beat.phase));
+// Waiting AI calls stop as soon as a live change cancels their job. A cancel can land before its call has registered, so those ids are held briefly.
+const cancelHooks = new Map<string, () => void>();
+const cancelledEarly = new Set<string>();
+function releaseCancelled(jobIds: readonly string[]) {
+  for (const id of jobIds) {
+    const hook = cancelHooks.get(id);
+    if (hook) { hook(); continue; }
+    cancelledEarly.add(id);
+    setTimeout(() => cancelledEarly.delete(id), 60_000).unref?.();
+  }
+}
+class GenerationCancelled extends Error {}
+
 async function carryUnconsumed(client: PoolClient, beat: Beat, all: Submission[]) {
   const carried = [];
   for (const submission of all) {
@@ -227,12 +254,13 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     const all = await submissions(client, sessionId);
     let eventData: Record<string, unknown> = {};
     let createdNpcId: string | undefined;
+    let cancelledJobIds: string[] = [];
     if (state.session.status === 'ended') conflict('This session has ended.');
     if (state.session.status === 'paused' && command.type !== 'set_status' && command.type !== 'save_submission' && command.type !== 'set_ready' && command.type !== 'set_voice' && !liveCommands.has(command.type)) conflict('Resume the session before advancing the story.');
 
     if (command.type === 'record_correction') {
       if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict('Start the session before recording corrections.');
-      if (beat) conflict('Finish or abort the active beat before correcting the published story.');
+      if (isRolled(beat)) conflict('The dice for this round are already rolled. Publish or abandon the round, then record the correction.');
       if (command.expectedStateRevision !== state.session.stateRevision) conflict('The session changed. Review the current state before correcting it.');
       const published = (await client.query('SELECT beat_number FROM published_beats WHERE id=$1 AND session_id=$2', [command.publishedBeatId, sessionId])).rows[0];
       if (!published) throw new AppError(404, 'not_found', 'That published beat was not found in this session.');
@@ -262,6 +290,11 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         stateRevision: state.session.stateRevision, recordedAt: new Date().toISOString(), publicText: command.publicText };
       eventData = { public: publicCorrection, reason: command.reason, changes: command.changes, before,
         after: { facts: state.facts, characters: state.characters, tracks: state.tracks, npcs: state.npcs }, keptSubmissionIds };
+      if (isOpenRound(beat)) {
+        const reset = await resetOpenRound(client, beat, state.session.stateRevision);
+        cancelledJobIds = reset.cancelledJobIds;
+        eventData = { ...eventData, ...reset };
+      }
       await recordEvent(client, sessionId, actor, command.commandId, 'correction.recorded', state.session.stateRevision, eventData, eventId);
       await saveState(client, state);
     } else if (command.type === 'change_scene' || command.type === 'save_npc' || command.type === 'reveal_npc') {
@@ -454,10 +487,14 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       const character = state.characters.find((item) => item.id === command.characterId);
       if (!character) throw new AppError(404, 'not_found', 'That character is not in this show.');
       if (character.cardRevision !== command.expectedCharacterRevision) conflict("This character's look or items changed since you opened the form, for example in a published round. Press Cancel, then Edit look and items again.");
-      const fields = () => ({ appearance: character.appearance, possessions: [...character.possessions], lookEditedAt: character.lookEditedAt });
+      const fields = () => ({ appearance: character.appearance, possessions: [...character.possessions], wearing: [...(character.wearing ?? [])], owes: [...(character.owes ?? [])], feelings: [...(character.feelings ?? [])], looksChanged: character.looksChanged ?? '', lookEditedAt: character.lookEditedAt });
       const before = fields();
-      const lookChanged = command.appearance !== character.appearance;
+      const lookChanged = command.appearance !== character.appearance || (command.wearing !== undefined && !sameList(command.wearing, character.wearing ?? [])) || (command.looksChanged !== undefined && command.looksChanged !== (character.looksChanged ?? ''));
       character.appearance = command.appearance; character.possessions = [...command.possessions];
+      if (command.wearing !== undefined) setCardList(character, 'wearing', command.wearing);
+      if (command.owes !== undefined) setCardList(character, 'owes', command.owes);
+      if (command.feelings !== undefined) setCardList(character, 'feelings', command.feelings);
+      if (command.looksChanged !== undefined) { if (command.looksChanged) character.looksChanged = command.looksChanged; else delete character.looksChanged; }
       if (lookChanged) character.lookEditedAt = new Date().toISOString();
       character.cardRevision++;
       await saveState(client, state);
@@ -465,8 +502,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     } else if (command.type === 'set_cast' || command.type === 'rest') {
       const isCast = command.type === 'set_cast';
       if (!['live', 'paused'].includes(state.session.status) || (state.setup && !state.setup.started)) conflict(isCast ? 'Start the show before changing who is here.' : 'Start the show before anyone rests.');
-      if (beat && beat.phase !== 'collecting') conflict('Publish or abandon this round first.');
-      if ((await client.query("SELECT 1 FROM generation_jobs WHERE session_id=$1 AND status IN ('queued','running') LIMIT 1", [sessionId])).rowCount) conflict('The AI is planning or writing right now. Wait for it to finish, then try again.');
+      if (isRolled(beat)) conflict('Publish or abandon this round first.');
       if (command.expectedStateRevision !== state.session.stateRevision) conflict('The show changed. Look again, then save.');
       if (command.type === 'set_cast') {
         if (command.presentNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id))) conflict('A chosen character is not in this show.');
@@ -489,6 +525,11 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         state.session.stateRevision++;
         await saveState(client, state);
         eventData = { before, after: strained.map((character) => ({ characterId: character.id, strain: character.strain })) };
+      }
+      if (isOpenRound(beat)) {
+        const reset = await resetOpenRound(client, beat, state.session.stateRevision);
+        cancelledJobIds = reset.cancelledJobIds;
+        eventData = { ...eventData, ...reset };
       }
     } else if (command.type === 'open_beat') {
       if (state.setup && !state.setup.started) conflict('Approve the cast and explicitly start the session first.');
@@ -638,11 +679,14 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (audio) for (const segment of segments) segment.ttsEnabled = isSpokenSegmentKind(segment.kind);
         const carriedSubmissions = await carryUnconsumed(client, beat, all);
         const event = await recordEvent(client, sessionId, actor, command.commandId, 'beat.published', state.session.stateRevision + 1, { beatId: beat.id, draftRevision: beat.draftRevision, carriedSubmissions });
-        const itemsBefore = new Map(state.characters.map((item) => [item.id, [...item.possessions]]));
+        const cardsBefore = new Map(state.characters.map((item) => [item.id, cardSnapshot(item)]));
         state = applyResolution(state, beat.resolution!, event.eventId);
         for (const item of state.characters) {
-          const was = itemsBefore.get(item.id);
-          if (was && (was.length !== item.possessions.length || was.some((value, index) => value !== item.possessions[index]))) item.cardRevision++;
+          const was = cardsBefore.get(item.id);
+          if (!was) continue;
+          const now = cardSnapshot(item);
+          if (!sameList(was.possessions, now.possessions) || !sameList(was.wearing, now.wearing) || !sameList(was.owes, now.owes) || !sameList(was.feelings, now.feelings) || was.looksChanged !== now.looksChanged) item.cardRevision++;
+          if (!sameList(was.wearing, now.wearing) || was.looksChanged !== now.looksChanged) item.lookEditedAt = new Date().toISOString();
         }
         state.session.stateRevision++; state.session.beatNumber++; state.session.inputEpoch++;
         if (beat.kind === 'action') state.session.actionRoundNumber++;
@@ -688,9 +732,10 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (beat && command.type === 'abort_beat') await deps.pictures.retireHeldPictures?.(client, sessionId, beat.id);
     }
     if (command.type !== 'publish_beat' && command.type !== 'reveal_npc' && command.type !== 'record_correction') await recordEvent(client, sessionId, actor, command.commandId, command.type, state.session.stateRevision, eventData);
-    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureIds };
+    return { response: await finish(client, sessionId, actor, command, requestHash, deps.picturesEnabled, deps.defaultPictureModel, deps.gallery), pictureIds, cancelledJobIds };
   });
   if (prepared.response) {
+    if (prepared.cancelledJobIds?.length) releaseCancelled(prepared.cancelledJobIds);
     if (prepared.pictureIds?.length) deps.pictures?.run(prepared.pictureIds);
     return prepared.response;
   }
@@ -698,26 +743,38 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   let output: unknown;
   let failure: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  let stop!: () => void;
+  const stopped = new Promise<never>((_, reject) => { stop = () => { cancelled = true; reject(new GenerationCancelled()); }; });
+  stopped.catch(() => undefined);
+  cancelHooks.set(generation.jobId, stop);
   const attemptId = await startUsageAttempt(deps.pool, { sessionId, beatId: generation.context.beat.id, operationId: generation.jobId, kind: generation.task, timeoutMs: deps.providerTimeoutMs ?? 30_000 });
+  if (cancelledEarly.delete(generation.jobId)) stop();
   const started = Date.now();
   try {
+    if (cancelled) throw new GenerationCancelled();
+    const call = Promise.resolve(generation.task === 'plan' ? deps.provider.plan(generation.context) : deps.provider.render(generation.context));
+    call.catch(() => undefined);
     output = await Promise.race([
-      generation.task === 'plan' ? deps.provider.plan(generation.context) : deps.provider.render(generation.context),
+      call,
       new Promise((_, reject) => { timer = setTimeout(() => reject(new RequestBudgetError()), deps.providerTimeoutMs ?? 30_000); }),
+      stopped,
     ]);
   } catch (error) {
-    failure = failureSentence(error, Date.now() - started);
-    console.warn(`The ${generation.task} request for session ${sessionId} failed: ${error instanceof Error ? error.message : 'unknown error'}${error instanceof ProviderError && error.detail ? ` ${error.detail}` : ''}`);
+    if (!cancelled) {
+      failure = failureSentence(error, Date.now() - started);
+      console.warn(`The ${generation.task} request for session ${sessionId} failed: ${error instanceof Error ? error.message : 'unknown error'}${error instanceof ProviderError && error.detail ? ` ${error.detail}` : ''}`);
+    }
   }
-  finally { clearTimeout(timer); }
-  await finishUsageAttempt(deps.pool, { attemptId, status: failure ? 'failed' : 'succeeded' });
+  finally { clearTimeout(timer); cancelHooks.delete(generation.jobId); }
+  await finishUsageAttempt(deps.pool, { attemptId, status: cancelled ? 'interrupted' : failure ? 'failed' : 'succeeded' });
   const completed = await transaction(deps.pool, async (client) => {
     await client.query('SELECT id FROM sessions WHERE id=$1 FOR UPDATE', [sessionId]);
     const duplicate = await receipt(client, actor, command.commandId, requestHash); if (duplicate) return { response: duplicate };
     const beat = await currentBeat(client, sessionId);
     const job = (await client.query('SELECT * FROM generation_jobs WHERE id=$1 FOR UPDATE', [generation.jobId])).rows[0];
     const state = await readState(client, sessionId);
-    if (!beat || beat.id !== generation.context.beat.id || beat.generation !== generation.generation || beat.revision !== generation.context.beat.revision || beat.phase !== generation.context.beat.phase || state.session.stateRevision !== generation.context.state.session.stateRevision || job?.status !== 'running' || job.snapshot_hash !== generation.snapshotHash) {
+    if (cancelled || !beat || beat.id !== generation.context.beat.id || beat.generation !== generation.generation || beat.revision !== generation.context.beat.revision || beat.phase !== generation.context.beat.phase || state.session.stateRevision !== generation.context.state.session.stateRevision || job?.status !== 'running' || job.snapshot_hash !== generation.snapshotHash) {
       await client.query('UPDATE generation_jobs SET status=\'cancelled\',finished_at=now() WHERE id=$1', [generation.jobId]);
       return { superseded: true as const };
     }

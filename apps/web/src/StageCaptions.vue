@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { isPlayerSegmentKind, type SessionSnapshot } from '@rpg/contracts';
+import type { SessionSnapshot } from '@rpg/contracts';
 import { slateKind, speakerName } from './stage-format';
 
 const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null; characterId?: string | null }>();

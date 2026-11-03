@@ -319,14 +319,16 @@ describe('coordinated reviewed audio panel', () => {
 
   it('surfaces blocked playback and allows an explicit Listen retry without a substitute voice', async () => {
     active();
-    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); if (instances.length === 1) this.play.mockRejectedValue(new Error('NotAllowedError')); } });
+    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); this.play.mockRejectedValueOnce(new Error('NotAllowedError')); } });
     const wrapper = panel({ director: false, beatId: 'beat-1' }); await flushPromises();
     await click(wrapper, 'listen-audio');
     expect(wrapper.get('[role="alert"]').text()).toContain('Playback could not start');
     expect(instances).toHaveLength(1);
     await click(wrapper, 'listen-audio');
-    expect(instances).toHaveLength(2);
-    expect(instances[1].play).toHaveBeenCalledOnce();
+    // The page keeps its one audio element and plays the retry on it.
+    expect(instances).toHaveLength(1);
+    expect(instances[0].play).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it('cleans local audio and ownership when the mounted role or session changes', async () => {

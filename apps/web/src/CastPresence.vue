@@ -6,7 +6,7 @@ import type { Command, DirectorSnapshot } from '@rpg/contracts';
 const helpPrefix = useId();
 const helpId = (npcId: string) => `${helpPrefix}-help-${encodeURIComponent(npcId)}`;
 
-const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean; aiBusy: boolean }>();
+const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
 const emit = defineEmits<{ command: [command: Command, onSaved: () => void] }>();
 
 const open = ref(false);
@@ -26,14 +26,15 @@ const gate = computed(() => {
   if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the show from Cast & lobby first.';
   if (props.snapshot.session.status === 'ended') return 'The show has ended.';
   if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Open a conversation or an action round first.';
-  if (props.snapshot.activeBeat && props.snapshot.activeBeat.phase !== 'collecting') return 'Publish or abandon this round first.';
+  if (props.snapshot.activeBeat && ['locked', 'draft_review'].includes(props.snapshot.activeBeat.phase)) return 'Publish or abandon this round first.';
   return '';
 });
-const locked = computed(() => props.busy || props.aiBusy || Boolean(gate.value));
+const roundOpen = computed(() => ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat?.phase ?? ''));
+const locked = computed(() => props.busy || Boolean(gate.value));
 const unchanged = computed(() => sameSet(ticked.value, hereIds.value));
 const edited = computed(() => !sameSet(ticked.value, baseline.value));
 const stale = computed(() => open.value && revision.value !== props.snapshot.session.stateRevision);
-const saveLabel = computed(() => (saving.value ? 'Saving…' : props.aiBusy ? 'Waiting for the AI to finish' : 'Save who is here'));
+const saveLabel = computed(() => (saving.value ? 'Saving…' : 'Save who is here'));
 const canSave = computed(() => !locked.value && !stale.value && !unchanged.value);
 
 function load() {
@@ -58,7 +59,12 @@ function save() {
   if (!parsed.success) { error.value = parsed.error.issues[0]?.message ?? 'Check who is here and try again.'; return; }
   error.value = '';
   saving.value = true;
-  emit('command', parsed.data, () => { saving.value = false; open.value = false; savedNotice.value = 'Saved who is here.'; });
+  const wasOpen = roundOpen.value;
+  emit('command', parsed.data, () => {
+    saving.value = false;
+    open.value = false;
+    savedNotice.value = wasOpen ? 'Saved who is here. The round went back to taking lines. Press Plan to plan it again.' : 'Saved who is here.';
+  });
 }
 </script>
 
@@ -68,6 +74,7 @@ function save() {
     <p class="muted">Move characters on or off stage without changing the scene. Lines players sent stay where they are.</p>
     <p v-if="savedNotice" class="notice" role="status">{{ savedNotice }}</p>
     <p v-if="gate" class="notice">{{ gate }}</p>
+    <p v-if="roundOpen" class="notice" data-testid="cast-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
     <p class="muted" data-testid="cast-here-now">{{ hereNames.length ? `Here now: ${hereNames.join(', ')}` : 'Nobody else is here.' }}</p>
     <div class="actions"><button type="button" class="secondary" data-testid="begin-cast" :disabled="locked" :aria-pressed="open" @click="begin">Change who is here</button></div>
     <form v-if="open" @submit.prevent="save">

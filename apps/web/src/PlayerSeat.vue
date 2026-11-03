@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
-import type { SessionSnapshot, Submission } from '@rpg/contracts';
+import { STRAIN_MAX, type SessionSnapshot, type Submission } from '@rpg/contracts';
 import { identityPath } from './identity';
 import { displayedPicture, pictureUrl, portraitAlt, shownScenePicture } from './pictures';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { playerStatus } from './player-status';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
 import LineAssist from './LineAssist.vue';
+import SeatItems from './SeatItems.vue';
 import SeatStory from './SeatStory.vue';
 import SeatVoice from './SeatVoice.vue';
+import StrainMeter from './StrainMeter.vue';
 import SubmissionList from './SubmissionList.vue';
 
 type LineKind = 'say' | 'act' | 'ooc';
@@ -60,9 +62,11 @@ const name = computed(() => player.value?.ownCharacter?.displayName ?? 'your cha
 const card = computed(() => {
   const own = player.value?.ownCharacter;
   if (!own) return [];
+  const list = (entries: string[] | undefined, glue: string) => (entries ?? []).map(entry => entry.trim()).filter(Boolean).join(glue);
   const rows: [string, string | undefined][] = [
-    ['Pronouns', own.pronouns], ['Looks', own.appearance], ['Personality', own.personality], ['Good at', own.specialty],
-    ['Struggles with', own.flaw], ['Carrying', (own.possessions ?? []).map(item => item.trim()).filter(Boolean).join(', ')],
+    ['Pronouns', own.pronouns], ['Looks', own.appearance], ['Changed by the story', own.looksChanged], ['Personality', own.personality], ['Good at', own.specialty],
+    ['Struggles with', own.flaw], ['Carrying', list(own.possessions, ', ')], ['Wearing', list(own.wearing, ', ')],
+    ['Promises and debts', list(own.owes, '; ')], ['How people feel', list(own.feelings, '; ')],
     ['Connection', own.connection], ['Your secret', own.secret],
   ];
   return rows.map(([label, value]) => ({ label, value: (value ?? '').trim() })).filter(row => row.value);
@@ -128,6 +132,18 @@ watch([kind, sayText, actionText, noteText, stageDirection, recipient, draftCont
 watch([() => player.value?.activeBeat?.id, () => player.value?.activeBeat?.kind], () => {
   if (visibleBlank() && !editing.value && kind.value !== 'ooc') kind.value = turnDefault.value;
 }, { immediate: true });
+
+const carrying = computed(() => (player.value?.ownCharacter?.possessions ?? []).map(item => item.trim()).filter(Boolean));
+const wearing = computed(() => (player.value?.ownCharacter?.wearing ?? []).map(item => item.trim()).filter(Boolean));
+const itemsDisabled = computed(() => !player.value?.ownCharacter || !playerReady.value || snapshot.value?.session.status === 'ended' || busy.value || Boolean(editing.value));
+async function prefillAction(text: string) {
+  kind.value = 'act';
+  actionText.value = actionText.value.trim() ? `${actionText.value.replace(/\s+$/, '')}\n${text}` : text;
+  beginInput();
+  await nextTick();
+  const box = formPanel.value?.querySelector<HTMLTextAreaElement>('[data-testid="action-input"]');
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
 
 function beginInput() {
   const lineKind = kind.value;
@@ -337,6 +353,8 @@ async function askPrivately() {
       <section class="character">
         <template v-if="player.ownCharacter">
           <p class="playing">You are playing</p><h2>{{ player.ownCharacter.displayName }}</h2>
+          <StrainMeter class="own-strain" words :value="player.ownCharacter.strain" :max="STRAIN_MAX" />
+          <p v-if="player.ownCharacter.strain >= STRAIN_MAX" class="spent-note" data-testid="seat-spent">Your Do lines will help someone else for now. What you say still rolls.</p>
           <details v-if="card.length || showable(ownPortraitSrc)" class="card"><summary>Who is {{ player.ownCharacter.displayName }}?</summary><img v-if="showable(ownPortraitSrc)" class="own-portrait" :src="ownPortraitSrc!" :alt="portraitAlt(name)" @error="pictureFailed(ownPortraitSrc)"><dl><template v-for="row in card" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl></details>
           <SeatVoice :snapshot="player" :busy="busy" @command="command => work(() => send(command))" />
         </template>
@@ -351,6 +369,7 @@ async function askPrivately() {
             <button type="button" class="secondary" :aria-pressed="kind === 'say'" :disabled="Boolean(editing)" @click="kind = 'say'">Say something</button>
             <button type="button" class="secondary" :aria-pressed="kind === 'act'" :disabled="Boolean(editing)" @click="kind = 'act'">Do something</button>
           </div>
+          <SeatItems :carrying="carrying" :wearing="wearing" :disabled="itemsDisabled" @prefill="prefillAction" />
           <template v-if="kind === 'say'">
             <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist :key="assistKey" :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
             <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
@@ -385,6 +404,8 @@ async function askPrivately() {
 .character .playing { color: var(--dust); margin: 0 0 4px; }
 .character h2 { margin: 0; overflow-wrap: anywhere; }
 .character .notice { margin: 16px 0 0; }
+.own-strain { margin-top: 8px; max-width: 320px; }
+.spent-note { margin: 8px 0 0; color: var(--candle); overflow-wrap: anywhere; }
 .card { margin-top: 8px; }
 .card dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 8px 0 0; }
 .card dt { color: var(--dust); font-size: 20px; line-height: 24px; }

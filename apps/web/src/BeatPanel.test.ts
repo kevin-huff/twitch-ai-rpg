@@ -261,6 +261,16 @@ describe('beat panel action bar', () => {
       wrapper.unmount();
     });
 
+    it('shows a line that is only an audio tag neither under Read aloud first nor in the script', async () => {
+      const laugh = { ...line('say-laugh'), text: '[laughs]' };
+      const wrapper = await mountPanel(snapshot(review({ lockedSubmissions: [laugh, say1], draft: { segments: [piece('Answer.', 'say-laugh'), piece('Closing.')], continuity: [], directorSummary: '' } })));
+      expect(readFirstIds(wrapper).join(' ')).not.toContain('[laughs]');
+      expect(inline(wrapper).map(row => row.text()).join(' ')).not.toContain('[laughs]');
+      expect(wrapper.text()).not.toContain('[laughs]');
+      expect(readFirstIds(wrapper).join(' ')).toContain('Line say-1');
+      wrapper.unmount();
+    });
+
     it('hides Read aloud first when every line sits inside the script', async () => {
       const wrapper = await mountPanel(snapshot(review({ lockedSubmissions: [say1], draft: { segments: [piece('Answer.', 'say-1')], continuity: [], directorSummary: '' } })));
       expect(wrapper.find('[data-testid="player-lines"]').exists()).toBe(false);

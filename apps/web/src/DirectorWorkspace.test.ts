@@ -16,7 +16,7 @@ const stubs = {
   DirectorQueue: stub('DirectorQueue', { props: ['modelValue', 'snapshot'] }),
   GalleryPanel: { name: 'GalleryPanel', props: ['status', 'busy'], emits: ['action'], template: '<div data-testid="gallery-stub" />' },
   Story: stub('Story', { props: ['history', 'characters', 'corrections'] }),
-  LiveControls: stub('LiveControls', { props: ['snapshot', 'busy'] }), CastPresence: stub('CastPresence', { props: ['snapshot', 'busy', 'aiBusy'] }), CorrectionControls: stub('CorrectionControls', { props: ['snapshot', 'busy'] }), RestControls: stub('RestControls', { props: ['snapshot', 'busy', 'aiBusy'] }), BeatSteering: stub('BeatSteering', { props: ['snapshot', 'busy'] }), OperationsPanel: stub('OperationsPanel'),
+  LiveControls: stub('LiveControls', { props: ['snapshot', 'busy'] }), CastPresence: stub('CastPresence', { props: ['snapshot', 'busy'] }), CorrectionControls: stub('CorrectionControls', { props: ['snapshot', 'busy'] }), RestControls: stub('RestControls', { props: ['snapshot', 'busy'] }), BeatSteering: stub('BeatSteering', { props: ['snapshot', 'busy'] }), OperationsPanel: stub('OperationsPanel'),
   ScenePicturePanel: stub('ScenePicturePanel'), PictureShelf: stub('PictureShelf', { props: ['sessionId', 'snapshot', 'busy'] }), NpcPortraitControls: stub('NpcPortraitControls'), PictureAvatar: stub('PictureAvatar'),
 };
 
@@ -764,6 +764,16 @@ describe('tools that keep or untick waiting lines', () => {
     wrapper.unmount();
   });
 
+  it.each([['collecting', ['a', 'b', 'c']], ['stakes_review', ['a', 'b', 'c']], ['locked', ['c']]])('a correction sent while the round is %s leaves the ticks as %j', async (phase, expected) => {
+    const beat = { id: 'beat-2', phase, revision: 1 };
+    const wrapper = await mountWorkspace(snapshot('live', [submission('a'), submission('b')], { activeBeat: beat }));
+    answerWith(snapshot('live', [submission('a'), submission('b'), submission('c')], { activeBeat: beat }));
+    wrapper.getComponent({ name: 'CorrectionControls' }).vm.$emit('command', live('record_correction'), saved);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual(expected);
+    wrapper.unmount();
+  });
+
   it('brings back lines from an abandoned round unticked', async () => {
     const wrapper = await mountWorkspace(snapshot('live', [submission('a', 'say', 'selected')]));
     expect(selectedIds(wrapper)).toEqual(['a']);
@@ -776,33 +786,30 @@ describe('tools that keep or untick waiting lines', () => {
 });
 
 describe('who is here, rest and the cast panel', () => {
-  it('waits for the AI: beat panel work locks the new panels and steering, but only a plan or script request sets aiBusy', async () => {
+  it('keeps Who is here and Rest usable while the beat panel or the AI works, but steering still waits', async () => {
     const wrapper = await mountWorkspace(snapshot());
     const beatMeta = { commandId: 'c-1', beatId: 'beat-2', expectedBeatRevision: 3 };
-    const aiBusy = () => ['CastPresence', 'RestControls'].map(name => wrapper.findComponent({ name }).props('aiBusy'));
-    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
-    expect(aiBusy()).toEqual([false, false]);
+    const busyOf = (names: string[]) => names.map(name => wrapper.findComponent({ name }).props('busy'));
+    expect(busyOf(['CastPresence', 'RestControls', 'BeatSteering'])).toEqual([false, false, false]);
     let finish: () => void = () => {};
     transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
     const quick = table.beatWork(() => table.send({ type: 'lock_beat', ...beatMeta }));
     await flushPromises();
-    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(true);
-    expect(aiBusy()).toEqual([false, false]);
+    expect(busyOf(['CastPresence', 'RestControls', 'BeatSteering'])).toEqual([false, false, true]);
     finish(); await quick; await flushPromises();
     transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({}); }));
     const planning = table.beatWork(() => table.send({ type: 'plan_beat', ...beatMeta, submissionIds: [] }));
     await flushPromises();
-    for (const name of ['CastPresence', 'RestControls', 'BeatSteering']) expect(wrapper.findComponent({ name }).props('busy')).toBe(true);
-    expect(aiBusy()).toEqual([true, true]);
-    for (const name of ['LiveControls', 'CorrectionControls']) expect(wrapper.findComponent({ name }).props('busy')).toBe(false);
+    expect(busyOf(['CastPresence', 'RestControls', 'BeatSteering'])).toEqual([false, false, true]);
+    expect(busyOf(['LiveControls', 'CorrectionControls'])).toEqual([false, false]);
     finish(); await planning; await flushPromises();
-    expect(aiBusy()).toEqual([false, false]);
+    expect(busyOf(['CastPresence', 'RestControls', 'BeatSteering'])).toEqual([false, false, false]);
     wrapper.unmount();
   });
 
   it('shows strain out of the shared maximum', async () => {
     const wrapper = await mountWorkspace(snapshot('live', [], { characters: [{ id: 'pc-1', displayName: 'Skooty', strain: 3 }] }));
-    expect(wrapper.text()).toContain('Strain 3/8');
+    expect(wrapper.text()).toContain('Strain 3 of 8');
     wrapper.unmount();
   });
 });

@@ -10,7 +10,7 @@ function snapshot(strains: [string, string, number][] = [['ada', 'Ada', 1], ['bo
   return { schemaVersion: 1, role: 'director', eventSeq: 0, session: { id: 'show', title: 'Test show', stateRevision: 7, status: 'live', mode: 'conversation', beatNumber: 1, actionRoundNumber: 0, inputEpoch: 3, scene: { id: 'scene', title: 'The bar', description: 'A quiet place.', locationId: 'bar' } }, characters: strains.map(([id, name, strain]) => character(id, name, strain)), npcs: [], npcDetails: [], activeBeat: null, submissions: [] } as unknown as DirectorSnapshot;
 }
 const field = (id: string) => `[data-testid="${id}"]`;
-const mountIt = (current = snapshot(), busy = false, aiBusy = false) => mount(RestControls, { props: { snapshot: current, busy, aiBusy } });
+const mountIt = (current = snapshot(), busy = false) => mount(RestControls, { props: { snapshot: current, busy } });
 const saveDisabled = (wrapper: ReturnType<typeof mountIt>) => (wrapper.get(field('save-rest')).element as HTMLButtonElement).disabled;
 
 describe('rest panel', () => {
@@ -68,11 +68,10 @@ describe('rest panel', () => {
     expect(wrapper.find(field('rest-stale')).exists()).toBe(false);
   });
 
-  it('labels the button by what it waits for', async () => {
-    expect(mountIt(snapshot(), false, true).get(field('save-rest')).text()).toBe('Waiting for the AI to finish');
-    expect(saveDisabled(mountIt(snapshot(), false, true))).toBe(true);
+  it('labels the button and disables it while busy', async () => {
     expect(saveDisabled(mountIt(snapshot(), true))).toBe(true);
     expect(mountIt(snapshot(), true).get(field('save-rest')).text()).toBe('Rest everyone');
+    expect(mountIt().text()).not.toContain('Waiting for the AI to finish');
     const wrapper = mountIt();
     await wrapper.get(field('save-rest')).trigger('click');
     await wrapper.get(field('rest-confirm')).trigger('click');
@@ -122,26 +121,32 @@ describe('rest panel', () => {
     expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('says the confirm button waits for the AI when the AI starts while it is open', async () => {
-    const wrapper = mountIt();
-    await wrapper.get(field('save-rest')).trigger('click');
-    await wrapper.setProps({ aiBusy: true });
-    const confirm = wrapper.get(field('rest-confirm'));
-    expect(confirm.text()).toBe('Waiting for the AI to finish');
-    expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
-    await wrapper.setProps({ aiBusy: false });
-    expect(wrapper.get(field('rest-confirm')).text()).toBe('Yes, rest everyone');
+  it('shows the round-open note and the longer saved notice while a round is open', async () => {
+    for (const phase of ['collecting', 'stakes_review']) {
+      const current = snapshot();
+      current.activeBeat = { phase } as DirectorSnapshot['activeBeat'];
+      const wrapper = mountIt(current);
+      expect(wrapper.get(field('rest-round-open')).text()).toBe('A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.');
+      expect(saveDisabled(wrapper)).toBe(false);
+      await wrapper.get(field('save-rest')).trigger('click');
+      await wrapper.get(field('rest-confirm')).trigger('click');
+      const [, onSaved] = wrapper.emitted('command')![0] as [unknown, () => void];
+      onSaved();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get(field('rest-saved')).text()).toBe('Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.');
+    }
+    expect(mountIt().find(field('rest-round-open')).exists()).toBe(false);
   });
 
-  it('shows the gate texts and only blocks past collecting', () => {
+  it('shows the gate texts and only blocks once the dice are rolled', () => {
     const gateText = (change: (current: DirectorSnapshot) => void) => { const current = snapshot(); change(current); const wrapper = mountIt(current); return { text: wrapper.find(field('rest-gate')).exists() ? wrapper.get(field('rest-gate')).text() : '', disabled: saveDisabled(wrapper) }; };
     expect(gateText(() => {})).toEqual({ text: '', disabled: false });
     expect(gateText(current => { current.session.status = 'paused'; })).toEqual({ text: '', disabled: false });
-    expect(gateText(current => { current.activeBeat = { phase: 'collecting' } as DirectorSnapshot['activeBeat']; })).toEqual({ text: '', disabled: false });
+    for (const phase of ['collecting', 'stakes_review', 'planning', 'rendering']) expect(gateText(current => { current.activeBeat = { phase } as DirectorSnapshot['activeBeat']; }), phase).toEqual({ text: '', disabled: false });
     expect(gateText(current => { current.setup = { started: false } as DirectorSnapshot['setup']; })).toEqual({ text: 'Start the show from Cast & lobby first.', disabled: true });
     expect(gateText(current => { current.session.status = 'ended'; })).toEqual({ text: 'The show has ended.', disabled: true });
     expect(gateText(current => { current.session.status = 'lobby'; })).toEqual({ text: 'Open a conversation or an action round first.', disabled: true });
-    for (const phase of ['planning', 'stakes_review', 'locked', 'rendering', 'draft_review']) {
+    for (const phase of ['locked', 'draft_review']) {
       expect(gateText(current => { current.activeBeat = { phase } as DirectorSnapshot['activeBeat']; }), phase).toEqual({ text: 'Publish or abandon this round first.', disabled: true });
     }
   });

@@ -533,5 +533,145 @@ describe('CastSeats', () => {
       expect((wrapper.get('[data-testid="live-look-pc-1"]').element as HTMLTextAreaElement).value).toBe('A green coat.');
       expect((wrapper.get('[data-testid="live-item-pc-1-0"]').element as HTMLInputElement).value).toBe('Pick');
     });
+
+    describe('card lists and the story look note', () => {
+      const rich = { ...withCard, looksChanged: 'Soaked to the skin.', wearing: ['Green coat', 'Cap'], owes: ['Owes Rook a favour'], feelings: ['Feared by the guards'] };
+      const richSnap = (character: unknown = rich) => ({ ...liveSnap('live', { started: true }), characterDetails: [character, waiting] }) as unknown as DirectorSnapshot;
+      const open = async (character: unknown = rich) => {
+        const wrapper = mountIt({ snapshot: richSnap(character), editable: false });
+        await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+        return wrapper;
+      };
+      const value = (wrapper: ReturnType<typeof mountIt>, id: string) => (wrapper.get(`[data-testid="${id}"]`).element as HTMLInputElement).value;
+      const lists = [
+        { key: 'wearing', legend: 'Wearing', add: 'Add something worn', max: 12 },
+        { key: 'owes', legend: 'Promises and debts', add: 'Add a promise or debt', max: 8 },
+        { key: 'feelings', legend: 'How people feel', add: 'Add a feeling', max: 8 },
+      ];
+
+      it('loads the note and all three lists, with labels and limits', async () => {
+        const wrapper = await open();
+        const note = wrapper.get('[data-testid="live-looks-pc-1"]');
+        expect((note.element as HTMLTextAreaElement).value).toBe('Soaked to the skin.');
+        expect(note.attributes('maxlength')).toBe('300');
+        expect(wrapper.find('label[for]').exists()).toBe(true);
+        expect(wrapper.text()).toContain('Changed by the story');
+        expect(value(wrapper, 'live-wearing-pc-1-0')).toBe('Green coat');
+        expect(value(wrapper, 'live-wearing-pc-1-1')).toBe('Cap');
+        expect(value(wrapper, 'live-owes-pc-1-0')).toBe('Owes Rook a favour');
+        expect(value(wrapper, 'live-feelings-pc-1-0')).toBe('Feared by the guards');
+        expect(wrapper.get('[data-testid="live-wearing-pc-1-0"]').attributes('maxlength')).toBe('160');
+        expect(wrapper.get('[data-testid="live-wearing-pc-1-0"]').attributes('aria-label')).toBe('Wearing 1 for Rook');
+        for (const list of lists) {
+          expect(wrapper.text()).toContain(list.legend);
+          expect(wrapper.get(`[data-testid="live-${list.key}-add-pc-1"]`).text()).toBe(list.add);
+        }
+      });
+
+      it('adds, edits, removes and stops each list at its maximum', async () => {
+        const wrapper = await open();
+        for (const list of lists) {
+          await wrapper.get(`[data-testid="live-${list.key}-add-pc-1"]`).trigger('click');
+          const rows = () => wrapper.findAll(`[data-testid^="live-${list.key}-pc-1-"]`);
+          const last = rows().length - 1;
+          await wrapper.get(`[data-testid="live-${list.key}-pc-1-${last}"]`).setValue('New entry');
+          await wrapper.get(`[data-testid="live-${list.key}-remove-pc-1-0"]`).trigger('click');
+          expect(value(wrapper, `live-${list.key}-pc-1-${last - 1}`)).toBe('New entry');
+          for (let i = 0; i < list.max + 5; i++) await wrapper.get(`[data-testid="live-${list.key}-add-pc-1"]`).trigger('click');
+          expect(rows()).toHaveLength(list.max);
+          expect(wrapper.get(`[data-testid="live-${list.key}-add-pc-1"]`).attributes('disabled')).toBeDefined();
+        }
+      });
+
+      it('gives every new input its own help line outside its label', async () => {
+        const wrapper = await open();
+        const inputs = wrapper.findAll('[data-testid="live-looks-pc-1"], [data-testid^="live-wearing-pc-1-"], [data-testid^="live-owes-pc-1-"], [data-testid^="live-feelings-pc-1-"]')
+          .filter(input => !input.attributes('data-testid')!.includes('remove') && !input.attributes('data-testid')!.includes('add'));
+        expect(inputs).toHaveLength(5);
+        const ids = new Set<string>();
+        for (const input of inputs) {
+          const id = input.attributes('aria-describedby')!;
+          expect(id).toBeTruthy();
+          ids.add(id);
+          const help = wrapper.get(`[id="${id}"]`);
+          expect(help.classes()).toContain('field-help');
+          expect(help.text().length).toBeGreaterThan(20);
+          expect(help.element.closest('label')).toBeNull();
+        }
+        expect(ids.size).toBe(5);
+        expect(wrapper.get(`[id="${wrapper.get('[data-testid="live-looks-pc-1"]').attributes('aria-describedby')}"]`).text()).toBe("How the story changed Rook's look, such as torn or soaked clothes. The AI and pictures read it after the look.");
+        expect(wrapper.get(`[id="${wrapper.get('[data-testid="live-wearing-pc-1-0"]').attributes('aria-describedby')}"]`).text()).toBe('Something Rook wears now. Outcomes you approve can put things on or take them off.');
+        expect(wrapper.get(`[id="${wrapper.get('[data-testid="live-owes-pc-1-0"]').attributes('aria-describedby')}"]`).text()).toBe('A promise or debt Rook owes or is owed. Outcomes you approve can add or settle it.');
+        expect(wrapper.get(`[id="${wrapper.get('[data-testid="live-feelings-pc-1-0"]').attributes('aria-describedby')}"]`).text()).toBe('How someone feels about Rook. Outcomes you approve can change it.');
+      });
+
+      it('sends all four fields trimmed with blanks dropped, and sends empties to clear them', async () => {
+        const wrapper = await open();
+        await wrapper.get('[data-testid="live-looks-pc-1"]').setValue('  Torn sleeve.  ');
+        await wrapper.get('[data-testid="live-wearing-pc-1-0"]').setValue('  Red scarf ');
+        await wrapper.get('[data-testid="live-wearing-remove-pc-1-1"]').trigger('click');
+        await wrapper.get('[data-testid="live-owes-add-pc-1"]').trigger('click');
+        await wrapper.get('[data-testid="live-owes-pc-1-1"]').setValue('   ');
+        await wrapper.get('[data-testid="live-feelings-pc-1-0"]').setValue(' Trusted by Wren ');
+        await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+        const [, command] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+        expect(command).toMatchObject({ type: 'save_live_character', characterId: 'pc-1', looksChanged: 'Torn sleeve.', wearing: ['Red scarf'], owes: ['Owes Rook a favour'], feelings: ['Trusted by Wren'] });
+        expect(wrapper.find('[data-testid="live-looks-pc-1"]').exists()).toBe(false);
+        transport.command.mockClear();
+        await wrapper.get('[data-testid="edit-look-pc-1"]').trigger('click');
+        for (const key of ['wearing', 'owes', 'feelings']) await wrapper.get(`[data-testid="live-${key}-remove-pc-1-0"]`).trigger('click');
+        await wrapper.get('[data-testid="live-looks-pc-1"]').setValue('');
+        await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+        const [, cleared] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+        expect(cleared).toMatchObject({ looksChanged: '', wearing: ['Cap'], owes: [], feelings: [] });
+      });
+
+      it('explains a too-long entry without sending', async () => {
+        const wrapper = await open();
+        const input = wrapper.get('[data-testid="live-feelings-pc-1-0"]');
+        (input.element as HTMLInputElement).value = 'x'.repeat(161);
+        await input.trigger('input');
+        await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+        expect(wrapper.get('[data-testid="live-edit-error-pc-1"]').text()).toBe('The look or one of the entries is too long. Shorten it and try again.');
+        expect(transport.command).not.toHaveBeenCalled();
+      });
+
+      it('refreshes an untouched form when the card changes, and leaves a touched one alone', async () => {
+        const wrapper = await open();
+        const changed = { ...rich, looksChanged: 'Bandaged.', wearing: ['Cloak'], owes: [], feelings: ['Loved'], cardRevision: 3 };
+        await wrapper.setProps({ snapshot: richSnap(changed) });
+        expect((wrapper.get('[data-testid="live-looks-pc-1"]').element as HTMLTextAreaElement).value).toBe('Bandaged.');
+        expect(value(wrapper, 'live-wearing-pc-1-0')).toBe('Cloak');
+        expect(wrapper.find('[data-testid="live-wearing-pc-1-1"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="live-owes-pc-1-0"]').exists()).toBe(false);
+        expect(value(wrapper, 'live-feelings-pc-1-0')).toBe('Loved');
+        await wrapper.get('[data-testid="live-owes-add-pc-1"]').trigger('click');
+        await wrapper.get('[data-testid="live-owes-pc-1-0"]').setValue('Mine');
+        await wrapper.setProps({ snapshot: richSnap({ ...changed, feelings: ['Hated'], cardRevision: 4 }) });
+        expect(value(wrapper, 'live-feelings-pc-1-0')).toBe('Loved');
+        expect(value(wrapper, 'live-owes-pc-1-0')).toBe('Mine');
+        const touchedNote = await open();
+        await touchedNote.get('[data-testid="live-looks-pc-1"]').setValue('Mine');
+        await touchedNote.setProps({ snapshot: richSnap({ ...rich, looksChanged: 'Other', cardRevision: 3 }) });
+        expect((touchedNote.get('[data-testid="live-looks-pc-1"]').element as HTMLTextAreaElement).value).toBe('Mine');
+      });
+
+      it('lists the four on Read card only when they have something, from the character', () => {
+        const filled = mountIt({ snapshot: richSnap(), editable: false });
+        const text = filled.get('[data-testid="seat-line-pc-1"] dl').text();
+        for (const part of ['Changed by the story', 'Soaked to the skin.', 'Wearing', 'Green coat, Cap', 'Promises and debts', 'Owes Rook a favour', 'How people feel', 'Feared by the guards']) expect(text).toContain(part);
+        const plain = mountIt({ snapshot: richSnap(withCard), editable: false }).get('[data-testid="seat-line-pc-1"] dl').text();
+        for (const part of ['Changed by the story', 'Wearing', 'Promises and debts', 'How people feel']) expect(plain).not.toContain(part);
+      });
+
+      it('opens empty for a character without the fields and saves them as empty', async () => {
+        const wrapper = await open(withCard);
+        expect((wrapper.get('[data-testid="live-looks-pc-1"]').element as HTMLTextAreaElement).value).toBe('');
+        for (const list of lists) expect(wrapper.find(`[data-testid="live-${list.key}-pc-1-0"]`).exists()).toBe(false);
+        await wrapper.get('[data-testid="live-edit-save-pc-1"]').trigger('click'); await flushPromises();
+        const [, command] = transport.command.mock.calls[0] as [string, Record<string, unknown>];
+        expect(command).toMatchObject({ looksChanged: '', wearing: [], owes: [], feelings: [] });
+      });
+    });
   });
 });

@@ -1,6 +1,6 @@
 import {
-  ActionContractSchema, EffectSchema, STRAIN_MAX, TraitsSchema,
-  type ActionContract, type Effect, type OutcomeBand, type Resolution, type SessionState,
+  ActionContractSchema, CARD_LIST_MAX, CardListSchema, EffectSchema, STRAIN_MAX, TraitsSchema, cardListChange,
+  type ActionContract, type CardListChange, type Character, type Effect, type OutcomeBand, type Resolution, type SessionState,
 } from '@rpg/contracts';
 export { STRAIN_MAX } from '@rpg/contracts';
 
@@ -52,11 +52,43 @@ function uniqueEffects(effects: Effect[]): Effect[] {
   });
 }
 
+// One engine for every exact-text list on a card: possessions (Carrying) keep their old messages word for word.
+function applyListChange(entries: string[], change: CardListChange, operations: Set<string>): void {
+  const possessions = change.list === 'possessions';
+  const operation = JSON.stringify([change.characterId, change.list, change.entry]);
+  if (operations.has(operation)) throw new Error(possessions ? 'Conflicting inventory changes require a ruling.' : `Conflicting ${change.list} changes require a ruling.`);
+  operations.add(operation);
+  if (change.op === 'remove') {
+    const index = entries.indexOf(change.entry);
+    if (index < 0) throw new Error(possessions
+      ? `Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ${JSON.stringify(entries)}`
+      : `Cannot remove an entry the character does not have. Copy one of their ${change.list} lines exactly: ${JSON.stringify(entries)}`);
+    entries.splice(index, 1);
+  } else {
+    if (entries.includes(change.entry)) throw new Error(possessions ? 'Cannot duplicate an existing inventory item.' : `Cannot duplicate an existing ${change.list} entry.`);
+    if (entries.length >= CARD_LIST_MAX[change.list]) throw new Error(possessions ? 'Inventory capacity exceeded.' : `The ${change.list} list is full.`);
+    entries.push(change.entry);
+  }
+}
+
+const LOOK_CONFLICT = 'Conflicting look changes require a ruling.';
+
+const cardLists = CardListSchema.options.join('|');
+const mismatches = [
+  /^Cannot consume an item the character does not possess/, /^Cannot duplicate an existing inventory item\.$/, /^Inventory capacity exceeded\.$/,
+  /^Cannot remove an entry the character does not have\. /, new RegExp(`^Cannot duplicate an existing (${cardLists}) entry\\.$`), new RegExp(`^The (${cardLists}) list is full\\.$`),
+];
+
+export function isCardMismatch(message: string): boolean {
+  return mismatches.some(pattern => pattern.test(message));
+}
+
 export function applyEffects(state: SessionState, effects: Effect[], sourceEventId = 'pending'): SessionState {
   const next = structuredClone(state);
   const trackDeltas = new Map<string, number>();
   const strainDeltas = new Map<string, number>();
-  const inventoryOperations = new Set<string>();
+  const listOperations = new Set<string>();
+  const lookChanges = new Set<string>();
   for (const effect of uniqueEffects(effects)) {
     if (effect.kind === 'track_delta') {
       if (!next.tracks.some(track => track.id === effect.trackId)) throw new Error('Unknown track in effect.');
@@ -70,18 +102,19 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
       if (!character) throw new Error('Unknown character in effect.');
       if (effect.kind === 'strain_delta') {
         strainDeltas.set(effect.characterId, (strainDeltas.get(effect.characterId) ?? 0) + effect.delta);
+      } else if (effect.kind === 'looks_set') {
+        if (lookChanges.has(effect.characterId)) throw new Error(LOOK_CONFLICT);
+        lookChanges.add(effect.characterId);
+        if (effect.text.trim()) character.looksChanged = effect.text;
+        else delete character.looksChanged;
       } else {
-        const operation = `${effect.characterId}:${effect.item}`;
-        if (inventoryOperations.has(operation)) throw new Error('Conflicting inventory changes require a ruling.');
-        inventoryOperations.add(operation);
-        if (effect.kind === 'inventory_remove') {
-          const index = character.possessions.indexOf(effect.item);
-          if (index < 0) throw new Error(`Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ${JSON.stringify(character.possessions)}`);
-          character.possessions.splice(index, 1);
-        } else {
-          if (character.possessions.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');
-          if (character.possessions.length >= 20) throw new Error('Inventory capacity exceeded.');
-          character.possessions.push(effect.item);
+        const change = cardListChange(effect)!;
+        if (change.list === 'possessions') applyListChange(character.possessions, change, listOperations);
+        else {
+          const entries = [...(character[change.list] ?? [])];
+          applyListChange(entries, change, listOperations);
+          if (entries.length) character[change.list] = entries;
+          else delete character[change.list];
         }
       }
     }
@@ -145,8 +178,11 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     ancestors.set(contract.id, inherited);
     depths.set(contract.id, contract.prerequisites.length ? 1 + Math.max(...contract.prerequisites.map(prerequisite => depths.get(prerequisite.contractId)!)) : 0);
     for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band]!.effects) {
+      const change = cardListChange(effect);
       const key = effect.kind === 'fact_add' ? `fact:${effect.factId}`
-        : effect.kind === 'inventory_add' || effect.kind === 'inventory_remove' ? `item:${effect.characterId}:${effect.item}` : null;
+        : effect.kind === 'looks_set' ? `looks:${effect.characterId}`
+        : !change ? null
+        : change.list === 'possessions' ? `item:${change.characterId}:${change.entry}` : `card:${change.characterId}:${change.list}:${change.entry}`;
       if (!key) continue;
       const owners = claims.get(key) ?? new Set<string>();
       for (const owner of owners) {
@@ -169,13 +205,13 @@ function incidentKey(effect: Effect): string {
 }
 
 // Mirrors applyResolution (global shared-incident check, then each group through applyEffects)
-// without cloning the state: only track ids, facts and possessions can make a branch fail.
+// without cloning the state: only track ids, facts, card lists and look changes can make a branch fail.
 function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][]) => void {
   const trackIds = new Set(state.tracks.map(track => track.id));
   const baseFacts = new Map<string, { text: string; visibility: string }>();
   for (const fact of state.facts) if (!baseFacts.has(fact.id)) baseFacts.set(fact.id, fact);
-  const basePossessions = new Map<string, readonly string[]>();
-  for (const character of state.characters) if (!basePossessions.has(character.id)) basePossessions.set(character.id, character.possessions);
+  const baseCharacters = new Map<string, Character>();
+  for (const character of state.characters) if (!baseCharacters.has(character.id)) baseCharacters.set(character.id, character);
   const signatures = new WeakMap<Effect, string>();
   const signature = (effect: Effect) => {
     let value = signatures.get(effect);
@@ -193,9 +229,10 @@ function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][])
     }
     const seen = new Set<string>();
     const addedFacts = new Map<string, { text: string; visibility: string }>();
-    const possessions = new Map<string, string[]>();
+    const lists = new Map<string, string[]>();
     for (const group of effectGroups) {
-      const inventoryOperations = new Set<string>();
+      const listOperations = new Set<string>();
+      const lookChanges = new Set<string>();
       for (const effect of group) {
         if (effect.incidentId) {
           const key = incidentKey(effect);
@@ -209,23 +246,19 @@ function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][])
           if (existing && (existing.text !== effect.text || existing.visibility !== effect.visibility)) throw new Error('Conflicting fact updates require a ruling.');
           if (!existing) addedFacts.set(effect.factId, { text: effect.text, visibility: effect.visibility });
         } else {
-          const base = basePossessions.get(effect.characterId);
+          const base = baseCharacters.get(effect.characterId);
           if (!base) throw new Error('Unknown character in effect.');
           if (effect.kind === 'strain_delta') continue;
-          const operation = `${effect.characterId}:${effect.item}`;
-          if (inventoryOperations.has(operation)) throw new Error('Conflicting inventory changes require a ruling.');
-          inventoryOperations.add(operation);
-          let items = possessions.get(effect.characterId);
-          if (!items) possessions.set(effect.characterId, items = [...base]);
-          if (effect.kind === 'inventory_remove') {
-            const index = items.indexOf(effect.item);
-            if (index < 0) throw new Error(`Cannot consume an item the character does not possess. Copy one of their possession lines exactly: ${JSON.stringify(items)}`);
-            items.splice(index, 1);
-          } else {
-            if (items.includes(effect.item)) throw new Error('Cannot duplicate an existing inventory item.');
-            if (items.length >= 20) throw new Error('Inventory capacity exceeded.');
-            items.push(effect.item);
+          if (effect.kind === 'looks_set') {
+            if (lookChanges.has(effect.characterId)) throw new Error(LOOK_CONFLICT);
+            lookChanges.add(effect.characterId);
+            continue;
           }
+          const change = cardListChange(effect)!;
+          const key = JSON.stringify([change.characterId, change.list]);
+          let entries = lists.get(key);
+          if (!entries) lists.set(key, entries = [...(change.list === 'possessions' ? base.possessions : base[change.list] ?? [])]);
+          applyListChange(entries, change, listOperations);
         }
       }
     }

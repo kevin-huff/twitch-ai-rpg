@@ -17,8 +17,10 @@ class FakeAudio {
   play = vi.fn().mockResolvedValue(undefined);
   pause = vi.fn();
   load = vi.fn();
-  constructor(src: string) { this.src = src; instances.push(this); }
+  removeAttribute(name: string) { if (name === 'src') this.src = ''; }
+  constructor(src = '') { this.src = src; instances.push(this); }
 }
+const blocked = () => Object.assign(new Error('The browser needs a click first.'), { name: 'NotAllowedError' });
 const manifest = { beatId: 'beat-1', segments: [
   { id: 'one', text: 'The door opens.', speaker: 'Narrator', voiceProfileId: 'narrator', url: `/api/sessions/show/audio/assets/${'a'.repeat(64)}` },
   { id: 'two', text: 'Who sent you?', speaker: 'Mara', voiceProfileId: 'mara', url: `/api/sessions/show/audio/assets/${'b'.repeat(64)}` },
@@ -292,7 +294,10 @@ describe('coordinated browser playback', () => {
     const value = controller(); await settle(); value.listen(); await settle();
     const delayed = deferred<Response>(); vi.mocked(fetch).mockReturnValueOnce(delayed.promise);
     const count = vi.mocked(fetch).mock.calls.length;
-    const pending = value.refresh(); await vi.advanceTimersByTimeAsync(4999);
+    const pending = value.refresh();
+    // Later checks stay unanswered too, so none of them clears the timeout message before it is read.
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>(() => {}));
+    await vi.advanceTimersByTimeAsync(4999);
     expect(vi.mocked(fetch).mock.calls.length).toBe(count + 1);
     expect(value.state.listening).toBe(true);
     await vi.advanceTimersByTimeAsync(1); await pending;
@@ -432,25 +437,28 @@ describe('coordinated browser playback', () => {
     expect(instances).toHaveLength(1);
     expect(vi.mocked(fetch).mock.calls.some(call => String(call[0]).endsWith('/telemetry'))).toBe(false);
     vi.mocked(fetch).mockResolvedValueOnce(response(snapshot({ revision: 2, sampleRevision: 2, segmentIndex: 1, positionMs: 0, anchorTimeMs: 100_000 })));
-    await value.refresh(); await settle(); expect(instances).toHaveLength(2);
-    expect(instances[1].src).toBe(manifest.segments[1].url);
-    ended(); await settle(); expect(instances).toHaveLength(2);
+    await value.refresh(); await settle(); expect(instances).toHaveLength(1);
+    expect(instances[0].src).toBe(manifest.segments[1].url); expect(instances[0].play).toHaveBeenCalledTimes(2);
+    ended(); await settle(); expect(instances).toHaveLength(1); expect(instances[0].src).toBe(manifest.segments[1].url);
   });
 
   it('fences old play resolve/reject and ended/error callbacks after skip', async () => {
     const pendingPlay = deferred<void>();
-    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); if (instances.length === 1) this.play.mockReturnValue(pendingPlay.promise); } });
+    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src?: string) { super(src); this.play.mockReturnValueOnce(pendingPlay.promise); } });
     const value = controller({ director: true }); await settle(); value.listen(); await settle();
-    const old = instances[0], ended = old.onended!, error = old.onerror!;
+    const clip = instances[0], ended = clip.onended!, error = clip.onerror!;
     vi.mocked(fetch).mockResolvedValueOnce(response({ snapshot: snapshot({ revision: 2, sampleRevision: 2, segmentIndex: 1 }) }));
     await value.command('skip'); await settle();
-    const current = instances[1]; pendingPlay.resolve(); ended(); error(); await settle();
-    expect(current.pause).not.toHaveBeenCalled(); expect(value.state.error).toBe('');
-    expect(old.onended).toBeNull(); expect(old.onerror).toBeNull();
+    expect(instances).toHaveLength(1); expect(clip.src).toBe(manifest.segments[1].url);
+    const pauses = clip.pause.mock.calls.length;
+    pendingPlay.resolve(); ended(); error(); await settle();
+    expect(clip.pause).toHaveBeenCalledTimes(pauses); expect(value.state.error).toBe('');
+    expect(clip.src).toBe(manifest.segments[1].url);
+    expect(clip.onended).not.toBe(ended); expect(clip.onerror).not.toBe(error);
     const rejection = deferred<void>();
-    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); this.play.mockReturnValue(rejection.promise); } });
+    clip.play.mockReturnValueOnce(rejection.promise);
     value.listen(); await settle(); value.mute(); rejection.reject(new Error('old failure')); await settle();
-    expect(value.state.error).toBe('');
+    expect(value.state.error).toBe(''); expect(instances).toHaveLength(1);
   });
 
   it('stops locally before a host stop request and discards pre-command polls', async () => {
@@ -473,15 +481,17 @@ describe('coordinated browser playback', () => {
     const skipping = value.command('skip');
     delayed.reject(new Error('obsolete telemetry failure')); await settle();
     command.resolve(response({ snapshot: snapshot({ revision: 2, sampleRevision: 2, segmentIndex: 1 }) })); await skipping; await settle();
-    expect(value.state.listening).toBe(true); expect(value.state.error).toBe(''); expect(instances).toHaveLength(2);
+    expect(value.state.listening).toBe(true); expect(value.state.error).toBe(''); expect(instances).toHaveLength(1);
+    expect(instances[0].src).toBe(manifest.segments[1].url);
   });
 
   it('shows blocked play failures and an explicit listen retries at the current offset', async () => {
-    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src: string) { super(src); if (instances.length === 1) this.play.mockRejectedValue(new Error('NotAllowedError')); } });
+    vi.stubGlobal('Audio', class extends FakeAudio { constructor(src?: string) { super(src); this.play.mockRejectedValueOnce(blocked()); } });
     const value = controller(); await settle(); value.listen(); await settle();
     expect(value.state.error).toMatch(/Playback could not start/);
     expect(value.state.listening).toBe(false);
-    value.listen(); await settle(); expect(instances).toHaveLength(2); expect(instances[1].currentTime).toBeCloseTo(4);
+    value.listen(); await settle(); expect(instances).toHaveLength(1);
+    expect(instances[0].play).toHaveBeenCalledTimes(2); expect(instances[0].currentTime).toBeCloseTo(4);
   });
 
   it('applies volume and mute locally without sending shared commands', async () => {
@@ -502,7 +512,7 @@ describe('coordinated browser playback', () => {
   });
 
   describe('presenter network blips', () => {
-    const lost = 'Audio connection lost. Reclaim audio and ask the director to resume.';
+    const lost = 'This page lost the show audio. Reclaim audio, and narration that was playing resumes by itself.';
     const failure = (status: number) => Object.assign(response({ message: 'The server said no.' }, false), { status }) as Response;
 
     it('keeps presenting and playing through one failed poll, then recovers on the next', async () => {
@@ -537,7 +547,7 @@ describe('coordinated browser playback', () => {
       await vi.advanceTimersByTimeAsync(1001);
       expect(value.state.presenting).toBe(false); expect(instances[0].pause).toHaveBeenCalled();
       // The lease's own expiry timer fires at the deadline, before any failed poll can report the lost connection.
-      expect(value.state.error).toMatch(/Presenter lease expired|Audio connection lost/);
+      expect(value.state.error).toBe(lost);
     });
 
     it('drops the lease at once when the server refuses ownership', async () => {
@@ -600,5 +610,107 @@ describe('coordinated browser playback', () => {
     vi.mocked(fetch).mockResolvedValueOnce(response(snapshot({ sampleRevision: 2, manifest: { ...manifest, segments: [{ ...manifest.segments[0], url: `/api/sessions/other/audio/assets/${'a'.repeat(64)}` }] } })));
     await value.refresh(); value.listen(); await settle();
     expect(instances).toHaveLength(0); expect(value.state.error).toMatch(/manifest|playback/i);
+  });
+
+  describe('one audio element and sound state', () => {
+    const three = { beatId: 'beat-1', segments: [...manifest.segments,
+      { id: 'three', text: 'Nobody.', speaker: 'Narrator', voiceProfileId: 'narrator', url: `/api/sessions/show/audio/assets/${'c'.repeat(64)}` }] };
+    const lost = 'This page lost the show audio. Reclaim audio, and narration that was playing resumes by itself.';
+
+    it('plays three clips in a row on one element after one unlock', async () => {
+      let current = snapshot({ manifest: three }); routeFetch(() => current);
+      const value = controller(); await settle();
+      expect(instances).toHaveLength(0); expect(value.state.sound).toBe('idle');
+      const unlocked = value.unlock();
+      // The silent clip starts inside the click itself, before anything is awaited.
+      expect(instances).toHaveLength(1); expect(instances[0].play).toHaveBeenCalledOnce();
+      expect(instances[0].src).toMatch(/^data:audio\/wav;base64,/);
+      await expect(unlocked).resolves.toBe(true);
+      expect(value.state.sound).toBe('ready');
+      expect(instances[0].pause).toHaveBeenCalled(); expect(instances[0].src).toBe('');
+      value.listen(); await settle();
+      const clip = instances[0];
+      for (const index of [0, 1, 2]) {
+        current = snapshot({ manifest: three, revision: index + 1, sampleRevision: index + 1, segmentIndex: index, positionMs: 0, anchorTimeMs: 100_000 });
+        await value.refresh(); await settle();
+        expect(clip.src).toBe(three.segments[index].url);
+      }
+      expect(instances).toHaveLength(1);
+      expect(clip.play).toHaveBeenCalledTimes(4);
+      expect(value.state.sound).toBe('played'); expect(value.state.error).toBe('');
+    });
+
+    it('makes no element on a page that never listens, presents or unlocks', async () => {
+      const piece = controller(); const stage = controller({ stage: true }); const director = controller({ director: true });
+      await settle(); await vi.advanceTimersByTimeAsync(3000);
+      expect(piece.state.snapshot?.status).toBe('playing');
+      expect(instances).toHaveLength(0);
+      [piece, stage, director].forEach(value => { expect(value.state.sound).toBe('idle'); value.dispose(); });
+      expect(instances).toHaveLength(0);
+    });
+
+    it('drops its element when the page closes', async () => {
+      const value = controller(); await settle(); value.listen(); await settle();
+      const clip = instances[0];
+      value.dispose();
+      expect(clip.pause).toHaveBeenCalled(); expect(clip.src).toBe(''); expect(clip.onended).toBeNull();
+    });
+
+    it('reports blocked, ready and played sound as the browser answers', async () => {
+      vi.stubGlobal('Audio', class extends FakeAudio { constructor(src?: string) { super(src); this.play.mockRejectedValueOnce(blocked()); } });
+      const value = controller(); await settle();
+      value.listen(); await settle();
+      expect(value.state.sound).toBe('blocked'); expect(value.state.listening).toBe(false);
+      await expect(value.unlock()).resolves.toBe(true);
+      expect(value.state.sound).toBe('ready');
+      value.listen(); await settle();
+      expect(value.state.sound).toBe('played'); expect(instances).toHaveLength(1);
+      // Unlocking again while narration plays keeps it playing and keeps the played mark.
+      await expect(value.unlock()).resolves.toBe(true);
+      expect(value.state.sound).toBe('played'); expect(instances[0].src).toBe(manifest.segments[0].url);
+      // A browser that blocks again later is reported again, even after narration played.
+      value.mute(); instances[0].play.mockRejectedValueOnce(blocked());
+      value.listen(); await settle();
+      expect(value.state.sound).toBe('blocked');
+      instances[0].play.mockRejectedValueOnce(blocked());
+      await expect(value.unlock()).resolves.toBe(false);
+      expect(value.state.sound).toBe('blocked');
+      value.listen(); await settle();
+      expect(value.state.sound).toBe('played');
+    });
+
+    it('does not call other play failures blocked sound', async () => {
+      vi.stubGlobal('Audio', class extends FakeAudio { constructor(src?: string) { super(src); this.play.mockRejectedValueOnce(new Error('decode failed')); } });
+      const value = controller(); await settle(); value.listen(); await settle();
+      expect(value.state.error).toMatch(/Playback could not start/); expect(value.state.sound).toBe('idle');
+    });
+
+    it('clears a failed check once a later check works, but keeps a refused claim', async () => {
+      const follow = controller(); await settle();
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('offline')); await follow.refresh();
+      expect(follow.state.error).toBe('offline');
+      await follow.refresh(); expect(follow.state.error).toBe('');
+      const stage = controller({ stage: true }); await settle();
+      vi.mocked(fetch).mockResolvedValueOnce(Object.assign(response({ message: 'Another page holds the show audio.' }, false), { status: 409 }));
+      await stage.claim();
+      expect(stage.state.error).toBe('Another page holds the show audio.');
+      await stage.refresh(); await vi.advanceTimersByTimeAsync(1500);
+      expect(stage.state.error).toBe('Another page holds the show audio.');
+    });
+
+    it('never clears an error that replaced the failed check', async () => {
+      const follow = controller(); await settle();
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('offline')); await follow.refresh();
+      follow.state.error = 'Something else went wrong.';
+      await follow.refresh(); expect(follow.state.error).toBe('Something else went wrong.');
+    });
+
+    it('uses the same plain words wherever this page loses the show audio', async () => {
+      const value = controller({ stage: true }); await settle(); await value.claim(); await settle();
+      vi.mocked(fetch).mockImplementation(async () => { throw new Error('offline'); });
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(value.state.error).toBe(lost);
+      expect(value.state.error).not.toMatch(/ask the director to resume|Presenter lease/);
+    });
   });
 });

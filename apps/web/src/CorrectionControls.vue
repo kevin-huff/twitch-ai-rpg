@@ -2,6 +2,7 @@
 import { computed, ref, useId } from 'vue';
 import { CommandSchema, STRAIN_MAX } from '@rpg/contracts';
 import type { Command, CorrectionChange, DirectorSnapshot } from '@rpg/contracts';
+import StrainMeter from './StrainMeter.vue';
 
 const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
 const emit = defineEmits<{ command: [command: Command, onSaved: () => void] }>();
@@ -25,10 +26,11 @@ const gate = computed(() => {
   if (props.snapshot.session.status === 'ended') return 'The show has ended.';
   if (props.snapshot.session.status === 'lobby') return "Corrections start after the show's first beat. Open a conversation or an action round first.";
   if (!['live', 'paused'].includes(props.snapshot.session.status)) return 'Corrections are available while the show is live or paused.';
-  if (props.snapshot.activeBeat) return 'Finish or abandon the current beat before recording a correction.';
+  if (props.snapshot.activeBeat && ['locked', 'draft_review'].includes(props.snapshot.activeBeat.phase)) return 'The dice for this round are already rolled. Publish or abandon the round, then record the correction.';
   if (!props.snapshot.history.length) return 'Publish a beat before recording a correction.';
   return '';
 });
+const roundOpen = computed(() => Boolean(props.snapshot.activeBeat) && ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat!.phase));
 const locked = computed(() => props.busy || Boolean(gate.value));
 const stale = computed(() => baseline.value !== null && (baseline.value.session.id !== props.snapshot.session.id || baseline.value.session.stateRevision !== props.snapshot.session.stateRevision));
 function begin() {
@@ -89,10 +91,11 @@ function save() {
   const parsed = CommandSchema.safeParse({ ...candidate, commandId: retry.commandId });
   if (!parsed.success) { error.value = parsed.error.issues.slice(0, 3).map(issue => `${issue.path.join('.') || 'Correction'}: ${issue.message}`).join('\n'); return; }
   const savedEpoch = epoch;
+  const wasOpen = roundOpen.value;
   emit('command', parsed.data, () => {
     if (savedEpoch !== epoch) return;
     baseline.value = null; retry = undefined;
-    savedNotice.value = 'Correction published. Earlier narration and dice remain unchanged.';
+    savedNotice.value = 'Correction published. Earlier narration and dice remain unchanged.' + (wasOpen ? ' The round went back to taking lines. Press Plan to plan it again.' : '');
   });
 }
 </script>
@@ -102,6 +105,7 @@ function save() {
     <summary>Corrections</summary>
     <p>Append a public clarification to a published beat, with optional corrections to current facts, strain, or tracks. Earlier narration, dice, and recordings remain unchanged.</p>
     <p v-if="gate" class="notice">{{ gate }}</p>
+    <p v-if="roundOpen" class="notice" data-testid="correction-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
     <p v-if="savedNotice" class="notice" role="status">{{ savedNotice }}</p>
     <button v-if="!baseline" type="button" class="secondary" data-testid="begin-correction" :disabled="locked" @click="begin">Record a correction</button>
     <form v-else novalidate @submit.prevent="save">
@@ -130,6 +134,7 @@ function save() {
           <template v-else>
             <label>Corrected value<input v-model.number="change.value" type="number" min="0" :max="original(change)?.max" step="1" :data-testid="`correction-value-${index}`" :aria-describedby="helpId('value', change.key)"></label>
             <p :id="helpId('value', change.key)" class="field-help">Set the current value from 0 to {{ original(change)?.max }}. This does not change any earlier roll or outcome.</p>
+            <StrainMeter v-if="change.kind === 'strain_set'" :value="typeof change.value === 'number' ? change.value : 0" :max="original(change)?.max ?? STRAIN_MAX" />
           </template>
           <p :data-testid="`correction-change-preview-${index}`" class="change-preview">{{ before(change) }} becomes {{ change.kind === 'fact_replace' ? change.text.trim() : change.value }}</p>
           <button type="button" class="quiet" :data-testid="`remove-correction-${index}`" @click="remove(index)">Remove change {{ index + 1 }}</button>
