@@ -240,7 +240,7 @@ export interface CommandPictures {
   retireHeldPictures?(client: PoolClient, sessionId: string, beatId: string): Promise<void>;
   run(imageIds: string[]): void;
 }
-export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource; voices?: VoiceSource }
+export interface CommandDependencies { pool: Pool; provider: AiProvider; rollDie: () => number; providerTimeoutMs?: number | null; authenticate?(client: PoolClient): Promise<Actor>; pictures?: CommandPictures; picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource; voices?: VoiceSource }
 export async function executeCommand(deps: CommandDependencies, sessionId: string, actor: Actor, command: Command): Promise<CommandResponse> {
   if (actor.role === 'stage' || (directorCommands.has(command.type) && actor.role !== 'host')) throw new AppError(403, 'forbidden', 'This command requires a director.');
   if (['set_ready', 'save_submission', 'cancel_submission', 'set_voice'].includes(command.type) && actor.role !== 'player') throw new AppError(403, 'forbidden', 'Use the assigned player seat to submit dialogue or actions.');
@@ -791,7 +791,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   const stopped = new Promise<never>((_, reject) => { stop = () => { cancelled = true; abort.abort(); reject(new GenerationCancelled()); }; });
   stopped.catch(() => undefined);
   cancelHooks.set(generation.jobId, stop);
-  const attemptId = await startUsageAttempt(deps.pool, { sessionId, beatId: generation.context.beat.id, operationId: generation.jobId, kind: generation.task, timeoutMs: deps.providerTimeoutMs ?? 30_000 });
+  const budgetMs = deps.providerTimeoutMs === undefined ? 30_000 : deps.providerTimeoutMs;
+  const attemptId = await startUsageAttempt(deps.pool, { sessionId, beatId: generation.context.beat.id, operationId: generation.jobId, kind: generation.task, timeoutMs: budgetMs });
   if (cancelledEarly.delete(generation.jobId)) stop();
   const started = Date.now();
   try {
@@ -801,7 +802,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     call.catch(() => undefined);
     output = await Promise.race([
       call,
-      new Promise((_, reject) => { timer = setTimeout(() => { abort.abort(); reject(new RequestBudgetError()); }, deps.providerTimeoutMs ?? 30_000); }),
+      ...(budgetMs === null ? [] : [new Promise((_, reject) => { timer = setTimeout(() => { abort.abort(); reject(new RequestBudgetError()); }, budgetMs); })]),
       stopped,
     ]);
   } catch (error) {

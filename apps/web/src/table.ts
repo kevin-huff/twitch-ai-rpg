@@ -6,6 +6,10 @@ import { api, subscribeToSession } from './api';
 import { identityPath, selectIdentity } from './identity';
 
 export const PAUSE_REQUEST_TEXT = 'Pause requested. Please check in with the table.';
+export const AI_STILL_WORKING = 'The connection to the server closed while the AI was still working. It keeps going, and the result appears here when it finishes.';
+
+// The host closes a request with no data moving after 5 minutes: the browser then sees a network error or a gateway status.
+const droppedRequest = (cause: unknown) => cause instanceof TypeError || [502, 503, 504].includes(Number((cause as { status?: unknown } | null)?.status));
 
 export function createTable() {
   const path = window.location.pathname;
@@ -158,11 +162,23 @@ export function createTable() {
     finally { beatBusy.value = false; }
   }
 
+  function aiJobRunning() {
+    const beat = director.value?.activeBeat;
+    return Boolean(beat && director.value?.jobs.some(job => job.beatId === beat.id && job.generation === beat.generation && ['queued', 'running'].includes(job.status)));
+  }
+
   async function send(command: Command) {
     const aiWork = command.type === 'plan_beat' || command.type === 'render_beat';
     if (aiWork) { aiRequests++; aiWorking.value = true; }
     let result: { snapshot?: SessionSnapshot } | null | undefined;
     try { result = await api.command(sessionId, command) as { snapshot?: SessionSnapshot } | null | undefined; }
+    catch (cause) {
+      if (!aiWork || !droppedRequest(cause)) throw cause;
+      await refresh();
+      if (!aiJobRunning()) throw cause;
+      notice.value = AI_STILL_WORKING;
+      return;
+    }
     finally { if (aiWork) { aiRequests--; aiWorking.value = aiRequests > 0; } }
     const returned = result?.snapshot;
     if (returned && testCharacterId === null && returned.role === snapshot.value?.role) {

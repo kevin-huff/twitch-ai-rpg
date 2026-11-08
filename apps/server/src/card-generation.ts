@@ -62,13 +62,13 @@ export function cardFromDraft(draft: CardDraft, input: CardGenerationInput) {
   return { card: parsed.data, notes, pronounsSuggested };
 }
 
-export async function executeCardGeneration(provider: AiProvider, input: CardGenerationInput, timeoutMs = 50_000): Promise<CardGenerationResponse> {
+export async function executeCardGeneration(provider: AiProvider, input: CardGenerationInput, timeoutMs: number | null = 50_000): Promise<CardGenerationResponse> {
   if (!provider.generateCard) throw new AppError(503, 'generation_unavailable', 'AI drafting is not available right now. You can still fill in the form yourself.');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const output = await Promise.race([
       provider.generateCard(input),
-      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new ProviderError('timeout', 'ClewdR')), timeoutMs); }),
+      ...(timeoutMs === null ? [] : [new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new ProviderError('timeout', 'ClewdR')), timeoutMs); })]),
     ]);
     const draft = CardDraftSchema.parse(output);
     const { card, notes, pronounsSuggested } = cardFromDraft(draft, input);

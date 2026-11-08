@@ -55,6 +55,18 @@ describe.each(['plan', 'render'] as const)('%s stop signal', (task) => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('still aborts the fetch when the call has no time limit', async () => {
+    const { fetchFn, seen } = hangingFetch();
+    const controller = new AbortController();
+    const unlimited = new ClewdrAiProvider({ baseUrl: 'http://clewdr.test:8484/code/v1', apiKey: 'test-key', model: 'test-model', timeoutMs: null, fetch: fetchFn as typeof fetch });
+    const outcome = unlimited[task](context(), { signal: controller.signal }).then(() => 'resolved', () => 'rejected');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    controller.abort();
+    expect(await outcome).toBe('rejected');
+    expect(seen[0].aborted).toBe(true);
+  });
+
   it('sends no request for an already-aborted signal', async () => {
     const { fetchFn } = hangingFetch();
     const controller = new AbortController();

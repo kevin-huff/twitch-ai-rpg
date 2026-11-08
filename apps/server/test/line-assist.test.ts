@@ -6,6 +6,19 @@ import {
 import { buildApp } from '../src/app';
 import { createPool } from '../src/database';
 import { FakeAiProvider } from '../src/fake-provider';
+import { executeLineAssist } from '../src/line-assist';
+
+describe('line assist executor', () => {
+  it('waits as long as the AI takes when there is no time limit', async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = { plan: vi.fn(), render: vi.fn(), suggestLine: () => new Promise(resolve => setTimeout(() => resolve({ text: 'We mean no harm.' }), 600_000)) } as unknown as AiProvider;
+      const outcome = executeLineAssist(slow, {} as LineAssistInput, null).then(value => ({ value }), (error: unknown) => ({ error }));
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(await outcome).toEqual({ value: { text: 'We mean no harm.' } });
+    } finally { vi.useRealTimers(); }
+  });
+});
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;

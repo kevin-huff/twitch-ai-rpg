@@ -4,15 +4,15 @@ import { ProviderError } from '@rpg/providers';
 import { AppError, type Actor } from './repository';
 import { executeCardGeneration } from './card-generation';
 
-export async function executeFieldGeneration(provider: AiProvider, input: FieldGenerationRequest, timeoutMs = 50_000) {
+export async function executeFieldGeneration(provider: AiProvider, input: FieldGenerationRequest, timeoutMs: number | null = 50_000) {
   if (!provider.generateField) throw new AppError(503, 'generation_unavailable', 'Field generation is unavailable with the configured AI provider.');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const output = await Promise.race([
       provider.generateField(input),
-      new Promise<never>((_resolve, reject) => {
+      ...(timeoutMs === null ? [] : [new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new ProviderError('timeout', 'ClewdR')), timeoutMs);
-      }),
+      })]),
     ]);
     const parsed = FieldGenerationResponseSchema.parse(output);
     return { text: validateFieldGenerationText(input.field, parsed.text) };
@@ -25,7 +25,7 @@ export async function executeFieldGeneration(provider: AiProvider, input: FieldG
 export function registerFieldGeneration(app: FastifyInstance, options: {
   authenticate(request: FastifyRequest): Promise<Actor>;
   provider: AiProvider;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }) {
   app.post('/api/authoring/generate-field', { bodyLimit: MAX_FIELD_GENERATION_REQUEST_BYTES }, async (request) => {
     const actor = await options.authenticate(request);

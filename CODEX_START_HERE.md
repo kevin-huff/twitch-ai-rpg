@@ -25,6 +25,30 @@ For solo testing, open the director workspace, choose **Cast & lobby**, and clic
 
 Player invites and the stage invite appear when the session is created, and each works once. **Seats & invitation links** in Cast & lobby shows a waiting invite again or reissues it. Invited roles can also share one browser in separate tabs. Player sign-ins last until the show ends, with a 90-day backstop (a longest-possible limit); stage links and Test as seats keep 12 hours, so a stage or test sign-in that lapses needs a reissued link. For OBS, use a stream link rather than the stage invite. A director can open the stage in the host browser and still receives the stage-only projection. Stop an already-running application with Ctrl+C and run `npm run local` to load the AI field drafting buttons and current server routes, then sign in and resume a saved session or create a custom show.
 
+## No AI time limit update
+
+Built on November 8, 2026, at Kevin's request: the app no longer gives up on the AI, so the next show measures how long plans, scripts and the other AI calls really take instead of guessing. Every ClewdR call still logs `AI call <label> ok|failed <ms> HTTP <status> stop <reason> tokens in <n> out <n>`; those lines in the Railway logs are the baseline to read after the show.
+
+What changed:
+
+- Limits (`apps/server/src/ai-deadlines.ts`): `AI_CALL_TIMEOUT_MS` and `AI_REQUEST_BUDGET_MS` are `null`. `ClewdrAiProvider` takes `timeoutMs: null` as no limit, and `boundedRequest` then sets no timer; 0 and other bad numbers are still refused, and a missing value still means 45 seconds. `commands.ts` sets no request budget when `providerTimeoutMs` is `null` (a missing value still means 30 seconds, which tests use). `executeFieldGeneration`, `executeCardGeneration` and `executeLineAssist` (Help me say it, formerly the private `suggest` in `line-assist.ts`) take `null` as no limit; a missing value still means 50 seconds.
+- The HTTP client (`apps/server/src/clewdr-fetch.ts`): ClewdR is called with `stream: false`, so it sends no headers until the whole reply is written, and Node's built-in fetch gives up after 300 seconds without headers. `createClewdrFetch()` uses undici's own `fetch` with an `Agent` whose `headersTimeout` and `bodyTimeout` are 0 (off), and `main.ts` gives it to the ClewdR provider only. `undici` 8.12.3 moved from a test-only dependency (through jsdom) to a pinned runtime dependency in `package.json`.
+- Migration `019_no_ai_deadline.sql` lets `usage_attempts.deadline_at` be null. An AI attempt with no limit records no deadline, so the operations view shows its job as running, never expired, and usage counts it pending, never interrupted, until it ends. Speech attempts keep their 45-second deadline.
+- The director page (`apps/web/src/table.ts`): when a plan or script request fails with a network error or a 502, 503 or 504 (the command route never sends those itself), the page refreshes. If the beat still has a running job it shows `AI_STILL_WORKING` as a notice instead of an error, and the beat panel keeps Plan again disabled because it reads the running job; otherwise the original error shows as before.
+- Help has a new troubleshooting entry, The AI is taking a long time, and `docs/ARCHITECTURE.md` says the same.
+
+Limits outside the app that still apply:
+
+- The homelab Nginx Proxy Manager host for clewdr.kevnet.cloud (proxy host 40) has `proxy_read_timeout 600s`, so one call that runs past 10 minutes ends with "ClewdR answered with an error (HTTP 504)."
+- Railway closes a public HTTP request after 5 minutes with no data moving (up to 15 minutes while data moves). The director's Plan request sends nothing until the plan is done, so a plan past 5 minutes loses its request; the server carries on, and the socket, which Railway does not limit, refreshes the page.
+- Whatever limits ClewdR and its upstream accounts apply.
+
+Left as they were on purpose: scenario drafts (a pre-show tool with 3, 4 and 6 minute jobs and 60 to 120 seconds a call), ElevenLabs (45 seconds a call), Sogni pictures (5 minutes), the director page's draft-audio request (5 minutes) and the 16,000-token reply cap.
+
+How it was checked: the tests were written first and watched failing (`no-time-limit.test.ts` and `abort.test.ts` in the providers, `ai-deadlines.test.ts`, `clewdr-fetch.test.ts`, the card, field and line executors, two cases in `operations.test.ts`, and `table.test.ts`), then passed. Final runs on the combined tree (the death ladder plus this change): typecheck clean; `npm test` 3,442 passed and 960 skipped; database suite 1,432 passed in 109 files; browser suite 61 passed with the opt-in load test skipped. A first full database run had one failure in `pictures.test.ts` (the stage showed the earlier picture), which passed 3 of 3 alone and in a second full run: the known `created_at` ordering under WSL's clock jumps. Live check through the real server (`main.ts` with `createClewdrFetch`): one scenario title drafted through ClewdR in 3.2 seconds (`AI call field ok 3239ms HTTP 200 stop end_turn tokens in 361 out 25`), one call, in the ledger. A call that really runs past five minutes was not tried live.
+
+Deploy notes: migration 019 runs at start-up. Builds before it always write a deadline, so they still run against the changed table.
+
 ## Death ladder update
 
 Built on November 3, 2026. Kevin's death ladder (decision 296) and board tasks 370, 371, 456, 372, 373 and 374 were built together with the twelve follow-ups found by sprint 5's final reviewers and the main agent's live check. A player character can now go down, others get a chance to save them, an unsaved character rolls once for their life, and a non-player character can die on an approved outcome. A dead character's player keeps watching, and the director can bring anyone back with a correction. Nothing is committed or deployed yet.

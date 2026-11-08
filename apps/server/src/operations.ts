@@ -30,11 +30,12 @@ async function writeUsage(pool: Pool, sessionId: string, action: () => Promise<v
   catch { partialSessions.add(sessionId); }
 }
 
-export async function startUsageAttempt(pool: Pool, input: { sessionId: string; beatId: string; operationId: string; kind: AttemptKind; characters?: number; timeoutMs: number }): Promise<string | null> {
+// A null timeout records no deadline: the attempt stays pending until its outcome is recorded.
+export async function startUsageAttempt(pool: Pool, input: { sessionId: string; beatId: string; operationId: string; kind: AttemptKind; characters?: number; timeoutMs: number | null }): Promise<string | null> {
   const id = randomUUID();
   let recorded = false;
   await writeUsage(pool, input.sessionId, async () => {
-    if (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0 || !Number.isSafeInteger(input.characters ?? 0) || (input.characters ?? 0) < 0) throw new Error('Invalid usage measurement.');
+    if ((input.timeoutMs !== null && (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0)) || !Number.isSafeInteger(input.characters ?? 0) || (input.characters ?? 0) < 0) throw new Error('Invalid usage measurement.');
     await pool.query('INSERT INTO usage_attempts(id,session_id,beat_id,operation_id,kind,deadline_at,characters) VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6*interval \'1 millisecond\',$7)', [id, input.sessionId, input.beatId, input.operationId, input.kind, input.timeoutMs, input.characters ?? 0]);
     attemptSessions.set(id, input.sessionId); recorded = true;
   });

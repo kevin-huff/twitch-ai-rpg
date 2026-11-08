@@ -1123,6 +1123,14 @@ export const topics: HelpTopic[] = [
         ],
       },
       {
+        heading: 'The AI is taking a long time',
+        paragraphs: [
+          'The app has no time limit on the AI. A plan or a script can take several minutes, and the beat panel shows the AI working until it finishes. To stop it, press Pause, then Pause anyway. That throws the work away, and you can plan or draft again after you resume.',
+          'If one request runs past five minutes, the page says: The connection to the server closed while the AI was still working. It keeps going, and the result appears here when it finishes. Nothing is lost. Wait, and the plan or script appears by itself.',
+          'One AI call that runs past 10 minutes is ended by the home server that passes requests to ClewdR. The beat panel then says ClewdR answered with an error (HTTP 504). Press Plan again or Try again, whichever the panel offers.',
+        ],
+      },
+      {
         heading: 'Drafting failed',
         paragraphs: [
           'The AI could not finish the script. Your locked lines and the dice are not affected. Press Try again on the director page. You can also press Write it myself and write the lines yourself. If the beat cannot be saved, open Abandon this beat under More.',

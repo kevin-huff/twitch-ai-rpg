@@ -11,7 +11,7 @@ interface LineAssistOptions {
   pool: Pool;
   authenticate(request: FastifyRequest, client?: PoolClient): Promise<Actor>;
   provider: AiProvider;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }
 type Params = { Params: { sessionId: string } };
 
@@ -57,13 +57,13 @@ export function lineAssistInput(state: SessionState, history: PublishedBeat[], c
   });
 }
 
-async function suggest(provider: AiProvider, input: LineAssistInput, timeoutMs: number): Promise<LineAssistResponse> {
+export async function executeLineAssist(provider: AiProvider, input: LineAssistInput, timeoutMs: number | null = 50_000): Promise<LineAssistResponse> {
   if (!provider.suggestLine) throw new AppError(503, 'generation_unavailable', 'The line helper is not available right now. You can still write the line yourself.');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const output = await Promise.race([
       provider.suggestLine(input),
-      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('The AI took too long.')), timeoutMs); }),
+      ...(timeoutMs === null ? [] : [new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('The AI took too long.')), timeoutMs); })]),
     ]);
     const parsed = LineAssistResponseSchema.safeParse(output);
     if (!parsed.success) throw new Error('The suggestion did not parse.');
@@ -98,7 +98,7 @@ export function registerLineAssist(app: FastifyInstance, options: LineAssistOpti
     if (running.has(key)) conflict('Already writing a suggestion.');
     running.add(key);
     try {
-      return await suggest(options.provider, input, options.timeoutMs ?? 50_000);
+      return await executeLineAssist(options.provider, input, options.timeoutMs);
     } finally { running.delete(key); }
   });
 }

@@ -1,8 +1,9 @@
-// The longest a single AI call may wait for a reply. Matches the most the provider accepts
-// (its timeout limit is 120 seconds), so a slow call fails with a clear reason instead of hanging.
-export const AI_CALL_TIMEOUT_MS = 120_000;
+// No time limit on AI calls (Kevin, 2026-11-08): the app waits as long as ClewdR takes, so a show measures real
+// timings instead of cutting slow calls off. Every call still logs its time and token counts, and the director can
+// stop a running plan or script with Pause, or a plan with a correction. Limits outside the app still apply: the homelab proxy in
+// front of ClewdR ends a call after 10 minutes, and Railway closes a page's request after 5 minutes with no data
+// moving. The server keeps working when that happens and the result reaches the page over its live connection.
+export const AI_CALL_TIMEOUT_MS: number | null = null;
 
-// The longest one whole AI request may take, across its attempts and the save. Railway closes a
-// public request after 5 minutes with no data moving, and the server sets no request timeout of its
-// own. Two full attempts plus the save must fit under that, so this stays below 5 minutes.
-export const AI_REQUEST_BUDGET_MS = 250_000;
+// The same for one whole AI request, across its attempts and the save.
+export const AI_REQUEST_BUDGET_MS: number | null = null;

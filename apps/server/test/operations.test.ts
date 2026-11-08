@@ -101,6 +101,33 @@ suite('director operations status and recorded provider usage', () => {
     expect(planning).toHaveBeenCalledOnce();
   });
 
+  it('records no deadline for a plan with no time limit, so it shows as running until it ends', async () => {
+    await app.close();
+    app = await buildApp({ databaseUrl: databaseUrl!, hostToken, origin, serveStatic: false, provider, providerTimeoutMs: null });
+    const fields = await collect();
+    let finish!: () => void;
+    const gate = new Promise<void>(done => { finish = done; }), original = provider.plan.bind(provider);
+    const planning = vi.spyOn(provider, 'plan').mockImplementationOnce(async context => { await gate; return original(context); });
+    const pending = app.inject({ method: 'POST', url: `/api/sessions/${sessionId}/commands`, headers: { origin, cookie: host }, payload: { commandId: randomUUID(), type: 'plan_beat', ...fields } }).then(response => response);
+    await waitFor(async () => planning.mock.calls.length === 1);
+    expect((await pool.query("SELECT deadline_at FROM usage_attempts WHERE session_id=$1 AND kind='plan'", [sessionId])).rows).toEqual([{ deadline_at: null }]);
+    const running = await status();
+    expect(running.progress).toEqual([expect.objectContaining({ kind: 'plan', status: 'running', finishedAt: null })]);
+    expect(running.usage.ai).toMatchObject({ attempts: 1, pending: 1, interrupted: 0 });
+    finish();
+    expect((await pending).statusCode).toBe(200);
+    expect((await status()).usage.ai).toMatchObject({ attempts: 1, succeeded: 1, pending: 0, interrupted: 0 });
+  });
+
+  it('keeps an attempt with no deadline pending, never interrupted, until its outcome is recorded', async () => {
+    const attemptId = await startUsageAttempt(pool, { sessionId, beatId: 'a-beat', operationId: randomUUID(), kind: 'render', timeoutMs: null });
+    expect(attemptId).not.toBeNull();
+    await pool.query('SELECT pg_sleep(0.01)');
+    expect((await status()).usage).toMatchObject({ partial: false, ai: { attempts: 1, pending: 1, interrupted: 0 } });
+    await finishUsageAttempt(pool, { attemptId, status: 'succeeded' });
+    expect((await status()).usage.ai).toMatchObject({ attempts: 1, succeeded: 1, pending: 0 });
+  });
+
   it('projects unknown overdue outcomes as interrupted and allows a later recorded completion to settle them', async () => {
     const before = await status();
     const attemptId = await startUsageAttempt(pool, { sessionId, beatId: 'a-beat', operationId: randomUUID(), kind: 'speech', characters: 3, timeoutMs: 1 });

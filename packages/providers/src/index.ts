@@ -99,13 +99,15 @@ function configuration<T>(schema: z.ZodType<T>, value: unknown, service: Service
   return parsed.data;
 }
 
-async function boundedRequest<T>(service: Service, timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal): Promise<T> {
+// A null timeout waits as long as the service takes; an abort from the caller still stops the request.
+async function boundedRequest<T>(service: Service, timeoutMs: number | null, operation: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
   const callerAborted = () => controller.abort();
   if (callerSignal?.aborted) controller.abort();
   else callerSignal?.addEventListener('abort', callerAborted, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
+    if (timeoutMs === null) return;
     timer = setTimeout(() => {
       reject(new ProviderError('timeout', service));
       controller.abort();
@@ -425,7 +427,7 @@ export interface ClewdrOptions {
   apiKey: string;
   model: string;
   fetch?: Fetch;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }
 
 export class ClewdrAiProvider implements AiProvider {
@@ -433,12 +435,12 @@ export class ClewdrAiProvider implements AiProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetch: Fetch;
-  private readonly timeoutMs: number;
+  private readonly timeoutMs: number | null;
 
   constructor(options: ClewdrOptions) {
     this.apiKey = configuration(configuredString, options.apiKey, 'ClewdR');
     this.model = configuration(configuredString, options.model, 'ClewdR');
-    this.timeoutMs = configuration(timeoutSchema, options.timeoutMs ?? 45_000, 'ClewdR');
+    this.timeoutMs = options.timeoutMs === null ? null : configuration(timeoutSchema, options.timeoutMs ?? 45_000, 'ClewdR');
     this.fetch = options.fetch ?? globalThis.fetch;
     try {
       const base = new URL(options.baseUrl);

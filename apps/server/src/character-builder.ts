@@ -22,7 +22,7 @@ interface BuilderOptions {
   hostToken: string;
   origin: string;
   provider: AiProvider;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   picturesEnabled?: boolean;
 }
 export interface BuilderRow {

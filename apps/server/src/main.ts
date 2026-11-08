@@ -1,5 +1,6 @@
 import { buildApp } from './app';
 import { AI_CALL_TIMEOUT_MS, AI_REQUEST_BUDGET_MS } from './ai-deadlines';
+import { createClewdrFetch } from './clewdr-fetch';
 import { parseHourlyLimit, parseSafeFilter } from './image-settings';
 import { ClewdrAiProvider, ElevenLabsSpeechProvider, SogniImageProvider } from '@rpg/providers';
 
@@ -18,7 +19,7 @@ const imageSetting = process.env.IMAGE_PROVIDER?.trim() || (process.env.SOGNI_KE
 if (!['sogni', 'off'].includes(imageSetting)) throw new Error('IMAGE_PROVIDER must be sogni or off.');
 const imageHourlyLimit = parseHourlyLimit(process.env.SOGNI_HOURLY_LIMIT);
 const safeContentFilter = parseSafeFilter(process.env.SOGNI_SAFE_FILTER);
-const provider = process.env.AI_PROVIDER === 'clewdr' ? new ClewdrAiProvider({ baseUrl: required('CLEWDR_BASE_URL'), apiKey: required('CLEWDR_API_KEY'), model: required('CLEWDR_MODEL'), timeoutMs: AI_CALL_TIMEOUT_MS }) : undefined;
+const provider = process.env.AI_PROVIDER === 'clewdr' ? new ClewdrAiProvider({ baseUrl: required('CLEWDR_BASE_URL'), apiKey: required('CLEWDR_API_KEY'), model: required('CLEWDR_MODEL'), timeoutMs: AI_CALL_TIMEOUT_MS, fetch: createClewdrFetch() }) : undefined;
 const speech = process.env.TTS_PROVIDER === 'elevenlabs' ? new ElevenLabsSpeechProvider({ apiKey: required('ELEVENLABS_API_KEY'), model: required('ELEVENLABS_MODEL'), voiceId: required('ELEVENLABS_VOICE_ID') }) : undefined;
 const images = imageSetting === 'sogni' ? new SogniImageProvider({ apiKey: required('SOGNI_KEY'), model: process.env.SOGNI_IMAGE_MODEL?.trim() || undefined, safeContentFilter }) : undefined;
 console.log(images ? `Pictures: on (Sogni, ${images.model}, safe-content filter ${safeContentFilter ? 'on' : 'off'}).` : 'Pictures: off.');

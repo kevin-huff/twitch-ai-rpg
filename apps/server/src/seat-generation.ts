@@ -13,7 +13,7 @@ interface SeatGenerationOptions {
   pool: Pool;
   authenticate(request: FastifyRequest, client?: PoolClient): Promise<Actor>;
   provider: AiProvider;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }
 type Params = { Params: { sessionId: string } };
 

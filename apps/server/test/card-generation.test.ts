@@ -114,6 +114,15 @@ describe('card executor', () => {
     const hung = await failure(executeCardGeneration(provider(() => new Promise(() => {})), input(), 20));
     expect(hung.status).toBe(504);
   });
+  it('waits as long as the AI takes when there is no time limit', async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = provider(() => new Promise(resolve => setTimeout(() => resolve(draft()), 600_000)));
+      const outcome = executeCardGeneration(slow, input(), null).then(value => ({ value }), (error: unknown) => ({ error }));
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(await outcome).toMatchObject({ value: { card: { displayName: 'Mara Venn' } } });
+    } finally { vi.useRealTimers(); }
+  });
   it('maps thrown errors, invalid drafts and blank names to 502 without provider text', async () => {
     const thrown = await failure(executeCardGeneration(provider(async () => { throw new Error('Private key leaked here'); }), input()));
     expect(thrown).toMatchObject({ status: 502, code: 'generation_failed', message: "The AI's draft did not fit the form. Try again, or fill in the form yourself." });

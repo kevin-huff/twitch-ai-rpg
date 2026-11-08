@@ -2,6 +2,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app';
 import { createPool } from '../src/database';
 import { FakeAiProvider } from '../src/fake-provider';
+import { executeFieldGeneration } from '../src/field-generation';
+import type { AiProvider } from '@rpg/contracts';
+
+describe('field executor', () => {
+  it('waits as long as the AI takes when there is no time limit', async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = { plan: vi.fn(), render: vi.fn(), generateField: () => new Promise(resolve => setTimeout(() => resolve({ text: 'The Drowned Bell' }), 600_000)) } as unknown as AiProvider;
+      const outcome = executeFieldGeneration(slow, { field: 'scenario.title', seed: 'a flooded town' }, null).then(value => ({ value }), (error: unknown) => ({ error }));
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(await outcome).toEqual({ value: { text: 'The Drowned Bell' } });
+    } finally { vi.useRealTimers(); }
+  });
+});
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTable } from './table';
+import { AI_STILL_WORKING, createTable } from './table';
 
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn() }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
@@ -21,6 +21,50 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/sessions/show-1/director');
   transport.snapshot.mockResolvedValue(null);
   transport.subscribe.mockReturnValue(() => {});
+});
+
+describe('table after a dropped AI request', () => {
+  const director = (status: string) => ({ role: 'director', activeBeat: { id: 'beat-1', generation: 3 }, jobs: [{ id: 'job-1', beatId: 'beat-1', task: 'plan', generation: 3, status, error: null }] });
+
+  it('refreshes and waits quietly when the connection drops while the AI is still working', async () => {
+    transport.command.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    transport.snapshot.mockResolvedValue(director('running'));
+    const table = createTable();
+    await expect(table.send(plan)).resolves.toBeUndefined();
+    expect(transport.snapshot).toHaveBeenCalled();
+    expect(table.notice.value).toBe(AI_STILL_WORKING);
+    expect(table.aiWorking.value).toBe(false);
+  });
+
+  it('treats a gateway timeout from the host the same way', async () => {
+    transport.command.mockRejectedValueOnce(Object.assign(new Error('Request failed (504).'), { status: 504 }));
+    transport.snapshot.mockResolvedValue(director('running'));
+    const table = createTable();
+    await expect(table.send(render)).resolves.toBeUndefined();
+    expect(table.notice.value).toBe(AI_STILL_WORKING);
+  });
+
+  it('reports the dropped request when the server is not still working on it', async () => {
+    transport.command.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    transport.snapshot.mockResolvedValue(director('failed'));
+    const table = createTable();
+    await expect(table.send(plan)).rejects.toThrow('Failed to fetch');
+    expect(table.notice.value).toBe('');
+  });
+
+  it('reports an error the app itself sent, as before', async () => {
+    transport.command.mockRejectedValueOnce(Object.assign(new Error('This beat is already locked.'), { status: 409 }));
+    transport.snapshot.mockResolvedValue(director('running'));
+    const table = createTable();
+    await expect(table.send(plan)).rejects.toThrow('This beat is already locked.');
+  });
+
+  it('reports a dropped request for commands that are not plan or render requests', async () => {
+    transport.command.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    transport.snapshot.mockResolvedValue(director('running'));
+    const table = createTable();
+    await expect(table.send({ type: 'set_guidance', commandId: 'c-guidance', standingNote: '' } as never)).rejects.toThrow('Failed to fetch');
+  });
 });
 
 describe('table aiWorking', () => {

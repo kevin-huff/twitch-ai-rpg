@@ -43,7 +43,7 @@ export interface AppOptions {
   origin: string;
   rollDie?: () => number;
   provider?: AiProvider;
-  providerTimeoutMs?: number;
+  providerTimeoutMs?: number | null;
   scenarioTimeoutMs?: number;
   serveStatic?: boolean;
   speech?: SpeechEngine;
