@@ -20,7 +20,9 @@ const ENDED_RETRY_MS = 2_000;
 // A twentieth of a second of silence: playing it inside a click is what lets a browser, iPhones included, play the narration on the same element later.
 const SILENT_CLIP = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 const LOST_AUDIO = 'This page lost the show audio. Reclaim audio, and narration that was playing resumes by itself.';
+const STOPPED_HERE = 'This page was stopped from the director page. Reload it to play the show audio here again.';
 const errorName = (cause: unknown) => (cause as { name?: unknown } | null)?.name;
+const errorCode = (cause: unknown) => (cause as { code?: unknown } | null)?.code;
 
 export function createPlaybackController(initial: Context) {
   let context = { ...initial };
@@ -140,7 +142,8 @@ export function createPlaybackController(initial: Context) {
         const data: unknown = await result.json();
         if (!result.ok) {
           const message = data && typeof data === 'object' && 'message' in data && typeof data.message === 'string' ? data.message : 'Reviewed audio is unavailable.';
-          throw Object.assign(new Error(message), { status: result.status });
+          const code = data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
+          throw Object.assign(new Error(message), { status: result.status, ...(code ? { code } : {}) });
         }
         return { data, start, end: now() };
       })()]);
@@ -296,7 +299,7 @@ export function createPlaybackController(initial: Context) {
     // A presenting page rides out a blip: the clip keeps playing and the next poll or renewal retries until the lease runs out.
     if (lease && !refused(cause) && now() < lease.deadline) return '';
     halt(); state.listening = false; state.muted = true;
-    if (lease) { dropLease(LOST_AUDIO); return ''; }
+    if (lease) { dropLease(errorCode(cause) === 'audio_stopped' ? STOPPED_HERE : LOST_AUDIO); return ''; }
     // A stage page that just lost its lease keeps the reclaim instruction instead of having it overwritten by every later failed poll.
     if (context.stage && state.error) return '';
     state.error = cause instanceof Error ? cause.message : 'Reviewed audio is unavailable. Try Listen again.';
@@ -462,7 +465,7 @@ export function createPlaybackController(initial: Context) {
       accept(PlaybackResponseSchema.parse(result.data).snapshot, result.start, result.end);
     } catch (cause) {
       if (!checkIdentity() || generation !== contextGeneration || fence !== responseGeneration || lease !== owner || !state.snapshot || currentKey(state.snapshot) !== key) return;
-      if (cause && typeof cause === 'object' && 'status' in cause && cause.status === 409) await refresh();
+      if (cause && typeof cause === 'object' && 'status' in cause && cause.status === 409 && errorCode(cause) !== 'audio_stopped') await refresh();
       else failed(cause, generation);
     }
   }

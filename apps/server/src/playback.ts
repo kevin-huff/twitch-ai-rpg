@@ -43,6 +43,7 @@ type Mutation = PlaybackCommand | PresenterCommand | PlaybackTelemetry | StopSho
 type Endpoint = 'commands' | 'presenter' | 'telemetry' | 'holder' | 'holder_stop';
 interface PresenterDetails { label: string; showTitle: string; agent: 'obs' | 'browser' }
 const HOLDER_FORBIDDEN = 'Only the director can see or stop the show audio.';
+const AUDIO_STOPPED = 'This page was stopped from the director page. Reload it to play the show audio here again.';
 const changed = (row: PlaybackRow, discrete = true) => { row.sample_revision++; if (discrete) row.revision++; };
 const pause = (row: PlaybackRow) => { row.status = 'paused'; row.anchor_time_ms = null; };
 function clearPresenter(row: PlaybackRow) {
@@ -82,7 +83,7 @@ async function save(client: PoolClient, row: PlaybackRow) {
   ]);
 }
 function holder(row: PlaybackRow, sessionTitle: string): ShowAudioHolderResponse {
-  if (!row.presenter_lease_id) return { holder: null };
+  if (!row.presenter_lease_id) return row.lapse_paused ? { holder: null, waitingToResume: true } : { holder: null };
   return {
     holder: {
       holderId: row.presenter_lease_id,
@@ -157,6 +158,7 @@ async function preparedManifest(client: PoolClient, sessionId: string, beatId: s
 async function control(client: PoolClient, row: PlaybackRow, actor: Actor, command: PlaybackCommand, sessionStatus: string, now: number) {
   if (actor.role !== 'host') throw new AppError(403, 'forbidden', 'Only the director can control shared playback.');
   checkRevision(row, command);
+  const lapseMarked = row.lapse_paused;
   row.lapse_paused = false;
   if (command.type === 'start') {
     if (sessionStatus === 'ended') conflict('An ended session cannot start playback.');
@@ -169,9 +171,13 @@ async function control(client: PoolClient, row: PlaybackRow, actor: Actor, comma
     if (command.type === 'stop') {
       row.status = 'stopped'; row.segment_index = null; row.position_ms = 0; row.anchor_time_ms = null;
     } else if (command.type === 'pause') {
-      if (row.status !== 'playing') conflict('Only playing narration can be paused.');
-      row.position_ms = Math.min(MAX_PLAYBACK_POSITION_MS, row.position_ms + Math.max(0, now - row.anchor_time_ms!));
-      pause(row);
+      if (row.status === 'paused' && lapseMarked) {
+        // Narration waiting to resume after a lapse: Pause only clears the mark and leaves it paused.
+      } else {
+        if (row.status !== 'playing') conflict('Only playing narration can be paused.');
+        row.position_ms = Math.min(MAX_PLAYBACK_POSITION_MS, row.position_ms + Math.max(0, now - row.anchor_time_ms!));
+        pause(row);
+      }
     } else if (command.type === 'resume') {
       if (sessionStatus === 'ended' || row.status !== 'paused' || row.segment_index === null || !row.presenter_lease_id) conflict('Enable a presenter and select paused narration before resuming.');
       row.status = 'playing'; row.anchor_time_ms = now + PLAYBACK_SCHEDULE_LEAD_MS;
@@ -270,6 +276,15 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
       try {
         let leaseId: string | undefined;
         let response: PlaybackResponse | ShowAudioHolderResponse;
+        const reportsAsPresenter = (endpoint === 'presenter' && (command as PresenterCommand).type !== 'claim') || endpoint === 'telemetry';
+        if (reportsAsPresenter) {
+          const sender = command as PresenterCommand | PlaybackTelemetry;
+          const clientId = 'clientId' in sender ? sender.clientId : null;
+          if (clientId && row.presenter_client_id !== clientId
+            && (await client.query('SELECT 1 FROM playback_stopped_clients WHERE session_id=$1 AND client_id=$2', [sessionId, clientId])).rowCount) {
+            throw new AppError(409, 'audio_stopped', AUDIO_STOPPED);
+          }
+        }
         if (endpoint === 'holder_stop') {
           response = await stopHolder(client, row, command as StopShowAudio);
         } else {
@@ -279,7 +294,7 @@ export function registerPlayback(app: FastifyInstance, options: PlaybackOptions)
             let details: PresenterDetails | undefined;
             if (presenterCommand.type === 'claim') {
               checkPresenterRole(actor);
-              if ((await client.query('SELECT 1 FROM playback_stopped_clients WHERE session_id=$1 AND client_id=$2', [sessionId, presenterCommand.clientId])).rowCount) conflict('This page was stopped from the director page. Reload it to play the show audio here again.');
+              if ((await client.query('SELECT 1 FROM playback_stopped_clients WHERE session_id=$1 AND client_id=$2', [sessionId, presenterCommand.clientId])).rowCount) conflict(AUDIO_STOPPED);
               details = await presenterDetails(client, request, actor, session.title);
             }
             leaseId = presenter(row, actor, presenterCommand, now, session.status, details);

@@ -120,6 +120,8 @@ export const LOOKS_CHANGED_MAX = 300;
 export const CardListSchema = z.enum(['wearing', 'owes', 'feelings']);
 export type CardList = z.infer<typeof CardListSchema>;
 export const CARD_LIST_MAX = { possessions: 20, wearing: WEARING_MAX, owes: OWES_MAX, feelings: FEELINGS_MAX } as const;
+export const CharacterConditionSchema = z.enum(['down', 'dead']);
+export type CharacterCondition = z.infer<typeof CharacterConditionSchema>;
 export const CharacterSchema = z.strictObject({
   id: IdSchema, displayName: z.string().min(1).max(80), traits: TraitsSchema,
   strain: z.number().int().min(0).max(STRAIN_MAX), appearance: z.string().max(1000).default(''),
@@ -136,10 +138,11 @@ export const CharacterSchema = z.strictObject({
   looksChanged: z.string().max(LOOKS_CHANGED_MAX).optional(),
   owes: z.array(z.string().max(CARD_ENTRY_MAX)).max(OWES_MAX).optional(),
   feelings: z.array(z.string().max(CARD_ENTRY_MAX)).max(FEELINGS_MAX).optional(),
+  condition: CharacterConditionSchema.optional(),
 });
 export type Character = z.infer<typeof CharacterSchema>;
 export const PublicCharacterSchema = CharacterSchema.pick({
-  id: true, displayName: true, traits: true, strain: true, appearance: true, approved: true, ready: true, portraitId: true,
+  id: true, displayName: true, traits: true, strain: true, appearance: true, approved: true, ready: true, portraitId: true, condition: true,
 });
 export type PublicCharacter = z.infer<typeof PublicCharacterSchema>;
 
@@ -163,6 +166,7 @@ export const NpcSchema = z.strictObject({
   communicationChannel: z.string().max(160).nullable().default(null), voiceProfileId: IdSchema,
   secrets: z.array(z.string().max(2000)).default([]), knowledge: z.array(NpcKnowledgeSchema).default([]),
   relationships: z.array(RelationshipSchema).default([]), version: RevisionSchema.default(1), portraitId: IdSchema.optional(),
+  condition: z.literal('dead').optional(),
 });
 export type Npc = z.infer<typeof NpcSchema>;
 export const PublicNpcSchema = NpcSchema.pick({
@@ -175,11 +179,14 @@ export const EffectSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('track_delta'), trackId: IdSchema, delta: z.number().int().min(-8).max(8), ...incident }),
   z.strictObject({ kind: z.literal('strain_delta'), characterId: IdSchema, delta: z.number().int().min(-4).max(4), ...incident }),
   z.strictObject({ kind: z.literal('fact_add'), factId: IdSchema, text: TextSchema, visibility: VisibilitySchema, ...incident }),
-  z.strictObject({ kind: z.literal('inventory_add'), characterId: IdSchema, item: z.string().min(1).max(160), ...incident }),
-  z.strictObject({ kind: z.literal('inventory_remove'), characterId: IdSchema, item: z.string().min(1).max(160), ...incident }),
-  z.strictObject({ kind: z.literal('card_add'), characterId: IdSchema, list: CardListSchema, entry: z.string().min(1).max(CARD_ENTRY_MAX), ...incident }),
-  z.strictObject({ kind: z.literal('card_remove'), characterId: IdSchema, list: CardListSchema, entry: z.string().min(1).max(CARD_ENTRY_MAX), ...incident }),
+  z.strictObject({ kind: z.literal('inventory_add'), characterId: IdSchema, item: z.string().trim().min(1).max(160), ...incident }),
+  z.strictObject({ kind: z.literal('inventory_remove'), characterId: IdSchema, item: z.string().trim().min(1).max(160), ...incident }),
+  z.strictObject({ kind: z.literal('card_add'), characterId: IdSchema, list: CardListSchema, entry: z.string().trim().min(1).max(CARD_ENTRY_MAX), ...incident }),
+  z.strictObject({ kind: z.literal('card_remove'), characterId: IdSchema, list: CardListSchema, entry: z.string().trim().min(1).max(CARD_ENTRY_MAX), ...incident }),
   z.strictObject({ kind: z.literal('looks_set'), characterId: IdSchema, text: z.string().max(LOOKS_CHANGED_MAX), ...incident }),
+  z.strictObject({ kind: z.literal('character_down'), characterId: IdSchema, ...incident }),
+  z.strictObject({ kind: z.literal('character_rescue'), characterId: IdSchema, ...incident }),
+  z.strictObject({ kind: z.literal('npc_death'), npcId: IdSchema, ...incident }),
 ]);
 export type Effect = z.infer<typeof EffectSchema>;
 export type CardListChange = { list: 'possessions' | CardList; op: 'add' | 'remove'; characterId: string; entry: string };
@@ -215,13 +222,18 @@ export const CorrectionChangeSchema = z.discriminatedUnion('kind', [
     knowledgeUpdates: z.array(z.strictObject({ npcId: IdSchema, knowledgeId: IdSchema, mode: z.enum(['correct', 'retain_belief']) })) }),
   z.strictObject({ kind: z.literal('strain_set'), characterId: IdSchema, value: z.number().int().min(0).max(STRAIN_MAX) }),
   z.strictObject({ kind: z.literal('track_set'), trackId: IdSchema, value: z.number().int().min(0).max(8) }),
+  z.strictObject({ kind: z.literal('condition_set'), characterId: IdSchema, condition: z.enum(['up', 'down', 'dead']) }),
+  z.strictObject({ kind: z.literal('npc_condition_set'), npcId: IdSchema, condition: z.enum(['alive', 'dead']) }),
 ]);
 export type CorrectionChange = z.infer<typeof CorrectionChangeSchema>;
 export const CorrectionChangesSchema = z.array(CorrectionChangeSchema).max(10).superRefine((changes, ctx) => {
   const targets = new Set<string>();
   const memories = new Set<string>();
   changes.forEach((change, index) => {
-    const target = JSON.stringify([change.kind, change.kind === 'fact_replace' ? change.factId : change.kind === 'strain_set' ? change.characterId : change.trackId]);
+    const id = change.kind === 'fact_replace' ? change.factId
+      : change.kind === 'strain_set' || change.kind === 'condition_set' ? change.characterId
+      : change.kind === 'npc_condition_set' ? change.npcId : change.trackId;
+    const target = JSON.stringify([change.kind, id]);
     if (targets.has(target)) ctx.addIssue({ code: 'custom', path: [index], message: 'Correct each state value only once.' });
     targets.add(target);
     if (change.kind === 'fact_replace') change.knowledgeUpdates.forEach((update, memoryIndex) => {
@@ -242,7 +254,7 @@ export const SceneSchema = z.strictObject({
 });
 export const LocationSchema = z.strictObject({ id: IdSchema, title: z.string().trim().min(1).max(160), description: z.string().max(4000).default('') });
 export type Location = z.infer<typeof LocationSchema>;
-export const NpcDefinitionSchema = NpcSchema.omit({ version: true, knowledge: true, relationships: true }).extend({
+export const NpcDefinitionSchema = NpcSchema.omit({ version: true, knowledge: true, relationships: true, condition: true }).extend({
   aliases: z.array(z.string().max(80)).max(10).default([]), personality: z.array(z.string().max(500)).max(10).default([]),
   limits: z.array(z.string().max(500)).max(10).default([]), dialogueExamples: z.array(z.string().max(1000)).max(10).default([]),
   secrets: z.array(z.string().max(2000)).max(10).default([]),
@@ -251,7 +263,7 @@ export const NpcDefinitionSchema = NpcSchema.omit({ version: true, knowledge: tr
 });
 export type NpcDefinition = z.infer<typeof NpcDefinitionSchema>;
 export const LiveNpcProfileSchema = NpcDefinitionSchema.omit({ id: true, knowledge: true, partyRelationship: true }).extend({
-  displayName: z.string().trim().min(1).max(80),
+  displayName: z.string().trim().min(1).max(80), condition: z.literal('dead').optional(),
 });
 export type LiveNpcProfile = z.infer<typeof LiveNpcProfileSchema>;
 export const ScenarioDefinitionSchema = z.strictObject({
@@ -346,7 +358,7 @@ export const RollSchema = z.strictObject({
   id: IdSchema, contractId: IdSchema, contractVersion: z.number().int().positive(), actorCharacterId: IdSchema,
   faces: z.tuple([z.number().int().min(1).max(6), z.number().int().min(1).max(6)]), trait: TraitSchema,
   traitModifier: z.number().int().min(0).max(2), edge: z.union([z.literal(0), z.literal(1)]),
-  total: z.number().int().min(2).max(15), band: OutcomeBandSchema,
+  total: z.number().int().min(2).max(15), band: OutcomeBandSchema, lastChance: z.literal(true).optional(),
 });
 export type Roll = z.infer<typeof RollSchema>;
 export const ResolvedOutcomeSchema = z.strictObject({
@@ -476,8 +488,39 @@ export const GuidanceSchema = z.strictObject({
 });
 export type Guidance = z.infer<typeof GuidanceSchema>;
 export const EMPTY_GUIDANCE: Guidance = { storyPlan: '', standingNote: '', aiCastNpcIds: [] };
-export function canSpeakInScene(npc: Pick<Npc, 'status' | 'locationId' | 'communicationChannel'>, locationId: string): boolean {
+export function canSpeakInScene(npc: Pick<Npc, 'status' | 'locationId' | 'communicationChannel' | 'condition'>, locationId: string): boolean {
+  if (npc.condition === 'dead') return false;
   return (npc.status === 'present' && npc.locationId === locationId) || (typeof npc.communicationChannel === 'string' && npc.communicationChannel.length > 0);
+}
+export const RESCUE_STRAIN = 6;
+export const LAST_CHANCE_STRAIN = 7;
+export const DOWNED_SAY_WORDS = 8;
+export function countWords(text: string): number {
+  return stripAudioTags(text).split(/\s+/).filter(Boolean).length;
+}
+export function strainStep(strain: number, condition: CharacterCondition | undefined, delta: number): { strain: number; down: boolean; over: number } {
+  const down = condition === undefined && delta > 0 && strain >= STRAIN_MAX;
+  return { strain: Math.min(STRAIN_MAX, Math.max(0, strain + delta)), down, over: down ? 0 : Math.max(0, strain + delta - STRAIN_MAX) };
+}
+export function incidentKey(effect: Effect): string {
+  let target: string;
+  switch (effect.kind) {
+    case 'track_delta': target = effect.trackId; break;
+    case 'fact_add': target = effect.factId; break;
+    case 'npc_death': target = effect.npcId; break;
+    case 'inventory_add': case 'inventory_remove': target = `${effect.characterId}:${effect.item}`; break;
+    case 'card_add': case 'card_remove': target = `${effect.characterId}:${effect.list}:${effect.entry}`; break;
+    default: target = effect.characterId;
+  }
+  return JSON.stringify([effect.incidentId ?? null, effect.kind, target]);
+}
+export function conditionLineRefusal(character: { displayName: string; condition?: CharacterCondition }, kind: 'say' | 'act' | 'ooc', words: number): string | null {
+  if (kind === 'ooc' || character.condition === undefined) return null;
+  const name = character.displayName;
+  if (character.condition === 'dead') return `${name} has died, so they cannot send lines. You can keep watching the story.`;
+  if (kind === 'act') return `${name} is down, so they cannot do anything. They can say a few words, up to ${DOWNED_SAY_WORDS}.`;
+  if (words > DOWNED_SAY_WORDS) return `${name} is down, so they can say only a few words, up to ${DOWNED_SAY_WORDS}. This line has ${words}.`;
+  return null;
 }
 export const DirectorSnapshotSchema = z.strictObject({
   ...snapshotBase, role: z.literal('director'), activeBeat: BeatSchema.nullable(),
@@ -592,6 +635,7 @@ export interface ProviderContext {
   aiCastNpcIds?: string[];
   storyPlan?: string;   // the show's private 'For the AI' plan; present only when not empty
   cameFrom?: string;   // title of the place where the last published beat happened; only before any beat is published after a move to a different place
+  deadNpcNames?: string[];   // display names of dead non-player characters (at most 50); present only when not empty
   sceneBeatCount?: number;   // beats published since the newest scene change (or since the show began)
 }
 
@@ -647,14 +691,16 @@ export const LineAssistInputSchema = z.strictObject({
 });
 export type LineAssistInput = z.input<typeof LineAssistInputSchema>;
 
+export interface AiCallOptions { signal?: AbortSignal }
+
 export interface AiProvider {
   generateField?(input: FieldGenerationRequest): Promise<FieldGenerationResponse>;
   generateCard?(input: CardGenerationInput): Promise<CardDraft>;
   generateScenario?(input: ScenarioGenerationRequest, options?: { deadlineAt?: number; voices?: VoiceChoice[] }): Promise<ScenarioDraft>;
   suggestLine?(input: LineAssistInput): Promise<LineAssistResponse>;
   describePicture?(input: PictureDescriptionRequest): Promise<string>;   // one paragraph; callers clean it
-  plan(context: ProviderContext): Promise<PlanResult>;
-  render(context: ProviderContext): Promise<AiDraft>;
+  plan(context: ProviderContext, options?: AiCallOptions): Promise<PlanResult>;
+  render(context: ProviderContext, options?: AiCallOptions): Promise<AiDraft>;
 }
 
 const CardPromptSchema = z.string().trim().min(1).max(4000);

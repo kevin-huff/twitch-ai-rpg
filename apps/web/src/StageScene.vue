@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { STRAIN_MAX } from '@rpg/contracts';
+
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
 import { portraitAlt, pictureUrl, displayedPicture, portraitIdFor, shownScenePicture } from './pictures';
@@ -321,6 +322,12 @@ onBeforeUnmount(() => {
   fontSet?.removeEventListener('loadingdone', onResize);
   observer?.disconnect();
 });
+
+function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): string | null {
+  if (character.condition === 'dead') return 'Dead';
+  if (character.condition === 'down') return 'Down';
+  return character.strain >= STRAIN_MAX ? 'Needs help' : null;
+}
 </script>
 
 <template>
@@ -432,7 +439,7 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="party" :class="{ crowded }" aria-label="The party">
-      <div v-for="character in characters" :key="character.id" class="party-card">
+      <div v-for="character in characters" :key="character.id" class="party-card" :data-condition="character.condition ?? 'up'">
         <img v-if="portraitSrc(character.id)" class="party-portrait" :src="portraitSrc(character.id)!" :alt="portraitAlt(character.displayName)" @error="markPortraitBroken(character.id)">
         <span v-else class="initials" aria-hidden="true">{{ initials(character.displayName) }}</span>
         <span class="party-text">
@@ -441,7 +448,7 @@ onBeforeUnmount(() => {
             <span class="pips" role="img" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`">
               <span v-for="pip in STRAIN_MAX" :key="pip" class="pip" :class="{ filled: pip <= character.strain }"></span>
             </span>
-            <span v-if="character.strain >= STRAIN_MAX" class="needs-help">Needs help</span>
+            <span v-if="partyFlag(character)" class="needs-help">{{ partyFlag(character) }}</span>
           </span>
         </span>
       </div>

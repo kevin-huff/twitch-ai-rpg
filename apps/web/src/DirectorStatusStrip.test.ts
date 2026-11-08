@@ -215,4 +215,63 @@ describe('DirectorStatusStrip', () => {
       wrapper.unmount();
     });
   });
+
+  describe('downed characters', () => {
+    const chars = [
+      { id: 'c1', displayName: 'Scrot', condition: 'down' },
+      { id: 'c2', displayName: 'Mira' },
+      { id: 'c3', displayName: 'Old Pete', condition: 'dead' },
+      { id: 'c4', displayName: 'Vee', condition: 'down' },
+    ];
+    const lc = (id: string, band: string, total: number) => ({ id: `last-chance:${id}`, actorCharacterId: id, lastChance: true, faces: [3, 4], total, band });
+    const beat = (phase: string, resolution: unknown = null) => ({ id: 'beat', phase, resolution });
+
+    it('says the window is open while the round takes lines or shows stakes', async () => {
+      for (const phase of ['collecting', 'stakes_review']) {
+        const wrapper = mountStrip({ characters: chars.slice(0, 2), activeBeat: beat(phase) });
+        await flushPromises();
+        expect(wrapper.get('[data-testid="condition-c1"]').text()).toBe("Scrot is down. Someone can save Scrot in this round. If nobody does, Scrot gets a last-chance roll when this round's dice are rolled.");
+        wrapper.unmount();
+      }
+    });
+
+    it('says the window closes at the next round when there is no round', async () => {
+      const wrapper = mountStrip({ characters: chars.slice(0, 2) });
+      await flushPromises();
+      expect(wrapper.get('[data-testid="condition-c1"]').text()).toBe("Scrot is down. Someone can save Scrot in the next round. If nobody does, Scrot gets a last-chance roll when that round's dice are rolled.");
+      expect(wrapper.find('.status-strip').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it('says how a rolled last chance lands', async () => {
+      const resolution = { rolls: [lc('c1', 'costly', 8), lc('c4', 'setback', 4)], outcomes: [], effects: [] };
+      const wrapper = mountStrip({ characters: chars, activeBeat: beat('locked', resolution) });
+      await flushPromises();
+      expect(wrapper.get('[data-testid="condition-c1"]').text()).toBe("Scrot's last chance rolled 8: Scrot pulls through at 7 of 8 when you publish.");
+      expect(wrapper.get('[data-testid="condition-c4"]').text()).toBe("Vee's last chance rolled 4: Vee dies when you publish.");
+      wrapper.unmount();
+    });
+
+    it('says a rescue lands, and a beat with no dice leaves the window open', async () => {
+      const rescued = mountStrip({ characters: chars.slice(0, 2), activeBeat: beat('draft_review', { rolls: [], outcomes: [], effects: [{ kind: 'character_rescue', characterId: 'c1' }] }) });
+      await flushPromises();
+      expect(rescued.get('[data-testid="condition-c1"]').text()).toBe('Scrot is saved when you publish and comes back up at 6 of 8.');
+      rescued.unmount();
+      const quiet = mountStrip({ characters: chars.slice(0, 2), activeBeat: beat('locked', { rolls: [], outcomes: [], effects: [] }) });
+      await flushPromises();
+      expect(quiet.get('[data-testid="condition-c1"]').text()).toBe('Scrot is down. This beat has no dice, so someone can still save Scrot in the next round.');
+      quiet.unmount();
+    });
+
+    it('shows two downed characters at once and none for up or dead ones', async () => {
+      const wrapper = mountStrip({ characters: chars });
+      await flushPromises();
+      expect(wrapper.findAll('[data-testid^="condition-"]').map(item => item.attributes('data-testid'))).toEqual(['condition-c1', 'condition-c4']);
+      wrapper.unmount();
+      const none = mountStrip({ characters: [chars[1], chars[2]] });
+      await flushPromises();
+      expect(none.find('.status-strip').exists()).toBe(false);
+      none.unmount();
+    });
+  });
 });

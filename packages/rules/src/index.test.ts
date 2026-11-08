@@ -461,7 +461,7 @@ describe('card lists: Wearing, Promises and debts, How people feel, Changed by t
     expect(answer(() => applyEffects(state(), [
       { kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'Owes Mara a favour' },
       { kind: 'card_remove', characterId: 'lead', list: 'owes', entry: 'Owes Mara a favour' },
-    ]))).toBe('Conflicting owes changes require a ruling.');
+    ]))).toBe('The outcomes change one entry in Promises and debts twice. Keep one change, then approve again.');
     const next = applyEffects(state(), [
       { kind: 'card_add', characterId: 'lead', list: 'owes', entry: 'Mara' },
       { kind: 'card_add', characterId: 'lead', list: 'feelings', entry: 'Mara' },
@@ -635,7 +635,7 @@ describe('isCardMismatch', () => {
 
   it('is false for other messages', () => {
     for (const message of [
-      'Conflicting inventory changes require a ruling.', 'Conflicting owes changes require a ruling.', 'Conflicting look changes require a ruling.',
+      'Conflicting inventory changes require a ruling.', 'The outcomes change one entry in Promises and debts twice. Keep one change, then approve again.', 'Conflicting look changes require a ruling.',
       'Conflicting nonnumeric changes require a ruling before lock.', 'Unknown character in effect.', 'Unknown track in effect.',
       'The generation was superseded. Its result was discarded.', 'The hats list is full.', 'Cannot duplicate an existing hats entry.', '',
     ]) expect(isCardMismatch(message), message).toBe(false);

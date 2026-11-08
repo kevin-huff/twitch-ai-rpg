@@ -11,6 +11,19 @@ const screens = readdirSync(dir)
   .join('\n');
 
 const labels = [
+  'Correct a condition',
+  'Set a condition',
+  'Bring back',
+  'Last chance',
+  'Down',
+  'Dead',
+  'Pause shared audio',
+  'Needs help',
+  'Show status',
+  'Ask for a pause',
+  'Narrate the scene',
+  "Players' characters",
+  'Non-player characters',
   'Player writes their own character',
   'Describe your character',
   'Submit to director',

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
-  AiDraftSchema, ActionContractSchema, GuidanceSchema, ImageIdSchema, canSpeakInScene, fakeVoiceSource, hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, voiceTextMatches, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
+  AiDraftSchema, ActionContractSchema, GuidanceSchema, ImageIdSchema, canSpeakInScene, DOWNED_SAY_WORDS, conditionLineRefusal, countWords, fakeVoiceSource, hasAudioTags, isSpokenSegmentKind, playerWords, stripAudioTags, voiceTextMatches, type AiProvider, type Beat, type CharacterCardDefinition, type Character, type Command, type CommandResponse,
   type ContinuityUpdate, type CorrectionChange, type Guidance, type Effect, type ProviderContext, type PublicCorrection, type PublishedBeat, type SessionState, type Submission, type VoiceSource,
 } from '@rpg/contracts';
 import { ProviderError } from '@rpg/providers';
@@ -15,7 +15,7 @@ import { RequestBudgetError, failureSentence } from './generation-failure';
 import { RELEASED } from './picture-views';
 import { AppError, authorize, conflict, corrections, currentBeat, history, project, readGuidance, readState, saveBeat, saveGuidance, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
-const staleStakes = "These stakes no longer match what the characters carry, for example after Edit look and items. Press Plan again for new stakes, or fix the items under Edit typed effects and approve again.";
+const staleStakes = "These stakes no longer match the characters' cards. Something they carry or wear, a promise or debt, how people feel, or who is down or has died changed after the plan, for example through Edit look and items. Press Plan again for new stakes, or fix the outcomes under Edit typed effects and approve again.";
 function itemErrorOrConflict<T>(run: () => T): T {
   try { return run(); } catch (error) {
     if (error instanceof AppError || !(error instanceof Error)) throw error;
@@ -128,7 +128,7 @@ function validateSources(updates: ContinuityUpdate[], beat: Beat, state: Session
   for (const update of updates) {
     if (!update.sourceSubmissionIds.every((id) => beat.lockedSubmissions.some((submission) => submission.id === id))) conflict('Continuity must cite accepted player input.');
     if (update.kind === 'npc_knowledge') {
-      if (!state.npcs.some((npc) => npc.id === update.npcId && ((npc.status === 'present' && npc.locationId === state.session.scene.locationId) || npc.communicationChannel))) conflict('That NPC cannot witness this exchange.');
+      if (!state.npcs.some((npc) => npc.id === update.npcId && canSpeakInScene(npc, state.session.scene.locationId))) conflict('That NPC cannot witness this exchange.');
       if (update.sourceEntityId && !beat.lockedSubmissions.some((submission) => submission.characterId === update.sourceEntityId && update.sourceSubmissionIds.includes(submission.id))) conflict('The knowledge source does not match its submission.');
     }
   }
@@ -139,7 +139,7 @@ function validateDraft(draft: unknown, state: SessionState, beat: Beat) {
     if (segment.voiceText !== undefined && !voiceTextMatches(segment.text, segment.voiceText)) delete segment.voiceText;
     if (segment.kind === 'npc_dialogue') {
       const speaker = state.npcs.find((npc) => npc.id === segment.speakerNpcId);
-      if (!speaker || ((speaker.status !== 'present' || speaker.locationId !== state.session.scene.locationId) && !speaker.communicationChannel)) conflict('An NPC speaker is unknown or unavailable.');
+      if (!speaker || !canSpeakInScene(speaker, state.session.scene.locationId)) conflict('An NPC speaker is unknown or unavailable.');
     }
     if (segment.recipientCharacterIds.some((id) => !state.characters.some((character) => character.id === id))) conflict('An unknown player is addressed.');
   }
@@ -175,20 +175,32 @@ function safeContext(state: SessionState, beat: Beat, selected: Submission[], pu
   safe.npcs = safe.npcs.filter((npc) => canSpeakInScene(npc, locationId) && (chosen.size ? chosen.has(npc.id) || addressed.has(npc.id) : !addressed.size || addressed.has(npc.id))).map((npc) => ({ ...npc, secrets: [], hiddenIdentity: null }));
   safe.facts = safe.facts.filter((fact) => fact.visibility === 'public');
   safe.tracks = safe.tracks.filter((track) => track.visibility === 'public');
-  return { state: safe, ...(place ? { place } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12),
+  const deadNpcNames = state.npcs.filter((npc) => npc.condition === 'dead').map((npc) => npc.displayName).slice(0, 50);
+  return { state: safe, ...(place ? { place } : {}), ...(deadNpcNames.length ? { deadNpcNames } : {}), beat: structuredClone(beat), submissions: structuredClone(selected), history: published.slice(-12), corrections: publicCorrections.slice(-12),
     ...(guidance.standingNote ? { standingNote: guidance.standingNote } : {}), ...(guidance.storyPlan ? { storyPlan: guidance.storyPlan } : {}), ...(chosen.size ? { aiCastNpcIds: [...chosen] } : {}),
     sceneBeatCount: arrival.sceneBeatCount, ...(arrival.cameFrom ? { cameFrom: arrival.cameFrom } : {}) };
 }
 
+const deadNpcPresent = (npc: { displayName: string }) => `${npc.displayName} has died. Bring them back with a correction first.`;
 function validateCorrections(changes: CorrectionChange[], state: SessionState) {
   const targets = new Set<string>();
   const memories = new Set<string>();
   for (const change of changes) {
-    const targetId = change.kind === 'fact_replace' ? change.factId : change.kind === 'strain_set' ? change.characterId : change.trackId;
+    const targetId = change.kind === 'fact_replace' ? change.factId
+      : change.kind === 'strain_set' || change.kind === 'condition_set' ? change.characterId
+      : change.kind === 'npc_condition_set' ? change.npcId : change.trackId;
     const target = JSON.stringify([change.kind, targetId]);
-    if (targets.has(target)) conflict('Correct each fact, character strain, or track only once.');
+    if (targets.has(target)) conflict('Correct each fact, character strain, condition, or track only once.');
     targets.add(target);
-    if (change.kind === 'strain_set') {
+    if (change.kind === 'condition_set') {
+      const character = state.characters.find(item => item.id === change.characterId);
+      if (!character) conflict('That character no longer exists.');
+      if ((character!.condition ?? 'up') === change.condition) conflict('A condition correction must change the current condition.');
+    } else if (change.kind === 'npc_condition_set') {
+      const npc = state.npcs.find(item => item.id === change.npcId);
+      if (!npc) conflict('That non-player character no longer exists.');
+      if ((npc!.condition === 'dead' ? 'dead' : 'alive') === change.condition) conflict('A condition correction must change the current condition.');
+    } else if (change.kind === 'strain_set') {
       const character = state.characters.find(item => item.id === change.characterId);
       if (!character) conflict('That character no longer exists.');
       if (character!.strain === change.value) conflict('A strain correction must change the current value.');
@@ -270,7 +282,14 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       const changedNpcs = new Set<SessionState['npcs'][number]>();
       for (const change of command.changes) {
         if (change.kind === 'strain_set') state.characters.find(item => item.id === change.characterId)!.strain = change.value;
-        else if (change.kind === 'track_set') state.tracks.find(item => item.id === change.trackId)!.current = change.value;
+        else if (change.kind === 'condition_set') {
+          const character = state.characters.find(item => item.id === change.characterId)!;
+          if (change.condition === 'up') delete character.condition; else character.condition = change.condition;
+        } else if (change.kind === 'npc_condition_set') {
+          const npc = state.npcs.find(item => item.id === change.npcId)!;
+          if (change.condition === 'dead') { npc.condition = 'dead'; npc.status = 'offstage'; } else delete npc.condition;
+          changedNpcs.add(npc);
+        } else if (change.kind === 'track_set') state.tracks.find(item => item.id === change.trackId)!.current = change.value;
         else {
           const fact = state.facts.find(item => item.id === change.factId)!;
           fact.text = change.text; fact.sourceEventId = eventId;
@@ -308,6 +327,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       let privateSource: string | undefined;
       if (command.type === 'change_scene') {
         if (command.presentNpcIds.some(id => !state.npcs.some(npc => npc.id === id))) conflict('A selected NPC no longer exists.');
+        const deadHere = state.npcs.find(npc => npc.condition === 'dead' && command.presentNpcIds.includes(npc.id));
+        if (deadHere) conflict(deadNpcPresent(deadHere));
         let locationId: string;
         if (command.location.kind === 'existing') {
           locationId = command.location.locationId;
@@ -328,7 +349,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!state.locations.some(location => location.id === command.profile.locationId)) conflict('Choose a known location for this NPC.');
         if (command.profile.status === 'present' && command.profile.locationId !== state.session.scene.locationId) conflict('Present NPCs must be at the current scene location.');
         // Portraits change only through the picture routes, so an old form cannot undo a newer one.
-        const { portraitId: _portraitId, ...profile } = command.profile;
+        const { portraitId: _portraitId, condition: _condition, ...profile } = command.profile;
+        if (npc?.condition === 'dead' && profile.status === 'present') conflict(deadNpcPresent(npc));
         if (npc) { Object.assign(npc, profile); npc.version++; }
         else {
           if (state.npcs.length >= 50) conflict('A session supports at most 50 NPCs.');
@@ -342,7 +364,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!privateSource?.trim()) conflict('Choose an existing nonblank secret or hidden identity.');
         witnesses = command.witnessNpcIds.map(id => {
           const npc = state.npcs.find(item => item.id === id);
-          if (!npc || npc.status !== 'present' || npc.locationId !== state.session.scene.locationId) conflict('Every witness must be physically present in the current scene.');
+          if (!npc || npc.status !== 'present' || npc.locationId !== state.session.scene.locationId || !canSpeakInScene(npc, state.session.scene.locationId)) conflict('Every witness must be physically present in the current scene.');
           return npc!;
         });
       }
@@ -439,6 +461,9 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (!state.setup.started || !character?.approved) conflict('Start the session before joining in-character play.');
       }
 
+      const speaker = state.characters.find((item) => item.id === actor.character_id);
+      const refusal = speaker ? conditionLineRefusal(speaker, command.kind, countWords(playerWords(command))) : null;
+      if (refusal) throw new AppError(400, 'invalid_input', refusal);
       if (command.expectedInputEpoch !== state.session.inputEpoch) conflict('The input window changed. Review your input before submitting again.');
       if (command.contextBeatId && (!beat || command.contextBeatId !== beat.id || !['collecting', 'stakes_review'].includes(beat.phase))) conflict('This beat is locked or no longer active. Queue the line for the next beat.');
       if (!command.text.trim() && command.kind !== 'act') throw new AppError(400, 'invalid_input', 'Speech and out-of-character notes need text.');
@@ -447,7 +472,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         const words = playerWords(command);
         if (hasAudioTags(words) && !stripAudioTags(words).trim()) throw new AppError(400, 'invalid_input', 'Write some words as well as the tags.');
       }
-      if (command.recipientNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id && ((npc.status === 'present' && npc.locationId === state.session.scene.locationId) || npc.communicationChannel)))) conflict('The addressed NPC is unavailable.');
+      if (command.recipientNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id && canSpeakInScene(npc, state.session.scene.locationId)))) conflict('The addressed NPC is unavailable.');
       const previous = command.submissionId ? all.find((item) => item.id === command.submissionId) : undefined;
       if (command.submissionId && (!previous || previous.characterId !== actor.character_id)) throw new AppError(404, 'not_found', 'Submission was not found.');
       if ((previous?.revision ?? 0) !== command.expectedSubmissionRevision) conflict('Your submission changed. Refresh before saving.');
@@ -506,6 +531,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (command.expectedStateRevision !== state.session.stateRevision) conflict('The show changed. Look again, then save.');
       if (command.type === 'set_cast') {
         if (command.presentNpcIds.some((id) => !state.npcs.some((npc) => npc.id === id))) conflict('A chosen character is not in this show.');
+        const deadWanted = state.npcs.find((npc) => npc.condition === 'dead' && command.presentNpcIds.includes(npc.id));
+        if (deadWanted) conflict(deadNpcPresent(deadWanted));
         const here = (npc: SessionState['npcs'][number]) => npc.status === 'present' && npc.locationId === state.session.scene.locationId;
         const before = state.npcs.filter(here).map((npc) => npc.id);
         const wanted = new Set(command.presentNpcIds);
@@ -584,6 +611,17 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
           }
           const selected = all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id));
           if (selected.length !== beat.selectedSubmissionIds.length || selected.some((submission) => !['queued', 'selected'].includes(submission.status) || submission.kind === 'ooc' || (submission.contextBeatId && submission.contextBeatId !== beat!.id))) conflict('Only current, unlocked in-character submissions can be selected.');
+          for (const submission of selected) {
+            const speaker = state.characters.find((item) => item.id === submission.characterId);
+            if (speaker?.condition === 'dead') conflict(`${speaker.displayName} has died, so their lines cannot be used. Untick them.`);
+            if (speaker?.condition === 'down' && (submission.kind === 'act' || countWords(playerWords(submission)) > DOWNED_SAY_WORDS)) conflict(`${speaker.displayName} is down, so only a Say line of up to ${DOWNED_SAY_WORDS} words can be used. Untick their other lines.`);
+          }
+          for (const submission of selected) {
+            const dead = state.npcs.find((npc) => npc.condition === 'dead' && submission.recipientNpcIds.includes(npc.id));
+            if (dead) conflict(`A selected line speaks to ${dead.displayName}, who has died. Untick it.`);
+          }
+          const rollsNeeded = selected.length + state.characters.filter((item) => item.condition === 'down').length;
+          if (rollsNeeded > MAX_ROLLS_PER_ROUND) conflict(tooManyRollsMessage(rollsNeeded));
           for (const submission of selected) { submission.status = 'selected'; await saveSubmission(client, submission); }
           beat.stakesApproved = false;
         } else if (!['locked', 'draft_review'].includes(beat.phase)) conflict('Lock the accepted inputs before rendering.');
@@ -653,7 +691,9 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
           beat.resolution.effects.push(...roundEffects);
           itemErrorOrConflict(() => applyResolution(state, beat!.resolution!));
         }
-        for (const roll of beat.resolution.rolls) await client.query('INSERT INTO rolls(id,session_id,beat_id,contract_id,data) VALUES($1,$2,$3,$4,$5)', [roll.id, sessionId, beat.id, roll.contractId, roll]);
+        const lastChances = beat.resolution.rolls.filter((roll) => roll.lastChance).map((roll) => ({ characterId: roll.actorCharacterId, faces: roll.faces, total: roll.total, band: roll.band }));
+        if (lastChances.length) eventData = { ...eventData, lastChances };
+        for (const roll of beat.resolution.rolls.filter((item) => !item.lastChance)) await client.query('INSERT INTO rolls(id,session_id,beat_id,contract_id,data) VALUES($1,$2,$3,$4,$5)', [roll.id, sessionId, beat.id, roll.contractId, roll]);
         for (const submission of selected) { submission.status = 'locked'; await saveSubmission(client, submission); }
         beat.phase = 'locked'; beat.generation++;
         await client.query("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND task='plan' AND status='running'", [beat.id]);
@@ -705,6 +745,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         if (audio) await client.query("INSERT INTO audio_manifests(session_id,beat_id,config_hash,status,lease_id,lease_until,manifest) VALUES($1,$2,$3,'ready',$4,clock_timestamp(),$5)", [sessionId, beat.id, audio.configHash, randomUUID(), audio.manifest]);
         for (const submission of all.filter((submission) => beat!.selectedSubmissionIds.includes(submission.id))) { submission.status = 'published'; await saveSubmission(client, submission); }
         beat.phase = 'published'; beat.generation++;
+        // A newer published beat wins over narration that was paused when the show audio dropped.
+        await client.query('UPDATE session_playback SET lapse_paused=false, revision=revision+1, sample_revision=sample_revision+1 WHERE session_id=$1 AND lapse_paused', [sessionId]);
         await saveState(client, state);
       }
       beat.revision++; await saveBeat(client, beat);
@@ -745,7 +787,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
   let stop!: () => void;
-  const stopped = new Promise<never>((_, reject) => { stop = () => { cancelled = true; reject(new GenerationCancelled()); }; });
+  const abort = new AbortController();
+  const stopped = new Promise<never>((_, reject) => { stop = () => { cancelled = true; abort.abort(); reject(new GenerationCancelled()); }; });
   stopped.catch(() => undefined);
   cancelHooks.set(generation.jobId, stop);
   const attemptId = await startUsageAttempt(deps.pool, { sessionId, beatId: generation.context.beat.id, operationId: generation.jobId, kind: generation.task, timeoutMs: deps.providerTimeoutMs ?? 30_000 });
@@ -753,11 +796,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
   const started = Date.now();
   try {
     if (cancelled) throw new GenerationCancelled();
-    const call = Promise.resolve(generation.task === 'plan' ? deps.provider.plan(generation.context) : deps.provider.render(generation.context));
+    const options = { signal: abort.signal };
+    const call = Promise.resolve(generation.task === 'plan' ? deps.provider.plan(generation.context, options) : deps.provider.render(generation.context, options));
     call.catch(() => undefined);
     output = await Promise.race([
       call,
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new RequestBudgetError()), deps.providerTimeoutMs ?? 30_000); }),
+      new Promise((_, reject) => { timer = setTimeout(() => { abort.abort(); reject(new RequestBudgetError()); }, deps.providerTimeoutMs ?? 30_000); }),
       stopped,
     ]);
   } catch (error) {

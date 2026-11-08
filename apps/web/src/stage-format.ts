@@ -32,10 +32,15 @@ export function traitName(trait: Trait): string {
   return trait.charAt(0).toUpperCase() + trait.slice(1);
 }
 
-export function rollBreakdown(roll: Pick<Roll, 'faces' | 'trait' | 'traitModifier' | 'edge'>): string {
+export function rollBreakdown(roll: Pick<Roll, 'faces' | 'trait' | 'traitModifier' | 'edge' | 'lastChance'>): string {
+  if (roll.lastChance) return `Last chance: ${roll.faces.join(' + ')}`;
   const parts = [...roll.faces.map(String), `${traitName(roll.trait)} ${roll.traitModifier}`];
   if (roll.edge === 1) parts.push('Edge 1');
   return parts.join(' + ');
+}
+
+export function rollSentence(roll: Pick<Roll, 'total' | 'band' | 'lastChance'>, name: string): string {
+  return `${roll.lastChance ? `${name}'s last chance` : name} rolled ${roll.total}: ${bandLabel(roll.band)}`;
 }
 
 // Mirrors the rules: no check takes the clean result; a blocked action publishes its setback text.

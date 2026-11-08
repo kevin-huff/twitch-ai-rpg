@@ -397,6 +397,62 @@ suite('durable coordinated public playback', () => {
     expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
   });
 
+  const waitingFlag = async () => (await request('/holder')).json().waitingToResume;
+
+  it('flags narration waiting to resume after a lapse while playing, and not after a release', async () => {
+    await playToPosition();
+    expect(await waitingFlag()).toBeUndefined();
+    await expireLease();
+    expect(await waitingFlag()).toBe(true);
+    expect((await request('/holder')).json()).toEqual({ holder: null, waitingToResume: true });
+    await claim();
+    expect(await waitingFlag()).toBeUndefined();
+    await ok('/presenter', owner('release'), stage);
+    expect(snapshot.status).toBe('paused');
+    expect(await waitingFlag()).toBeUndefined();
+    expect((await request('/holder')).json()).toEqual({ holder: null });
+  });
+
+  it('keeps lapse-paused narration paused when the director presses Pause, and a later claim does not resume it', async () => {
+    await playToPosition();
+    await expireLease();
+    expect(await waitingFlag()).toBe(true);
+    const before = snapshot.revision;
+    await ok('/commands', command('pause'));
+    expect(snapshot).toMatchObject({ status: 'paused', positionMs: 42, segmentIndex: 0 });
+    expect(snapshot.revision).toBeGreaterThan(before);
+    expect(await waitingFlag()).toBeUndefined();
+    expect((await pool.query('SELECT lapse_paused FROM session_playback WHERE session_id=$1', [sessionId])).rows[0].lapse_paused).toBe(false);
+    await claim();
+    expect(snapshot.status).toBe('paused');
+    expect(Object.keys(await holderOf()).sort()).toEqual(plainKeys);
+    expect((await request('/commands', command('pause'))).statusCode).toBe(409);
+  });
+
+  it('tells a page the director stopped that it was stopped, on renew, release and telemetry', async () => {
+    await playToPosition();
+    const stoppedClient = clientId;
+    const stoppedLease = leaseId;
+    const stopped = await request('/holder/stop', { commandId: randomUUID(), holderId: stoppedLease });
+    expect(stopped.statusCode, stopped.body).toBe(200);
+    await get();
+    const expectStopped = async (path: string, payload: object) => {
+      const response = await request(path, payload, stage);
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'audio_stopped', message: 'This page was stopped from the director page. Reload it to play the show audio here again.' });
+    };
+    const asStopped = { clientId: stoppedClient, leaseId: stoppedLease };
+    await expectStopped('/presenter', { ...owner('renew', { renewalSequence: 99 }), ...asStopped });
+    await expectStopped('/presenter', { ...owner('release'), ...asStopped });
+    await expectStopped('/telemetry', { ...telemetry('position', { positionMs: 50 }), ...asStopped });
+    await claim();
+    const other = await request('/presenter', { ...owner('renew', { renewalSequence: 1 }) }, stage);
+    expect(other.statusCode, other.body).toBe(200);
+    const unknown = await request('/presenter', { ...owner('renew', { renewalSequence: 2 }), clientId: randomUUID(), leaseId: randomUUID() }, stage);
+    expect(unknown.statusCode).toBe(409);
+    expect(unknown.json().code).toBe('conflict');
+  });
+
   it('never resumes after a lapse when the director then stops or skips', async () => {
     await playToPosition();
     await expireLease();

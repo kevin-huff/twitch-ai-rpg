@@ -1,8 +1,8 @@
-import type { PublicBeat, Submission } from '@rpg/contracts';
+import { DOWNED_SAY_WORDS, type CharacterCondition, type PublicBeat, type Submission } from '@rpg/contracts';
 
 export type PlayerStatus = { headline: string; detail: string; tone: 'wait' | 'act' | 'done' };
 
-export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | null; own: Submission[]; name?: string; inputEpoch?: number }): PlayerStatus {
+export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | null; own: Submission[]; name?: string; inputEpoch?: number; condition?: CharacterCondition }): PlayerStatus {
   const { sessionStatus, beat, own, inputEpoch } = input;
   const name = input.name ?? 'your character';
   if (sessionStatus === 'ended') return { headline: 'The show is over', detail: 'Thanks for playing. You can close this page.', tone: 'wait' };
@@ -16,6 +16,7 @@ export function playerStatus(input: { sessionStatus: string; beat: PublicBeat | 
   const waiting = (item: Submission) => !item.contextBeatId && inputEpoch !== undefined && (item.inputEpoch === inputEpoch - 1 || (item.inputEpoch <= inputEpoch - 2 && item.inputEpoch >= inputEpoch - 4 && fits(item)));
   if (beat.phase === 'collecting' && own.some(item => item.kind !== 'ooc' && (item.status === 'selected' || (item.status === 'queued' && (item.contextBeatId === beat.id || waiting(item)))))) return { headline: 'The director has your line', detail: 'The director is picking lines. You can still change yours or take it back.', tone: 'done' };
   if (beat.phase === 'collecting') {
+    if (input.condition === 'down') return { headline: `What does ${name} say?`, detail: `Type a few words, up to ${DOWNED_SAY_WORDS}, then press Send.`, tone: 'act' };
     return beat.kind === 'action'
       ? { headline: `What does ${name} do?`, detail: 'Describe one thing to try, then press Send. Dice may decide how it goes.', tone: 'act' }
       : { headline: `What does ${name} say?`, detail: 'Type the exact words, then press Send.', tone: 'act' };

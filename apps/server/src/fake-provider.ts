@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   FIELD_GENERATION_FIELDS, FieldGenerationRequestSchema, CardGenerationInputSchema, ScenarioGenerationRequestSchema, allowsPremise,
   type CardDraft, type CardGenerationInput, type ScenarioDraft, type ScenarioGenerationRequest, type FieldGenerationField, validateFieldGenerationText,
-  type AiProvider, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
+  type AiProvider, type AiCallOptions, type ProviderContext, type PlanResult, type AiDraft, type ActionContract, type Effect,
   type FieldGenerationRequest, type FieldGenerationResponse, type FieldGenerationCharacterContext,
   PictureDescriptionRequestSchema, type PictureDescriptionRequest,
   LineAssistInputSchema, type LineAssistInput, type LineAssistResponse, type VoiceChoice, hasAudioTags, stripAudioTags, STRAIN_MAX,
@@ -144,7 +144,8 @@ export class FakeAiProvider implements AiProvider {
     };
   }
 
-  async plan(context: ProviderContext): Promise<PlanResult> {
+  async plan(context: ProviderContext, options?: AiCallOptions): Promise<PlanResult> {
+    options?.signal?.throwIfAborted();
     const { submissions, state } = context;
     const progress = state.tracks.find((track) => track.kind === 'progress' && track.visibility === 'public' && track.enabled);
     const danger = state.tracks.find((track) => track.kind === 'danger' && track.visibility === 'public' && track.enabled);
@@ -188,7 +189,8 @@ export class FakeAiProvider implements AiProvider {
     });
     return { classification: 'action', contracts, directorSummary: 'Review these fixture stakes before accepting. They are deterministic rehearsal proposals.' };
   }
-  async render(context: ProviderContext): Promise<AiDraft> {
+  async render(context: ProviderContext, options?: AiCallOptions): Promise<AiDraft> {
+    options?.signal?.throwIfAborted();
     if (!context.submissions.length) return {
       segments: [{ kind: 'narration', text: context.state.session.scene.description.trim() || `The story opens at ${context.state.session.scene.title}.`, recipientCharacterIds: [], delivery: 'neutral' }],
       continuity: [], directorSummary: 'The opening narration sets the scene from the scenario.',

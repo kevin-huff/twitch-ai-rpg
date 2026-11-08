@@ -31,12 +31,15 @@ function beat(overrides: Record<string, unknown> = {}) {
 }
 
 let skootyStrain = 0;
+let skootyCondition: 'down' | 'dead' | undefined;
+let others: { id: string; displayName: string; condition?: 'down' | 'dead' }[] = [];
 function snapshot() {
+  const condition = skootyCondition ? { condition: skootyCondition } : {};
   return {
     schemaVersion: 1, role: 'director', eventSeq: 0,
     session: { id: 'show', title: 'The Ledger Job', status: 'live', mode: 'conversation', stateRevision: 4, beatNumber: 1, actionRoundNumber: 0, inputEpoch: 0, scene: { id: 'bar', title: 'The Velvet Static', description: 'Find the missing ledger.', locationId: 'bar' } },
-    characters: [{ id: 'pc-1', displayName: 'Skooty', strain: skootyStrain }], npcs: [], tracks: [], facts: [], activeBeat: null, history: [],
-    submissions: [], npcDetails: [], characterDetails: [{ id: 'pc-1', displayName: 'Skooty', traits: { force: 0, finesse: 2, wits: 1, presence: 1 } }], jobs: [], directorNotes: '',
+    characters: [{ id: 'pc-1', displayName: 'Skooty', strain: skootyStrain, ...condition }, ...others.map(item => ({ ...item, strain: 0 }))], npcs: [], tracks: [], facts: [], activeBeat: null, history: [],
+    submissions: [], npcDetails: [], characterDetails: [{ id: 'pc-1', displayName: 'Skooty', traits: { force: 0, finesse: 2, wits: 1, presence: 1 }, ...condition }, ...others.map(item => ({ ...item, traits: { force: 1, finesse: 1, wits: 1, presence: 1 } }))], jobs: [], directorNotes: '',
   };
 }
 
@@ -62,6 +65,8 @@ async function mountCards(options: { contracts?: ReturnType<typeof contract>[]; 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  skootyCondition = undefined;
+  others = [];
   transport.subscribe.mockReturnValue(() => {});
   window.history.replaceState({}, '', '/sessions/show/director');
 });
@@ -76,6 +81,19 @@ describe('StakesCards', () => {
     await wrapper.get('[data-testid="stakes-ordinary-edit"]').trigger('click');
     expect(wrapper.find('[data-testid="stakes-classification"]').exists()).toBe(true);
     wrapper.unmount();
+  });
+
+  it('says an ordinary conversation still rolls the last chance for anyone who is down', async () => {
+    skootyCondition = 'down';
+    let mounted = await mountCards({ classification: 'ordinary', beatOverrides: { classification: 'ordinary', kind: 'conversation' } });
+    expect(mounted.wrapper.get('[data-testid="stakes-ordinary-line"]').text()).toBe('Ordinary conversation: no dice except Skooty\'s last chance. Its result applies when you publish.');
+    await mounted.wrapper.get('[data-testid="stakes-ordinary-edit"]').trigger('click');
+    expect(mounted.wrapper.get('[data-testid="stakes-classification"] option[value="ordinary"]').text()).toBe('Ordinary conversation · no dice except Skooty\'s last chance');
+    mounted.wrapper.unmount();
+    others = [{ id: 'pc-2', displayName: 'Dash', condition: 'down' }, { id: 'pc-3', displayName: 'Lark', condition: 'dead' }];
+    mounted = await mountCards({ classification: 'ordinary', beatOverrides: { classification: 'ordinary', kind: 'conversation' } });
+    expect(mounted.wrapper.get('[data-testid="stakes-ordinary-line"]').text()).toBe('Ordinary conversation: no dice except the last chances for Skooty and Dash. Their results apply when you publish.');
+    mounted.wrapper.unmount();
   });
 
   it('emits the new classification and disables Ordinary when the exchange needs action', async () => {

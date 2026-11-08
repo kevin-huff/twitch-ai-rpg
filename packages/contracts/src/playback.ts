@@ -59,7 +59,7 @@ export const ShowAudioHolderSchema = z.strictObject({
   resumedAt: z.iso.datetime().optional(),
 });
 export type ShowAudioHolder = z.infer<typeof ShowAudioHolderSchema>;
-export const ShowAudioHolderResponseSchema = z.strictObject({ holder: ShowAudioHolderSchema.nullable() });
+export const ShowAudioHolderResponseSchema = z.strictObject({ holder: ShowAudioHolderSchema.nullable(), waitingToResume: z.literal(true).optional() });
 export type ShowAudioHolderResponse = z.infer<typeof ShowAudioHolderResponseSchema>;
 export const StopShowAudioSchema = z.strictObject({ commandId: id, holderId: z.uuid() });
 export type StopShowAudio = z.infer<typeof StopShowAudioSchema>;

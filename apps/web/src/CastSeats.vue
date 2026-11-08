@@ -203,6 +203,7 @@ function removeSeat(character: Character) {
       <div class="seat-head">
         <PictureAvatar :name="character.displayName" :src="portrait(character)" />
         <strong>{{ character.displayName }}</strong>
+        <span v-if="character.condition" class="condition-badge" :data-testid="`cast-condition-${character.id}`">{{ character.condition === 'dead' ? 'Dead' : 'Down' }}</span>
         <a class="seat-test" :href="testSeatUrl(character)" target="_blank" rel="noopener">Test as {{ character.displayName }} <span class="glyph-new-tab" aria-hidden="true"></span></a>
       </div>
       <details v-if="shownCard(character)" class="seat-card">
@@ -215,7 +216,7 @@ function removeSeat(character: Character) {
           <dt>Possessions</dt><dd>{{ shownCard(character)!.possessions.join(', ') || '—' }}</dd>
           <template v-if="character.looksChanged"><dt>Changed by the story</dt><dd>{{ character.looksChanged }}</dd></template>
           <template v-for="list in cardLists" :key="list.key">
-            <template v-if="character[list.key]?.length"><dt>{{ list.legend }}</dt><dd>{{ character[list.key]!.join(', ') }}</dd></template>
+            <template v-if="character[list.key]?.length"><dt>{{ list.legend }}</dt><dd>{{ character[list.key]!.join(list.key === 'wearing' ? ', ' : '; ') }}</dd></template>
           </template>
         </dl>
         <template v-if="hasCard(character) && editable">
@@ -292,6 +293,7 @@ function removeSeat(character: Character) {
 </template>
 
 <style scoped>
+.condition-badge { font-family: var(--font-label); border: 2px solid currentColor; padding: 0 6px; white-space: nowrap; }
 .cast-seats { display: grid; }
 .seat-line { padding: 16px 0; border-bottom: 2px solid var(--night-raised); display: grid; gap: 8px; }
 .seat-line:last-child { border-bottom: 0; }

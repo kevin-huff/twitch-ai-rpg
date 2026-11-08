@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageParty from './StageParty.vue';
+import StageScene from './StageScene.vue';
 import StagePictureCorner from './StagePictureCorner.vue';
 import partyFile from './StageParty.vue?raw';
 import pictureFile from './StagePictureCorner.vue?raw';
@@ -37,6 +38,30 @@ const party = (snap: SessionSnapshot, characterId?: string | null) => mount(Stag
 const corner = (snap: SessionSnapshot) => mount(StagePictureCorner, { props: { snapshot: snap, connected: true } });
 
 describe('StageParty', () => {
+  it('shows Down and Dead in text, replacing Needs help, and keeps Needs help for an up character at 8', () => {
+    const base = snapshot();
+    const snap = (a: Record<string, unknown>, b: Record<string, unknown>) => snapshot({ characters: [{ ...base.characters[0], ...a }, { ...base.characters[1], ...b }] });
+    const down = party(snap({ condition: 'down' }, {}));
+    expect(down.findAll('.chip')[0]!.get('.chip-flag').text()).toBe('Down');
+    expect(down.findAll('.chip')[0]!.attributes('data-condition')).toBe('down');
+    expect(down.text()).not.toContain('Needs help');
+    const dead = party(snap({ condition: 'dead' }, { condition: 'down' }));
+    expect(dead.findAll('.chip')[0]!.get('.chip-flag').text()).toBe('Dead');
+    expect(dead.findAll('.chip')[1]!.get('.chip-flag').text()).toBe('Down');
+    expect(dead.findAll('.chip')[0]!.attributes('data-condition')).toBe('dead');
+    expect(party(snap({}, {})).get('.chip-flag').text()).toBe('Needs help');
+  });
+
+  it('shows the same words on the full scene party cards', () => {
+    const base = snapshot();
+    const snap = snapshot({ characters: [{ ...base.characters[0], condition: 'dead' }, { ...base.characters[1], condition: 'down' }] });
+    const wrapper = mount(StageScene, { props: { snapshot: snap, connected: true } });
+    const cards = wrapper.findAll('.party-card');
+    expect(cards[0]!.get('.needs-help').text()).toBe('Dead');
+    expect(cards[1]!.get('.needs-help').text()).toBe('Down');
+    expect(wrapper.text()).not.toContain('Needs help');
+  });
+
   it('draws a chip per character with Needs help at full strain', () => {
     const wrapper = party(snapshot());
     expect(wrapper.classes()).toContain('cast-chips');

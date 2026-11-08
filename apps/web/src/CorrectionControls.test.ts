@@ -138,17 +138,49 @@ describe('director corrections', () => {
   const R3 = 'The dice for this round are already rolled. Publish or abandon the round, then record the correction.';
   const withPhase = (phase: string) => { const current = snapshot(); current.activeBeat = { id: 'active', phase } as unknown as DirectorSnapshot['activeBeat']; return current; };
 
-  it.each(['collecting', 'stakes_review'])('is usable while a round is %s and shows the round-open note', async phase => {
-    const wrapper = mount(CorrectionControls, { props: { snapshot: withPhase(phase), busy: false } });
+  const SAVED_PLAN = 'Correction published. Earlier narration and dice remain unchanged. The round went back to taking lines. Press Plan to plan it again.';
+  const planJob = (status: string) => ({ id: 'job', beatId: 'active', task: 'plan', generation: 1, status, error: null });
+  async function saveWith(current: DirectorSnapshot) {
+    const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
     expect(wrapper.get(field('begin-correction')).attributes('disabled')).toBeUndefined();
-    expect(wrapper.get(field('correction-round-open')).text()).toBe(R1);
     await begin(wrapper); await common(wrapper);
     await wrapper.get(field('save-correction')).trigger('click');
     expect(command(wrapper)).toMatchObject({ type: 'record_correction' });
     (wrapper.emitted('command')![0]![1] as () => void)();
     await wrapper.vm.$nextTick();
-    expect(wrapper.get('[role="status"]').text()).toBe('Correction published. Earlier narration and dice remain unchanged. The round went back to taking lines. Press Plan to plan it again.');
+    return wrapper;
+  }
+
+  it('is usable while a round is only taking lines and mentions no plan', async () => {
+    const wrapper = await saveWith(withPhase('collecting'));
+    expect(wrapper.find(field('correction-round-open')).exists()).toBe(false);
+    expect(wrapper.get('[role="status"]').text()).toBe('Correction published. Earlier narration and dice remain unchanged.');
     wrapper.unmount();
+  });
+
+  it('shows the round-open note and the plan sentence while a plan job is queued or running', async () => {
+    for (const status of ['queued', 'running']) {
+      const current = withPhase('collecting'); current.jobs = [planJob(status)] as unknown as DirectorSnapshot['jobs'];
+      const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+      expect(wrapper.get(field('correction-round-open')).text()).toBe(R1); wrapper.unmount();
+      const saved = await saveWith(current);
+      expect(saved.get('[role="status"]').text()).toBe(SAVED_PLAN); saved.unmount();
+    }
+  });
+
+  it('ignores finished plan jobs and render jobs when the round is only taking lines', () => {
+    const current = withPhase('collecting');
+    current.jobs = [planJob('succeeded'), { ...planJob('running'), task: 'render' }, { ...planJob('running'), beatId: 'other' }] as unknown as DirectorSnapshot['jobs'];
+    const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+    expect(wrapper.find(field('correction-round-open')).exists()).toBe(false); wrapper.unmount();
+  });
+
+  it('shows the round-open note and the plan sentence during stakes review', async () => {
+    const current = withPhase('stakes_review');
+    const wrapper = mount(CorrectionControls, { props: { snapshot: current, busy: false } });
+    expect(wrapper.get(field('correction-round-open')).text()).toBe(R1); wrapper.unmount();
+    const saved = await saveWith(current);
+    expect(saved.get('[role="status"]').text()).toBe(SAVED_PLAN); saved.unmount();
   });
 
   it.each(['locked', 'draft_review'])('refuses with the rolled-dice text when a round is %s', phase => {
@@ -212,5 +244,118 @@ describe('director corrections', () => {
     await live.setProps({ snapshot: { ...snapshot(), session: { ...snapshot().session, stateRevision: 8 } } });
     expect(live.get('.notice').text()).toContain('The show changed while you were editing.');
     expect(live.text()).not.toMatch(/session|table/i); live.unmount();
+  });
+
+  describe('conditions', () => {
+    function withConditions(): DirectorSnapshot {
+      const current = snapshot();
+      current.characters = [
+        { ...current.characters[0]! },
+        { ...current.characters[0]!, id: 'bram', displayName: 'Bram', condition: 'down' },
+        { ...current.characters[0]!, id: 'cora', displayName: 'Cora', condition: 'dead' },
+      ] as DirectorSnapshot['characters'];
+      current.npcDetails = [npc, { ...npc, id: 'dax', displayName: 'Dax', condition: 'dead', status: 'offstage' }] as DirectorSnapshot['npcDetails'];
+      return current;
+    }
+    const optionLabels = (wrapper: ReturnType<typeof mount>, testid: string) => wrapper.findAll(`${field(testid)} option`).map(option => option.text());
+
+    it('brings back a downed character with the right words and payload', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper); await common(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      expect(wrapper.get('h4').text()).toBe('Set a condition');
+      await wrapper.get(field('correction-target-0')).setValue('character:bram');
+      expect(optionLabels(wrapper, 'correction-condition-0')).toEqual(['Bring back', 'Dead']);
+      expect(wrapper.get(field('correction-change-preview-0')).text()).toBe('Down becomes Up');
+      await wrapper.get(field('save-correction')).trigger('click');
+      expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'condition_set', characterId: 'bram', condition: 'up' }] });
+      expect(CommandSchema.safeParse(command(wrapper)).success).toBe(true); wrapper.unmount();
+    });
+
+    it('sets Down on a character who is up and offers only different conditions', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper); await common(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      expect((wrapper.get(field('correction-target-0')).element as HTMLSelectElement).value).toBe('character:aster');
+      expect(optionLabels(wrapper, 'correction-condition-0')).toEqual(['Down', 'Dead']);
+      expect(wrapper.get(field('correction-change-preview-0')).text()).toBe('Up becomes Down');
+      await wrapper.get(field('save-correction')).trigger('click');
+      expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'condition_set', characterId: 'aster', condition: 'down' }] });
+      await wrapper.get(field('correction-condition-0')).setValue('dead');
+      expect(wrapper.get(field('correction-change-preview-0')).text()).toBe('Up becomes Dead');
+      await wrapper.get(field('save-correction')).trigger('click');
+      expect(command(wrapper, 1)).toMatchObject({ changes: [{ kind: 'condition_set', characterId: 'aster', condition: 'dead' }] }); wrapper.unmount();
+    });
+
+    it('lists players then non-player characters in two groups and offers a dead character Bring back and Down', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      const groups = wrapper.findAll(`${field('correction-target-0')} optgroup`);
+      expect(groups.map(group => group.attributes('label'))).toEqual(["Players' characters", 'Non-player characters']);
+      expect(groups[0]!.findAll('option').map(option => option.text())).toEqual(['Aster', 'Bram', 'Cora']);
+      expect(groups[1]!.findAll('option').map(option => option.text())).toEqual(['Mara', 'Dax']);
+      await wrapper.get(field('correction-target-0')).setValue('character:cora');
+      expect(optionLabels(wrapper, 'correction-condition-0')).toEqual(['Bring back', 'Down']);
+      expect(wrapper.get(field('correction-change-preview-0')).text()).toBe('Dead becomes Up'); wrapper.unmount();
+    });
+
+    it('sets Dead on a non-player character and brings a dead one back', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper); await common(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      await wrapper.get(field('correction-target-0')).setValue('npc:mara');
+      expect(optionLabels(wrapper, 'correction-condition-0')).toEqual(['Dead']);
+      expect(wrapper.get(field('correction-change-preview-0')).text()).toBe('Alive becomes Dead');
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      await wrapper.get(field('correction-target-1')).setValue('npc:dax');
+      expect(optionLabels(wrapper, 'correction-condition-1')).toEqual(['Bring back']);
+      expect(wrapper.get(field('correction-change-preview-1')).text()).toBe('Dead becomes Alive');
+      await wrapper.get(field('save-correction')).trigger('click');
+      expect(command(wrapper)).toMatchObject({ changes: [{ kind: 'npc_condition_set', npcId: 'mara', condition: 'dead' }, { kind: 'npc_condition_set', npcId: 'dax', condition: 'alive' }] });
+      expect(CommandSchema.safeParse(command(wrapper)).success).toBe(true); wrapper.unmount();
+    });
+
+    it('allows one change per target and disables a target already chosen', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      expect((wrapper.get(field('correction-target-1')).element as HTMLSelectElement).value).toBe('character:bram');
+      expect(wrapper.get(`${field('correction-target-1')} option[value="character:aster"]`).attributes('disabled')).toBeDefined();
+      expect(wrapper.get(`${field('correction-target-0')} option[value="character:bram"]`).attributes('disabled')).toBeDefined();
+      expect(wrapper.get(`${field('correction-target-0')} option[value="npc:mara"]`).attributes('disabled')).toBeUndefined();
+      const only = snapshot(); only.characters = [only.characters[0]!]; only.npcDetails = [npc];
+      const small = mount(CorrectionControls, { props: { snapshot: only, busy: false } }); await begin(small);
+      await small.get(field('add-correction-condition')).trigger('click');
+      await small.get(field('add-correction-condition')).trigger('click');
+      expect((small.get(field('correction-target-1')).element as HTMLSelectElement).value).toBe('npc:mara');
+      expect(small.get(field('add-correction-condition')).attributes('disabled')).toBeDefined();
+      await small.get(field('add-correction-condition')).trigger('click');
+      expect(small.findAll('[data-testid^="correction-target-"]')).toHaveLength(2);
+      expect(small.get(field('add-correction-condition')).attributes('disabled')).toBeDefined();
+      wrapper.unmount(); small.unmount();
+    });
+
+    it('gives each new select its own help line for players and for non-player characters', async () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: withConditions(), busy: false } }); await begin(wrapper);
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      await wrapper.get(field('add-correction-condition')).trigger('click');
+      await wrapper.get(field('correction-target-1')).setValue('npc:mara');
+      const help = (testid: string) => wrapper.findAll(`#${CSS.escape(wrapper.get(field(testid)).attributes('aria-describedby')!)}`);
+      const player = help('correction-condition-0'); expect(player).toHaveLength(1);
+      expect(player[0]!.classes()).toContain('field-help');
+      expect(player[0]!.text()).toBe('Bring back sets Aster up again with their strain as it is now. Down starts a rescue window that closes when the next dice are rolled. Dead takes Aster out of the story until a correction brings them back.');
+      const other = help('correction-condition-1'); expect(other).toHaveLength(1);
+      expect(other[0]!.text()).toBe('Dead takes Mara off stage, and nobody can speak with them until a correction brings them back. Bring back leaves them offstage; tick them in Who is here to bring them on.');
+      const ids = wrapper.findAll('input, select, textarea').map(control => control.attributes('aria-describedby')!);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const control of wrapper.findAll('input, select, textarea')) {
+        const match = wrapper.findAll('[id]').filter(item => item.attributes('id') === control.attributes('aria-describedby'));
+        expect(match).toHaveLength(1); expect(match[0]!.text().length).toBeGreaterThan(20);
+        expect(match[0]!.classes()).toContain('field-help'); expect(control.element.closest('label')).not.toBeNull();
+      }
+      wrapper.unmount();
+    });
+
+    it('mentions conditions in the panel intro', () => {
+      const wrapper = mount(CorrectionControls, { props: { snapshot: snapshot(), busy: false } });
+      expect(wrapper.find('details > p').text()).toContain('who is down or dead'); wrapper.unmount();
+    });
   });
 });

@@ -674,4 +674,15 @@ describe('CastSeats', () => {
       });
     });
   });
+
+  it('joins promises and debts and feelings with semicolons and labels Down and Dead', () => {
+    const wrapper = mountIt({ snapshot: snap([seat('pc-1', 'Rook', { condition: 'down', owes: ['Owes Wren', 'Owed a favour'], feelings: ['Wren trusts him', 'Briar fears him'], wearing: ['Coat', 'Hat'] }), seat('pc-2', 'Wren', { condition: 'dead' }), seat('pc-3', 'Briar')]) });
+    const text = wrapper.get('[data-testid="seat-line-pc-1"] dl').text();
+    expect(text).toContain('Owes Wren; Owed a favour');
+    expect(text).toContain('Wren trusts him; Briar fears him');
+    expect(text).toContain('Coat, Hat');
+    expect(wrapper.get('[data-testid="cast-condition-pc-1"]').text()).toBe('Down');
+    expect(wrapper.get('[data-testid="cast-condition-pc-2"]').text()).toBe('Dead');
+    expect(wrapper.find('[data-testid="cast-condition-pc-3"]').exists()).toBe(false);
+  });
 });

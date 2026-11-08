@@ -24,6 +24,16 @@ const jsonLoaded = ref('');
 watch(() => props.contracts, value => { contractJson.value = JSON.stringify(value, null, 2); }, { deep: true, immediate: true });
 
 const showSelect = computed(() => ordinaryEditing.value || editing.value.length > 0);
+// Anyone down gets a last-chance roll at this round's dice, even in an ordinary conversation.
+const downedNames = computed(() => (director.value?.characterDetails ?? []).filter(item => item.condition === 'down').map(item => item.displayName));
+const lastChances = computed(() => {
+  const names = downedNames.value;
+  if (names.length === 0) return '';
+  return names.length === 1 ? `${names[0]}'s last chance` : `the last chances for ${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+});
+const ordinaryLine = computed(() => !lastChances.value ? 'Ordinary conversation: no dice, and nothing changes.'
+  : `Ordinary conversation: no dice except ${lastChances.value}. ${downedNames.value.length === 1 ? 'Its result applies' : 'Their results apply'} when you publish.`);
+const ordinaryOption = computed(() => lastChances.value ? `Ordinary conversation · no dice except ${lastChances.value}` : 'Ordinary conversation · no mechanical consequences');
 const isEditing = (id: string) => editing.value.includes(id);
 function toggleEdit(id: string) {
   editing.value = isEditing(id) ? editing.value.filter(item => item !== id) : [...editing.value, id];
@@ -73,12 +83,12 @@ function loadJson() {
     <p v-if="beat.phase === 'collecting'" class="notice">Planning failed. You can review manual stakes below, retry planning, or abandon this beat with a reason.</p>
     <p v-if="beat.classification === 'needs_action'" class="notice">This exchange has consequences. Review the action stakes before locking.</p>
     <div v-if="classification === 'ordinary'" class="stakes-ordinary">
-      <p>Ordinary conversation: no dice, and nothing changes.</p>
+      <p data-testid="stakes-ordinary-line">{{ ordinaryLine }}</p>
       <button class="quiet" data-testid="stakes-ordinary-edit" :disabled="busy" @click="ordinaryEditing = !ordinaryEditing">Edit</button>
     </div>
     <label v-if="showSelect">How should this input resolve?
       <select :value="classification" data-testid="stakes-classification" @change="changeClassification">
-        <option value="ordinary" :disabled="beat.classification === 'needs_action'">Ordinary conversation · no mechanical consequences</option>
+        <option value="ordinary" :disabled="beat.classification === 'needs_action'">{{ ordinaryOption }}</option>
         <option value="action">Action · review the agreed goal and consequences</option>
       </select>
     </label>

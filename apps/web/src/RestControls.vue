@@ -15,6 +15,11 @@ const error = ref('');
 
 const strained = computed(() => props.snapshot.characters.filter(character => character.strain > 0));
 const roundOpen = computed(() => ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat?.phase ?? ''));
+const planInPlay = computed(() => {
+  const beat = props.snapshot.activeBeat;
+  if (!beat) return false;
+  return beat.phase === 'stakes_review' || (props.snapshot.jobs ?? []).some(job => job.beatId === beat.id && job.task === 'plan' && (job.status === 'queued' || job.status === 'running'));
+});
 const gate = computed(() => {
   if (props.snapshot.setup && !props.snapshot.setup.started) return 'Start the show from Cast & lobby first.';
   if (props.snapshot.session.status === 'ended') return 'The show has ended.';
@@ -48,7 +53,8 @@ function confirm() {
   error.value = '';
   saving.value = true;
   const wasOpen = roundOpen.value;
-  emit('command', parsed.data, () => { saving.value = false; confirming.value = false; staleNotice.value = false; savedNotice.value = wasOpen ? 'Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.' : 'Rest saved. Strain went down.'; });
+  const hadPlan = planInPlay.value;
+  emit('command', parsed.data, () => { saving.value = false; confirming.value = false; staleNotice.value = false; savedNotice.value = wasOpen && hadPlan ? 'Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.' : 'Rest saved. Strain went down.'; });
 }
 </script>
 
@@ -57,7 +63,7 @@ function confirm() {
     <summary>Rest</summary>
     <p class="muted">Let every character catch their breath. Rest sets everyone's strain back to 0. Lines players sent stay where they are.</p>
     <p v-if="savedNotice" class="notice" role="status" data-testid="rest-saved">{{ savedNotice }}</p>
-    <p v-if="roundOpen" class="notice" data-testid="rest-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
+    <p v-if="roundOpen && planInPlay" class="notice" data-testid="rest-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
     <p v-if="gate" class="notice" data-testid="rest-gate">{{ gate }}</p>
     <p v-if="staleNotice" class="notice" data-testid="rest-stale">The show changed while you were choosing. Check the strain, then press Rest everyone again.</p>
     <div v-for="character in snapshot.characters" :key="character.id" class="rest-row" :data-testid="`rest-row-${character.id}`">

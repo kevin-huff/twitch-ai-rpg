@@ -15,6 +15,10 @@ describe('playerStatus', () => {
     expect(status({ sessionStatus: 'ended' })).toEqual({ headline: 'The show is over', detail: 'Thanks for playing. You can close this page.', tone: 'wait' });
     expect(status({ sessionStatus: 'ended', beat: null }).headline).toBe('The show is over');
   });
+  it.each(['action', 'conversation'] as const)('asks a downed character only for a few words (%s round)', kind => {
+    expect(status({ beat: beat({ kind }), name: 'Rook', condition: 'down' })).toEqual({ headline: 'What does Rook say?', detail: 'Type a few words, up to 8, then press Send.', tone: 'act' });
+    expect(status({ beat: beat({ kind }), name: 'Rook' }).headline).toBe(kind === 'action' ? 'What does Rook do?' : 'What does Rook say?');
+  });
   it('reports a paused table', () => {
     expect(status({ sessionStatus: 'paused' })).toMatchObject({ headline: 'The show is paused', detail: 'Hang on. The director will start again soon.', tone: 'wait' });
   });

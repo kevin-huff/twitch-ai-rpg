@@ -16,7 +16,7 @@ const messages = {
   rolled: 'The dice for this round are already rolled. Publish or abandon the round, then change the look and items.',
   missing: 'That character is not in this show.',
   stale: "This character's look or items changed since you opened the form, for example in a published round. Press Cancel, then Edit look and items again.",
-  stakes: "These stakes no longer match what the characters carry, for example after Edit look and items. Press Plan again for new stakes, or fix the items under Edit typed effects and approve again.",
+  stakes: "These stakes no longer match the characters' cards. Something they carry or wear, a promise or debt, how people feel, or who is down or has died changed after the plan, for example through Edit look and items. Press Plan again for new stakes, or fix the outcomes under Edit typed effects and approve again.",
 };
 
 suite('live look and items for a character', () => {

@@ -1,7 +1,7 @@
 import { computed, inject, provide, ref } from 'vue';
 import type { InjectionKey } from 'vue';
-import { STRAIN_MAX } from '@rpg/contracts';
-import type { Command, DirectorSnapshot, Effect, PlayerSnapshot, SessionSnapshot } from '@rpg/contracts';
+import { LAST_CHANCE_STRAIN, RESCUE_STRAIN, STRAIN_MAX, incidentKey, strainStep } from '@rpg/contracts';
+import type { CharacterCondition, Command, DirectorSnapshot, Effect, PlayerSnapshot, Resolution, SessionSnapshot } from '@rpg/contracts';
 import { api, subscribeToSession } from './api';
 import { identityPath, selectIdentity } from './identity';
 
@@ -43,17 +43,24 @@ export function createTable() {
   const initials = (name: string) => name.split(' ').map(part => part[0]).slice(0, 2).join('').toUpperCase();
   const nameOf = (id: string) => snapshot.value?.characters.find(character => character.id === id)?.displayName ?? 'Player';
   const phaseName = (phase: string) => ({ collecting: 'Collecting input', stakes_review: "What's at risk", locked: 'Locked · dice fixed', draft_review: 'Review script', published: 'Published', aborted: 'Aborted' })[phase] ?? phase;
+  const npcNameOf = (id: string) => snapshot.value?.npcs.find(npc => npc.id === id)?.displayName ?? 'Someone';
   const strainChange = (effect: Effect) => {
     if (effect.kind !== 'strain_delta') return null;
-    const before = snapshot.value?.characters.find(character => character.id === effect.characterId)?.strain ?? 0;
-    return { before, after: Math.min(STRAIN_MAX, Math.max(0, before + effect.delta)), over: Math.max(0, before + effect.delta - STRAIN_MAX) };
+    const character = snapshot.value?.characters.find(item => item.id === effect.characterId);
+    const before = character?.strain ?? 0;
+    const step = strainStep(before, character?.condition, effect.delta);
+    return { before, after: step.strain, over: step.over, down: step.down };
   };
+  const strainText = (name: string, before: number, after: number, over: number, down: boolean) => `${name} strain ${before} to ${after} of ${STRAIN_MAX}${down ? ' · goes down' : over > 0 ? ` · ${over} past full` : ''}`;
   const effectLabel = (effect: Effect) => {
     if (effect.kind === 'track_delta') return `${snapshot.value?.tracks.find(track => track.id === effect.trackId)?.label ?? 'Track'} ${effect.delta >= 0 ? '+' : ''}${effect.delta}`;
     if (effect.kind === 'strain_delta') {
       const change = strainChange(effect)!;
-      return `${nameOf(effect.characterId)} strain ${change.before} to ${change.after} of ${STRAIN_MAX}${change.over > 0 ? ` · ${change.over} past full` : ''}`;
+      return strainText(nameOf(effect.characterId), change.before, change.after, change.over, change.down);
     }
+    if (effect.kind === 'character_down') return `${nameOf(effect.characterId)} goes down`;
+    if (effect.kind === 'character_rescue') return `${nameOf(effect.characterId)} is saved: back up at ${RESCUE_STRAIN} of ${STRAIN_MAX}`;
+    if (effect.kind === 'npc_death') return `${npcNameOf(effect.npcId)} dies`;
     if (effect.kind === 'fact_add') return `${effect.visibility === 'director' ? 'Private fact' : 'Fact'}: ${effect.text}`;
     if (effect.kind === 'card_add' || effect.kind === 'card_remove') {
       const name = nameOf(effect.characterId);
@@ -64,6 +71,64 @@ export function createTable() {
     }
     if (effect.kind === 'looks_set') return `${nameOf(effect.characterId)} changed by the story: ${effect.text ? effect.text : 'cleared'}`;
     return `${nameOf(effect.characterId)} ${effect.kind === 'inventory_add' ? 'gains' : 'loses'} ${effect.item}`;
+  };
+  const publicationLines = (resolution: Resolution): string[] => {
+    const seen = new Set<string>();
+    const running = new Map<string, { start: number; strain: number; condition: CharacterCondition | undefined; over: number; down: boolean }>();
+    const placed = new Set<string>();
+    const lines: Array<string | { strainOf: string }> = [];
+    const stateOf = (id: string) => {
+      let entry = running.get(id);
+      if (!entry) {
+        const character = snapshot.value?.characters.find(item => item.id === id);
+        entry = { start: character?.strain ?? 0, strain: character?.strain ?? 0, condition: character?.condition, over: 0, down: false };
+        running.set(id, entry);
+      }
+      return entry;
+    };
+    for (const group of resolution.effectGroups ?? [resolution.effects]) {
+      const fresh = group.filter(effect => {
+        const key = incidentKey(effect);
+        if (effect.incidentId === undefined) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const net = new Map<string, number>();
+      const before = new Map<string, { strain: number; condition: CharacterCondition | undefined }>();
+      for (const effect of fresh) {
+        if (effect.kind !== 'strain_delta') continue;
+        const entry = stateOf(effect.characterId);
+        if (!net.has(effect.characterId)) before.set(effect.characterId, { strain: entry.strain, condition: entry.condition });
+        net.set(effect.characterId, (net.get(effect.characterId) ?? 0) + effect.delta);
+      }
+      for (const [id, delta] of net) {
+        const entry = stateOf(id);
+        const prior = before.get(id)!;
+        const step = strainStep(prior.strain, prior.condition, delta);
+        entry.strain = step.strain;
+        entry.over += step.over;
+        if (step.down) { entry.down = true; entry.condition = 'down'; }
+      }
+      for (const effect of fresh) {
+        if (effect.kind === 'character_down') { const entry = stateOf(effect.characterId); if (entry.condition === undefined) entry.condition = 'down'; }
+        else if (effect.kind === 'character_rescue') { const entry = stateOf(effect.characterId); if (entry.condition === 'down') { entry.condition = undefined; entry.strain = RESCUE_STRAIN; } }
+      }
+      for (const effect of fresh) {
+        if (effect.kind !== 'strain_delta') lines.push(effectLabel(effect));
+        else if (!placed.has(effect.characterId)) { placed.add(effect.characterId); lines.push({ strainOf: effect.characterId }); }
+      }
+    }
+    return lines.map(item => {
+      if (typeof item === 'string') return item;
+      const entry = running.get(item.strainOf)!;
+      return strainText(nameOf(item.strainOf), entry.start, entry.strain, entry.over, entry.down);
+    }).concat(resolution.rolls.filter(roll => roll.lastChance).map(roll => {
+      const name = nameOf(roll.actorCharacterId);
+      return roll.band === 'clean' || roll.band === 'costly'
+        ? `${name}'s last chance: rolled ${roll.total}, pulls through at ${LAST_CHANCE_STRAIN} of ${STRAIN_MAX}`
+        : `${name}'s last chance: rolled ${roll.total}, dies`;
+    }));
   };
   const inputContext = () => ({ epoch: snapshot.value?.session.inputEpoch ?? 0, beatId: snapshot.value?.activeBeat && ['collecting', 'stakes_review'].includes(snapshot.value.activeBeat.phase) ? snapshot.value.activeBeat.id : null });
 
@@ -142,7 +207,7 @@ export function createTable() {
     director, player, setup, latestHistory,
     refresh, work, beatWork, send, restoreSession, dispose, onSnapshot,
     requestPause, setStatus,
-    nameOf, initials, phaseName, effectLabel, strainChange, inputContext,
+    nameOf, initials, phaseName, effectLabel, strainChange, publicationLines, inputContext,
   };
 }
 

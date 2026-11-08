@@ -114,7 +114,7 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   const pinnedPicture = picturesEnabled ? await pinnedPictureView(client, sessionId) : null;
   const base = {
     schemaVersion: 1 as const, session: state.session, eventSeq, picturesEnabled, scenePicture: scenePicture?.shown ?? null, ...(pinnedPicture ? { pinnedPicture } : {}),
-    characters: state.characters.filter((character) => role !== 'stage' || character.approved).map(({ id, displayName, traits, strain, appearance, approved, ready, portraitId }) => ({ id, displayName, traits, strain, appearance, approved, ready, portraitId })),
+    characters: state.characters.filter((character) => role !== 'stage' || character.approved).map(({ id, displayName, traits, strain, appearance, approved, ready, portraitId, condition }) => ({ id, displayName, traits, strain, appearance, approved, ready, portraitId, ...(condition ? { condition } : {}) })),
     npcs: state.npcs.map(({ id, displayName, role, appearance, status, voiceProfileId, portraitId }) => ({ id, displayName, role, appearance, status, voiceProfileId, portraitId })),
     tracks: state.tracks.filter((track) => track.visibility === 'public').map(({ id, label, kind, current, max, completionText, enabled }) => ({ id, label, kind, current, max, completionText, enabled })),
     facts: state.facts.filter((fact) => fact.visibility === 'public').map(({ id, text }) => ({ id, text })),

@@ -25,6 +25,18 @@ import {
   PublicBeatSchema,
   RollSchema,
   TraitsSchema,
+  NpcSchema,
+  NpcDefinitionSchema,
+  LiveNpcProfileSchema,
+  CorrectionChangesSchema,
+  strainStep,
+  incidentKey,
+  countWords,
+  conditionLineRefusal,
+  canSpeakInScene,
+  RESCUE_STRAIN,
+  LAST_CHANCE_STRAIN,
+  DOWNED_SAY_WORDS,
 } from './index.js';
 import { PicturePersonSchema } from './images.js';
 
@@ -284,5 +296,111 @@ describe('card lists and outcome kinds', () => {
     };
     expect(LineAssistInputSchema.parse(input).character.wearing).toEqual([]);
     expect(LineAssistInputSchema.parse({ ...input, character: { ...input.character, wearing: ['red coat'] } }).character.wearing).toEqual(['red coat']);
+  });
+});
+
+describe('death ladder contracts', () => {
+  const char = { id: 'c1', displayName: 'Ana', traits: { force: 2, finesse: 1, wits: 1, presence: 0 }, strain: 3 };
+  const npc = {
+    id: 'n1', displayName: 'Mara', role: 'guard', locationId: 'hall', status: 'present', voiceProfileId: 'v1',
+  };
+  const npcDefinition = { id: 'n1', displayName: 'Mara', role: 'guard', locationId: 'hall', status: 'present', voiceProfileId: 'v1' };
+
+  it('parses old characters and non-player characters with no condition', () => {
+    expect(CharacterSchema.parse(char)).not.toHaveProperty('condition');
+    expect(NpcSchema.parse(npc)).not.toHaveProperty('condition');
+    expect(CharacterSchema.parse({ ...char, condition: 'down' }).condition).toBe('down');
+    expect(CharacterSchema.safeParse({ ...char, condition: 'up' }).success).toBe(false);
+    expect(NpcSchema.parse({ ...npc, condition: 'dead' }).condition).toBe('dead');
+    expect(NpcSchema.safeParse({ ...npc, condition: 'down' }).success).toBe(false);
+  });
+  it('keeps condition on the public character only when set', () => {
+    const pub = { id: 'c1', displayName: 'Ana', traits: char.traits, strain: 3, appearance: '', approved: true, ready: true };
+    expect(PublicCharacterSchema.parse(pub)).not.toHaveProperty('condition');
+    expect(PublicCharacterSchema.parse({ ...pub, condition: 'dead' }).condition).toBe('dead');
+  });
+  it('parses the three new outcome kinds and a last-chance roll', () => {
+    expect(EffectSchema.safeParse({ kind: 'character_down', characterId: 'c1' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'character_rescue', characterId: 'c1', incidentId: 'i1' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'npc_death', npcId: 'n1' }).success).toBe(true);
+    expect(EffectSchema.safeParse({ kind: 'npc_death', characterId: 'n1' }).success).toBe(false);
+    const roll = {
+      id: 'last-chance:c1', contractId: 'last-chance:c1', contractVersion: 1, actorCharacterId: 'c1', faces: [1, 1], trait: 'force',
+      traitModifier: 0, edge: 0, total: 2, band: 'critical', lastChance: true,
+    };
+    expect(RollSchema.parse(roll).lastChance).toBe(true);
+    expect(RollSchema.safeParse({ ...roll, lastChance: false }).success).toBe(false);
+    const { lastChance: ignored, ...plain } = roll;
+    expect(ignored).toBe(true);
+    expect(RollSchema.parse(plain)).not.toHaveProperty('lastChance');
+  });
+  it('refuses blank items and entries and trims padded ones', () => {
+    for (const item of ['', '   ']) {
+      expect(EffectSchema.safeParse({ kind: 'inventory_add', characterId: 'c1', item }).success).toBe(false);
+      expect(EffectSchema.safeParse({ kind: 'inventory_remove', characterId: 'c1', item }).success).toBe(false);
+      expect(EffectSchema.safeParse({ kind: 'card_add', characterId: 'c1', list: 'owes', entry: item }).success).toBe(false);
+      expect(EffectSchema.safeParse({ kind: 'card_remove', characterId: 'c1', list: 'owes', entry: item }).success).toBe(false);
+    }
+    expect(EffectSchema.parse({ kind: 'inventory_add', characterId: 'c1', item: ' scarf ' })).toMatchObject({ item: 'scarf' });
+    expect(EffectSchema.parse({ kind: 'card_add', characterId: 'c1', list: 'wearing', entry: ' red coat ' })).toMatchObject({ entry: 'red coat' });
+  });
+  it('keeps condition out of scenarios but lets a live profile carry it', () => {
+    expect(NpcDefinitionSchema.safeParse(npcDefinition).success).toBe(true);
+    expect(NpcDefinitionSchema.safeParse({ ...npcDefinition, condition: 'dead' }).success).toBe(false);
+    const { id: ignored, ...profile } = npcDefinition;
+    expect(ignored).toBe('n1');
+    expect(LiveNpcProfileSchema.parse({ ...profile, condition: 'dead' }).condition).toBe('dead');
+    expect(LiveNpcProfileSchema.safeParse(profile).success).toBe(true);
+  });
+  it('checks condition corrections one change per target', () => {
+    const set = { kind: 'condition_set', characterId: 'c1', condition: 'up' } as const;
+    expect(CorrectionChangesSchema.safeParse([set]).success).toBe(true);
+    expect(CorrectionChangesSchema.safeParse([set, { ...set, condition: 'dead' }]).success).toBe(false);
+    expect(CorrectionChangesSchema.safeParse([set, { kind: 'strain_set', characterId: 'c1', value: 2 }]).success).toBe(true);
+    const npcSet = { kind: 'npc_condition_set', npcId: 'n1', condition: 'dead' } as const;
+    expect(CorrectionChangesSchema.safeParse([npcSet, { ...npcSet, condition: 'alive' }]).success).toBe(false);
+    expect(CorrectionChangesSchema.safeParse([npcSet, { kind: 'condition_set', characterId: 'n1', condition: 'down' }]).success).toBe(true);
+    expect(CorrectionChangesSchema.safeParse([{ kind: 'condition_set', characterId: 'c1', condition: 'alive' }]).success).toBe(false);
+  });
+  it('steps strain with the going-down rule', () => {
+    expect(strainStep(7, undefined, 2)).toEqual({ strain: 8, down: false, over: 1 });
+    expect(strainStep(8, undefined, 1)).toEqual({ strain: 8, down: true, over: 0 });
+    expect(strainStep(8, 'down', 1)).toEqual({ strain: 8, down: false, over: 1 });
+    expect(strainStep(8, undefined, 0)).toEqual({ strain: 8, down: false, over: 0 });
+    expect(strainStep(2, undefined, -4)).toEqual({ strain: 0, down: false, over: 0 });
+  });
+  it('keys shared incidents by list and entry', () => {
+    const add = { kind: 'card_add', characterId: 'c1', list: 'owes', entry: 'a favour', incidentId: 'i' } as const;
+    expect(incidentKey(add)).not.toBe(incidentKey({ ...add, list: 'feelings' }));
+    expect(incidentKey(add)).not.toBe(incidentKey({ ...add, entry: 'a debt' }));
+    expect(incidentKey(add)).toBe(incidentKey({ ...add }));
+    expect(incidentKey({ kind: 'strain_delta', characterId: 'c1', delta: 1 })).toBe(JSON.stringify([null, 'strain_delta', 'c1']));
+    expect(incidentKey({ kind: 'inventory_add', characterId: 'c1', item: 'key' })).toBe(JSON.stringify([null, 'inventory_add', 'c1:key']));
+    expect(incidentKey({ kind: 'npc_death', npcId: 'n1', incidentId: 'i' })).toBe(JSON.stringify(['i', 'npc_death', 'n1']));
+  });
+  it('counts words without audio tags', () => {
+    expect(countWords('[whispers] help me  please')).toBe(3);
+    expect(countWords('   ')).toBe(0);
+    expect([RESCUE_STRAIN, LAST_CHANCE_STRAIN, DOWNED_SAY_WORDS]).toEqual([6, 7, 8]);
+  });
+  it('words every refusal exactly', () => {
+    const up = { displayName: 'Ana' };
+    const down = { displayName: 'Ana', condition: 'down' } as const;
+    const dead = { displayName: 'Ana', condition: 'dead' } as const;
+    expect(conditionLineRefusal(up, 'act', 50)).toBeNull();
+    expect(conditionLineRefusal(down, 'ooc', 50)).toBeNull();
+    expect(conditionLineRefusal(dead, 'ooc', 50)).toBeNull();
+    expect(conditionLineRefusal(down, 'say', 8)).toBeNull();
+    expect(conditionLineRefusal(dead, 'say', 1)).toBe('Ana has died, so they cannot send lines. You can keep watching the story.');
+    expect(conditionLineRefusal(dead, 'act', 1)).toBe('Ana has died, so they cannot send lines. You can keep watching the story.');
+    expect(conditionLineRefusal(down, 'act', 1)).toBe('Ana is down, so they cannot do anything. They can say a few words, up to 8.');
+    expect(conditionLineRefusal(down, 'say', 9)).toBe('Ana is down, so they can say only a few words, up to 8. This line has 9.');
+  });
+  it('never lets a dead non-player character speak, even over a channel', () => {
+    const present = { status: 'present', locationId: 'hall', communicationChannel: null } as const;
+    expect(canSpeakInScene(present, 'hall')).toBe(true);
+    expect(canSpeakInScene({ ...present, condition: 'dead' }, 'hall')).toBe(false);
+    expect(canSpeakInScene({ status: 'offstage', locationId: 'x', communicationChannel: 'radio', condition: 'dead' }, 'hall')).toBe(false);
+    expect(canSpeakInScene({ status: 'offstage', locationId: 'x', communicationChannel: 'radio' }, 'hall')).toBe(true);
   });
 });

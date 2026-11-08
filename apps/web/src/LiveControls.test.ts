@@ -718,4 +718,23 @@ describe('scene form fills from the chosen place', () => {
     expect(wrapper.emitted('command')![0][0]).toEqual(expect.objectContaining({ type: 'change_scene', description: 'High above.', location: { kind: 'existing', locationId: 'tower' }, presentNpcIds: ['mara', 'dax'] }));
     wrapper.unmount();
   });
+  it('skips and disables a character who has died, and still ticks the living ones', async () => {
+    const base = snapshot();
+    const dead = { ...base, npcDetails: base.npcDetails.map(item => item.id === 'dax' ? { ...item, condition: 'dead' } : item) } as unknown as DirectorSnapshot;
+    const wrapper = mount(LiveControls, { props: { snapshot: dead, busy: false } });
+    await begin(wrapper, 'scene'); await acknowledge(wrapper);
+    await wrapper.get(field('scene-location')).setValue('tower'); await wrapper.get(field('scene-location')).trigger('change');
+    const box = wrapper.get(field('present-dax')).element as HTMLInputElement;
+    expect(box.checked).toBe(false); expect(box.disabled).toBe(true);
+    expect(wrapper.element.querySelector('[id="' + box.getAttribute('aria-describedby') + '"]')!.textContent).toContain('Dax has died. Bring them back with a correction first.');
+    expect((wrapper.get(field('present-mara')).element as HTMLInputElement).disabled).toBe(false);
+    await wrapper.get('form').trigger('submit');
+    const command = wrapper.emitted('command')![0][0] as { presentNpcIds: string[] };
+    expect(command.presentNpcIds).not.toContain('dax');
+    wrapper.unmount();
+    const living = mount(LiveControls, { props: { snapshot: snapshot(), busy: false } });
+    await begin(living, 'scene'); await living.get(field('scene-location')).setValue('tower');
+    expect((living.get(field('present-dax')).element as HTMLInputElement).checked).toBe(true);
+    living.unmount();
+  });
 });

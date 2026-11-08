@@ -10,6 +10,12 @@ const chips = computed(() => props.characterId
   ? props.snapshot.characters.filter(character => character.id === props.characterId)
   : props.snapshot.characters);
 
+function flagText(character: { strain: number; condition?: 'down' | 'dead' }): string | null {
+  if (character.condition === 'dead') return 'Dead';
+  if (character.condition === 'down') return 'Down';
+  return character.strain >= STRAIN_MAX ? 'Needs help' : null;
+}
+
 const failedImages = ref<Set<string>>(new Set());
 function imageFailed(id: string) {
   failedImages.value = new Set(failedImages.value).add(id);
@@ -33,7 +39,7 @@ function chipPortrait(characterId: string): string | null {
 
 <template>
   <div v-if="chips.length" class="cast-chips" aria-label="Cast">
-    <div v-for="character in chips" :key="character.id" class="chip">
+    <div v-for="character in chips" :key="character.id" class="chip" :data-condition="character.condition ?? 'up'">
       <img
         v-if="chipPortrait(character.id)" class="chip-portrait" :src="chipPortrait(character.id)!" :alt="portraitAlt(character.displayName)"
         @error="imageFailed(portraitIdFor(snapshot, character.id)!)"
@@ -41,7 +47,7 @@ function chipPortrait(characterId: string): string | null {
       <span v-else class="initials" aria-hidden="true">{{ initials(character.displayName) }}</span>
       <span class="chip-name">{{ character.displayName }}</span>
       <span class="strain" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`"><i v-for="pip in STRAIN_MAX" :key="pip" :class="{ filled: pip <= character.strain }"></i></span>
-      <span v-if="character.strain >= STRAIN_MAX" class="chip-flag">Needs help</span>
+      <span v-if="flagText(character)" class="chip-flag">{{ flagText(character) }}</span>
     </div>
   </div>
 </template>

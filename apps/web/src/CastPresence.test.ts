@@ -161,12 +161,26 @@ describe('Who is here panel', () => {
 
   describe('a round that is open', () => {
     const r1 = 'A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.';
-    it('shows the note only while collecting or reviewing stakes', () => {
-      for (const phase of ['collecting', 'stakes_review']) expect(mountPanel(snapshot({ activeBeat: beat(phase) })).get(field('cast-round-open')).text()).toBe(r1);
+    const planJob = (status: string) => ({ beatId: 'beat1', task: 'plan', status });
+    const withJobs = (phase: string, jobs: unknown[]) => ({ ...snapshot({ activeBeat: beat(phase) }), jobs }) as unknown as DirectorSnapshot;
+    it('shows the note only while a plan exists or is being made', () => {
+      expect(mountPanel(snapshot({ activeBeat: beat('collecting') })).find(field('cast-round-open')).exists()).toBe(false);
+      expect(mountPanel(withJobs('collecting', [planJob('succeeded')])).find(field('cast-round-open')).exists()).toBe(false);
+      for (const status of ['queued', 'running']) expect(mountPanel(withJobs('collecting', [planJob(status)])).get(field('cast-round-open')).text()).toBe(r1);
+      expect(mountPanel(snapshot({ activeBeat: beat('stakes_review') })).get(field('cast-round-open')).text()).toBe(r1);
       for (const current of [snapshot(), snapshot({ activeBeat: beat('locked') }), snapshot({ activeBeat: beat('draft_review') })]) expect(mountPanel(current).find(field('cast-round-open')).exists()).toBe(false);
     });
-    it.each(['collecting', 'stakes_review'])('adds the plan-again sentence to the saved notice in %s', async phase => {
-      const wrapper = mountPanel(snapshot({ activeBeat: beat(phase) }));
+    it('keeps the short saved notice while collecting with no plan', async () => {
+      const wrapper = mountPanel(snapshot({ activeBeat: beat('collecting') }));
+      await wrapper.get(field('begin-cast')).trigger('click');
+      await wrapper.get(field('here-ivy')).setValue(true);
+      await wrapper.get('form').trigger('submit');
+      (wrapper.emitted('command')![0] as [unknown, () => void])[1]();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get('[role="status"]').text()).toBe('Saved who is here.');
+    });
+    it.each([['stakes_review', []], ['collecting', [planJob('running')]]] as const)('adds the plan-again sentence to the saved notice in %s', async (phase, jobs) => {
+      const wrapper = mountPanel(withJobs(phase, [...jobs]));
       await wrapper.get(field('begin-cast')).trigger('click');
       await wrapper.get(field('here-ivy')).setValue(true);
       await wrapper.get('form').trigger('submit');
@@ -183,6 +197,17 @@ describe('Who is here panel', () => {
       await wrapper.vm.$nextTick();
       expect(wrapper.get('[role="status"]').text()).toBe('Saved who is here.');
     });
+  });
+
+  it('does not let a dead non-player character be ticked, and says why', async () => {
+    const dead = { ...mara, id: 'ivy', displayName: 'Ivy', status: 'offstage', condition: 'dead' };
+    const wrapper = mountPanel(snapshot({ npcs: [mara, dead] }));
+    await wrapper.get(field('begin-cast')).trigger('click');
+    const box = wrapper.get(field('here-ivy'));
+    expect(box.attributes('disabled')).toBeDefined();
+    const help = wrapper.findAll('p.field-help').find(item => item.attributes('id') === box.attributes('aria-describedby'))!;
+    expect(help.text()).toBe('Ivy has died. Bring them back with a correction first.');
+    expect(wrapper.get(field('here-mara')).attributes('disabled')).toBeUndefined();
   });
 
   it('gives every checkbox its own help line over 20 characters, outside its label', async () => {

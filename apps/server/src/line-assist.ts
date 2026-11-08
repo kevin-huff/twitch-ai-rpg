@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import {
-  LINE_ASSIST_ROUNDS, LineAssistInputSchema, LineAssistRequestSchema, LineAssistResponseSchema, hasAudioTags, stripAudioTags,
+  DOWNED_SAY_WORDS, LINE_ASSIST_ROUNDS, canSpeakInScene, LineAssistInputSchema, LineAssistRequestSchema, LineAssistResponseSchema, hasAudioTags, stripAudioTags,
   type AiProvider, type LineAssistInput, type LineAssistRequest, type LineAssistResponse, type PublishedBeat, type SessionState,
 } from '@rpg/contracts';
 import { transaction } from './database';
@@ -18,12 +18,13 @@ type Params = { Params: { sessionId: string } };
 export const LINE_ASSIST_FAILED = 'The AI could not help this time. Your words are unchanged.';
 const running = new Set<string>();
 
-const reachable = (state: SessionState, npc: SessionState['npcs'][number]) =>
-  (npc.status === 'present' && npc.locationId === state.session.scene.locationId) || Boolean(npc.communicationChannel);
+const reachable = (state: SessionState, npc: SessionState['npcs'][number]) => canSpeakInScene(npc, state.session.scene.locationId);
 
 export function lineAssistInput(state: SessionState, history: PublishedBeat[], characterId: string, request: LineAssistRequest): LineAssistInput {
   const character = state.characters.find(item => item.id === characterId);
   if (!character) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
+  if (character.condition === 'dead') conflict(`${character.displayName} has died, so there is no line to help with.`);
+  if (character.condition === 'down') conflict(`${character.displayName} is down, so Help me say it is off. Write up to ${DOWNED_SAY_WORDS} words yourself.`);
   const recipientIds = [...new Set(request.recipientNpcIds)];
   const talkingTo = recipientIds.map((id) => {
     const npc = state.npcs.find(item => item.id === id && reachable(state, item));
@@ -41,9 +42,9 @@ export function lineAssistInput(state: SessionState, history: PublishedBeat[], c
     talkingTo,
     present: {
       npcs: state.npcs
-        .filter(npc => npc.status === 'present' && npc.locationId === state.session.scene.locationId && !recipientIds.includes(npc.id))
+        .filter(npc => npc.status === 'present' && npc.locationId === state.session.scene.locationId && npc.condition !== 'dead' && !recipientIds.includes(npc.id))
         .map(npc => ({ displayName: npc.displayName, role: npc.role })),
-      characters: state.characters.filter(item => item.id !== characterId).map(item => ({ displayName: item.displayName, appearance: item.appearance })),
+      characters: state.characters.filter(item => item.id !== characterId && item.condition !== 'dead').map(item => ({ displayName: item.displayName, appearance: item.appearance })),
     },
     scene: { title: state.session.scene.title, description: state.session.scene.description },
     story: brief ? { premise: brief.premise, genre: brief.genre, tone: brief.tone } : null,

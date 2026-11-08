@@ -1419,3 +1419,89 @@ describe('beat panel when the AI work is thrown away', () => {
     wrapper.unmount();
   });
 });
+
+describe('beat panel changes on publication', () => {
+  const people = (strain: number, condition?: string) => ({ characters: [{ id: 'pc-1', displayName: 'Scrot', strain, ...(condition ? { condition } : {}) }, { id: 'pc-2', displayName: 'Skooty', strain: 0, condition: 'down' }] });
+  const pushed = (effects: Record<string, unknown>[], extra: Record<string, unknown> = {}) => review({ resolution: { rolls: [], outcomes: [], effects, ...extra } });
+  const strain = (delta: number, incidentId?: string) => ({ kind: 'strain_delta', characterId: 'pc-1', delta, ...(incidentId ? { incidentId } : {}) });
+  const changes = (wrapper: VueWrapper) => wrapper.get('.notice').findAll('p').map(p => p.text());
+
+  it('adds strain effects for one character into one running total', async () => {
+    const wrapper = await mountPanel(snapshot(pushed([strain(1), strain(2)]), 'live', people(5)));
+    expect(changes(wrapper)).toEqual(['Scrot strain 5 to 8 of 8']);
+    wrapper.unmount();
+  });
+
+  it('flags the combined overflow', async () => {
+    const wrapper = await mountPanel(snapshot(pushed([strain(1), strain(2)]), 'live', people(7)));
+    expect(changes(wrapper)).toEqual(['Scrot strain 7 to 8 of 8 · 2 past full']);
+    wrapper.unmount();
+  });
+
+  it('says when a hit at full strain puts the character down, with no past-full part', async () => {
+    const wrapper = await mountPanel(snapshot(pushed([strain(1)]), 'live', people(8)));
+    expect(changes(wrapper)).toEqual(['Scrot strain 8 to 8 of 8 · goes down']);
+    wrapper.unmount();
+  });
+
+  it('counts a shared incident once and keeps other effects in order', async () => {
+    const effects = [{ kind: 'track_delta', trackId: 't', delta: 1 }, strain(2, 'inc-1'), strain(2, 'inc-1')];
+    const wrapper = await mountPanel(snapshot(pushed(effects), 'live', { ...people(1), tracks: [{ id: 't', label: 'Heat', value: 0 }] }));
+    expect(changes(wrapper)).toEqual(['Heat +1', 'Scrot strain 1 to 3 of 8']);
+    wrapper.unmount();
+  });
+
+  it('totals each group on its own before the next one', async () => {
+    const groups = [[strain(2)], [strain(2)]];
+    const wrapper = await mountPanel(snapshot(pushed(groups.flat(), { effectGroups: groups }), 'live', people(5)));
+    expect(changes(wrapper)).toEqual(['Scrot strain 5 to 8 of 8 · 1 past full']);
+    wrapper.unmount();
+  });
+
+  it('words the new outcome kinds and reads last chances', async () => {
+    const effects = [{ kind: 'character_down', characterId: 'pc-1' }, { kind: 'character_rescue', characterId: 'pc-2' }, { kind: 'npc_death', npcId: 'mara' }];
+    const rolls = [
+      { id: 'last-chance:pc-2', contractId: 'last-chance:pc-2', contractVersion: 1, actorCharacterId: 'pc-2', faces: [4, 5], trait: 'force', traitModifier: 0, edge: 0, total: 9, band: 'clean', lastChance: true },
+      { id: 'last-chance:pc-1', contractId: 'last-chance:pc-1', contractVersion: 1, actorCharacterId: 'pc-1', faces: [1, 2], trait: 'force', traitModifier: 0, edge: 0, total: 3, band: 'setback', lastChance: true },
+    ];
+    const wrapper = await mountPanel(snapshot(pushed(effects, { rolls }), 'live', people(2)));
+    expect(changes(wrapper)).toEqual([
+      'Scrot goes down', 'Skooty is saved: back up at 6 of 8', 'Mara dies',
+      "Skooty's last chance: rolled 9, pulls through at 7 of 8", "Scrot's last chance: rolled 3, dies",
+    ]);
+    const rows = wrapper.findAll('.roll').map(row => row.text());
+    expect(rows[0]).toContain('4 + 5 · Last chance');
+    expect(rows[0]).not.toContain('Edge');
+    wrapper.unmount();
+  });
+
+  it('shows the list when only a last chance exists', async () => {
+    const rolls = [{ id: 'last-chance:pc-2', contractId: 'last-chance:pc-2', contractVersion: 1, actorCharacterId: 'pc-2', faces: [1, 1], trait: 'force', traitModifier: 0, edge: 0, total: 2, band: 'critical', lastChance: true }];
+    const wrapper = await mountPanel(snapshot(pushed([], { rolls }), 'live', people(2)));
+    expect(changes(wrapper)).toEqual(["Skooty's last chance: rolled 2, dies"]);
+    wrapper.unmount();
+  });
+
+  it('counts downed characters in the too-many-rolls warning', async () => {
+    const many = (count: number) => ({ ...people(0), submissions: Array.from({ length: count }, (_, index) => line(`say-${index + 1}`)) });
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `say-${index + 1}`);
+    const wrapper = await mountPanel(snapshot(null, 'live', many(12)), ids(12));
+    expect(wrapper.get('[data-testid="too-many-lines"]').text()).toBe('12 lines and 1 last chance need 13 rolls, and a round shows at most 12. Untick some lines, then plan the rest next round.');
+    expect(wrapper.get('[data-testid="answer-lines"]').attributes('disabled')).toBeDefined();
+    wrapper.unmount();
+    const fine = await mountPanel(snapshot(null, 'live', many(11)), ids(11));
+    expect(fine.find('[data-testid="too-many-lines"]').exists()).toBe(false);
+    fine.unmount();
+  });
+
+  it('words the new outcome kinds on the stakes cards', async () => {
+    const outcomes = { clean: { publicText: 'Saved.', effects: [{ kind: 'character_rescue', characterId: 'pc-2' }] }, costly: { publicText: 'Loud.', effects: [{ kind: 'npc_death', npcId: 'mara' }] }, setback: { publicText: 'Bad.', effects: [{ kind: 'character_down', characterId: 'pc-1' }] } };
+    const stakes = beat({ phase: 'stakes_review', selectedSubmissionIds: ['act-1'], kind: 'action', classification: 'needs_action', contracts: [actionContract({ outcomes })] });
+    const wrapper = await mountPanel(snapshot(stakes, 'live', { ...people(2), submissions: [line('act-1', 'act')] }), ['act-1']);
+    const text = wrapper.text();
+    expect(text).toContain('Skooty is saved: back up at 6 of 8');
+    expect(text).toContain('Mara dies');
+    expect(text).toContain('Scrot goes down');
+    wrapper.unmount();
+  });
+});

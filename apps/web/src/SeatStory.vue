@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { isPlayerSegmentKind } from '@rpg/contracts';
 import type { PublicCharacter, PublishedBeat, ScriptSegment } from '@rpg/contracts';
-import { bandLabel } from './stage-format';
+import { rollSentence } from './stage-format';
 import { createBeatAudio } from './beat-audio';
 
 const props = defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[]; sessionId?: string }>();
@@ -58,11 +58,11 @@ function toggleSound(beat: PublishedBeat) {
             <span v-if="sound.state.errorBeatId === beat.id" class="seat-story-sound-note" role="status">{{ sound.state.error }}</span>
           </div>
           <template v-if="rollsFirst(beat)">
-            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
+            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollSentence(roll, rollName(roll.actorCharacterId)) }}</p>
           </template>
           <p v-for="segment in leadingLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
           <template v-if="!rollsFirst(beat)">
-            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollName(roll.actorCharacterId) }} rolled {{ roll.total }}: {{ bandLabel(roll.band) }}</p>
+            <p v-for="roll in beat.rolls" :key="roll.id" class="seat-story-roll" data-testid="seat-story-roll">{{ rollSentence(roll, rollName(roll.actorCharacterId)) }}</p>
           </template>
           <p v-for="segment in laterLines(beat)" :key="segment.id" class="seat-story-line" :class="segment.kind" data-testid="seat-story-line"><span v-if="showsName(segment)" class="seat-story-name">{{ nameOf(segment) }}{{ ' ' }}</span><span v-if="segment.kind === 'player_action'" class="seat-story-tag">Action{{ ' ' }}</span><span class="seat-story-words">{{ segment.text }}</span></p>
         </article>

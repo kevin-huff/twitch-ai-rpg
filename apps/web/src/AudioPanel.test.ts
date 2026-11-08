@@ -34,6 +34,8 @@ type HolderData = { holderId: string; label: string; showTitle: string; browser:
 let holder: HolderData | null;
 let holderFails: boolean;
 let stopRefusal: string | null;
+let waitingToResume: boolean;
+let renewRefusal: { code?: string; message: string } | null;
 const wrappers: ReturnType<typeof mount>[] = [];
 const serverNow = () => 100_000 + Math.floor(performance.now());
 const response = (data: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data }) as Response;
@@ -57,7 +59,7 @@ beforeEach(() => {
   shared = { schemaVersion: 1, sessionId: 'show', revision: 0, sampleRevision: 0, serverTimeMs: 100_000, playbackId: null, status: 'idle', manifest: null, segmentIndex: null, positionMs: 0, anchorTimeMs: null, presenter: { available: false, leaseExpiresAtMs: null } };
   latest = { status: 'ready', manifest };
   preparation = { ok: true, data: { status: 'ready', manifest } };
-  holder = null; holderFails = false; stopRefusal = null;
+  holder = null; holderFails = false; stopRefusal = null; waitingToResume = false; renewRefusal = null;
   vi.stubGlobal('Audio', FakeAudio);
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -68,8 +70,9 @@ beforeEach(() => {
       holder = null;
       return response({ holder: null });
     }
-    if (url.endsWith('/playback/holder')) return holderFails ? response({ message: 'down' }, false) : response({ holder });
+    if (url.endsWith('/playback/holder')) return holderFails ? response({ message: 'down' }, false) : response({ holder, ...(waitingToResume ? { waitingToResume: true } : {}) });
     shared.serverTimeMs = serverNow();
+    if (url.endsWith('/presenter') && body.type === 'renew' && renewRefusal) return { ok: false, status: 409, json: async () => ({ ...renewRefusal, recoverable: false }) } as Response;
     if (url.endsWith('/presenter')) {
       shared = { ...shared, revision: shared.revision + (body.type === 'renew' ? 0 : 1), sampleRevision: shared.sampleRevision + 1,
         presenter: { available: body.type !== 'release', leaseExpiresAtMs: body.type === 'release' ? null : serverNow() + 10_000 } };
@@ -373,13 +376,28 @@ describe('auto-play after a voiced publish', () => {
     expect(JSON.parse(String(starts()[0][1]?.body))).toMatchObject({ beatId: 'beat-1' });
   });
 
-  it('does not start without a presenter, nor when one appears later', async () => {
+  it('waits for a presenter, then starts the newest beat once', async () => {
     panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
     await vi.advanceTimersByTimeAsync(3000); await flushPromises();
     expect(starts()).toHaveLength(0);
     withPresenter();
     await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(1);
+    expect(JSON.parse(String(starts()[0][1]?.body))).toMatchObject({ type: 'start', beatId: 'beat-1' });
+    for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(starts()).toHaveLength(1);
+  });
+
+  it('starts the newest beat, not the paused older one, once a page takes the audio', async () => {
+    active({ status: 'paused', anchorTimeMs: null, manifest: { ...manifest, beatId: 'beat-0' }, presenter: { available: false, leaseExpiresAtMs: null } });
+    panel({ director: true, beatId: 'beat-1', autoPlayBeatId: 'beat-1' }); await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
     expect(starts()).toHaveLength(0);
+    withPresenter();
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises();
+    expect(starts()).toHaveLength(1);
+    expect(JSON.parse(String(starts()[0][1]?.body))).toMatchObject({ beatId: 'beat-1' });
   });
 
   it('does not start when the prop is absent or names an older beat', async () => {
@@ -640,5 +658,55 @@ describe('show audio holder on the director controls', () => {
     const wrapper = panel(); await flushPromises();
     wrapper.unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('lapse-paused narration and stopped pages', () => {
+  const pauses = () => requests('/commands').filter(call => JSON.parse(String(call[1]?.body)).type === 'pause');
+
+  it('shows the waiting sentence and Pause only while the server says narration waits to resume', async () => {
+    active({ status: 'paused', anchorTimeMs: null, presenter: { available: false, leaseExpiresAtMs: null } });
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.find('[data-testid="audio-waiting-resume"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="pause-audio"]').exists()).toBe(false);
+    waitingToResume = true;
+    shared.revision++; shared.sampleRevision++;
+    await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(wrapper.get('[data-testid="audio-waiting-resume"]').text()).toBe('Narration paused when the show audio dropped. It resumes by itself when a page takes the audio. Press Pause shared audio to keep it paused.');
+    await click(wrapper, 'pause-audio');
+    expect(pauses()).toHaveLength(1);
+    expect(JSON.parse(String(pauses()[0][1]?.body))).toMatchObject({ type: 'pause', playbackId });
+  });
+
+  it('does not show the waiting sentence while narration plays', async () => {
+    waitingToResume = true;
+    active();
+    const wrapper = panel(); await flushPromises();
+    expect(wrapper.find('[data-testid="audio-waiting-resume"]').exists()).toBe(false);
+  });
+
+  it('tells a page stopped from the director page to reload, and a plain refusal still says the audio was lost', async () => {
+    const stopped = 'This page was stopped from the director page. Reload it to play the show audio here again.';
+    const lost = 'This page lost the show audio. Reclaim audio, and narration that was playing resumes by itself.';
+    const wrapper = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    await click(wrapper, 'present-audio');
+    await click(wrapper, 'confirm-present-audio');
+    expect(wrapper.find('[data-testid="release-audio"]').exists()).toBe(true);
+    renewRefusal = { code: 'audio_stopped', message: stopped };
+    await vi.advanceTimersByTimeAsync(2500); await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain(stopped);
+    expect(wrapper.text()).not.toContain(lost);
+    expect(wrapper.find('[data-testid="release-audio"]').exists()).toBe(false);
+
+    const plain = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    renewRefusal = null;
+    shared.presenter = { available: false, leaseExpiresAtMs: null }; shared.sampleRevision++;
+    await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    await click(plain, 'present-audio');
+    await click(plain, 'confirm-present-audio');
+    renewRefusal = { message: 'Another page has the audio.' };
+    await vi.advanceTimersByTimeAsync(2500); await flushPromises();
+    expect(plain.get('[role="alert"]').text()).toContain(lost);
+    expect(plain.get('[role="alert"]').text()).not.toContain(stopped);
   });
 });

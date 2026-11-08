@@ -237,7 +237,7 @@ describe('ClewdR native adapter', () => {
       'The Do line of a character at full strain (strain 8)',
       'A cost paid in strain is a strain_delta on the character who pays it',
       'A line meant to ease strain (rest, first aid, medicine, a calming word) rolls like any other line',
-      'Never push a character past strain 8.',
+      'A strain cost on a character already at full strain (8) puts them down, so give one only when the danger is deadly.',
       'When beat.kind is "conversation", no outcome changes a countdown track.',
     ];
     const ctx = context();
@@ -247,7 +247,8 @@ describe('ClewdR native adapter', () => {
     for (const phrase of phrases) expect(planBody.system).toContain(phrase);
     expect(planBody.system).toContain('Costly: low risk costs no strain (use a small complication instead), normal 1, high 2. Setback: low 1, normal 2, high 3.');
     expect(planBody.system).toContain('clean -2, costly -1 with the price paid another way and never more strain on that character, setback 0, critical 0 with a small complication.');
-    expect(planBody.system).toContain('No outcome takes a character out of the story or kills them.');
+    expect(planBody.system).not.toContain('No outcome takes a character out of the story or kills them.');
+    expect(planBody.system).not.toContain('Never push a character past strain');
     const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
     await ai(renderMock).render(ctx);
     const renderBody = JSON.parse(String(renderMock.mock.calls[0][1]?.body));
@@ -1624,5 +1625,112 @@ describe('call log', () => {
       expect(empty.body.messages[0].content).toBe(plain.body.messages[0].content);
       expect(plain.body.system).not.toContain('Standing note:');
     });
+  });
+});
+
+describe('the death ladder in the prompts', () => {
+  const sentOf = (mock: ReturnType<typeof vi.fn<typeof fetch>>) => JSON.parse(String(JSON.parse(String(mock.mock.calls[0][1]?.body)).messages[0].content));
+  const systemOf = (mock: ReturnType<typeof vi.fn<typeof fetch>>) => String(JSON.parse(String(mock.mock.calls[0][1]?.body)).system);
+
+  it('teaches the planner the ladder and no longer forbids death', async () => {
+    const ctx = context();
+    const mock = replying(singleLinePlan(ctx));
+    await ai(mock).plan(ctx);
+    const system = systemOf(mock);
+    expect(system).not.toContain('kills them');
+    expect(system).toContain('puts them down, so give one only when the danger is deadly');
+    expect(system).toContain('A character_down effect puts a player character down, with their strain left where it is. Write it only on a setback or critical outcome, and only when the danger is deadly.');
+    expect(system).toContain('takes no actions and says only a few words: their Do lines are "blocked", and their Say line of up to 8 words rolls like any line');
+    expect(system).toContain('put character_rescue on the clean and costly outcomes of that line only');
+    expect(system).toContain('A rescue brings them back up at 6 of 8 strain.');
+    expect(system).toContain('The application rolls the last chance for a downed character nobody rescued, so never write it as a contract.');
+    expect(system).toContain('An npc_death effect kills a supplied participating NPC and may sit on any outcome');
+    expect(system).toContain('A character whose condition is "dead" neither acts nor speaks');
+    expect(sentOf(mock).rules).toContain('more strain on a character already at 8 puts them down');
+  });
+
+  it('tells only the narrator to narrate downs, rescues, last chances and deaths as the results show', async () => {
+    const ctx = context();
+    const planMock = replying(singleLinePlan(ctx));
+    await ai(planMock).plan(ctx);
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(ctx)));
+    await ai(renderMock).render(ctx);
+    const rule = 'Narrate a character going down, a rescue, a last chance (a roll marked lastChance, with its outcome) and a death only as fixedResults show';
+    expect(systemOf(renderMock)).toContain(rule);
+    expect(systemOf(renderMock)).toContain('a strain_delta that lands on a character with no condition who is already at 8 of 8 and so goes down');
+    expect(systemOf(renderMock)).toContain('Never invent a down, a rescue or a death.');
+    expect(systemOf(renderMock)).not.toContain('A character_down effect puts a player character down');
+    expect(systemOf(planMock)).not.toContain(rule);
+  });
+
+  it('sends a downed character with condition after strain and a dead one as only an id, a name and the word dead', async () => {
+    const ctx = context();
+    ctx.state.characters[0].condition = 'down';
+    ctx.state.characters[1].condition = 'dead';
+    const mock = replying(singleLinePlan(ctx));
+    await ai(mock).plan(ctx);
+    const sent = sentOf(mock);
+    expect(sent.characters[0].condition).toBe('down');
+    expect(Object.keys(sent.characters[0]).indexOf('condition')).toBe(Object.keys(sent.characters[0]).indexOf('strain') + 1);
+    expect(sent.characters[1]).toEqual({ id: ctx.state.characters[1].id, displayName: ctx.state.characters[1].displayName, condition: 'dead' });
+    expect(sent.characters[2]).not.toHaveProperty('condition');
+    const renderCtx = context();
+    renderCtx.state.characters[1].condition = 'dead';
+    const renderMock = vi.fn<typeof fetch>().mockResolvedValue(nativeResponse(draft(renderCtx)));
+    await ai(renderMock).render(renderCtx);
+    expect(sentOf(renderMock).characters[1]).toEqual({ id: renderCtx.state.characters[1].id, displayName: renderCtx.state.characters[1].displayName, condition: 'dead' });
+  });
+
+  it('sends deadNpcs only when the list is not empty and keeps it to 50 names', async () => {
+    const absent = context();
+    const absentMock = replying(singleLinePlan(absent));
+    await ai(absentMock).plan(absent);
+    expect(sentOf(absentMock)).not.toHaveProperty('deadNpcs');
+    const emptyList = context();
+    emptyList.deadNpcNames = [];
+    const emptyMock = replying(singleLinePlan(emptyList));
+    await ai(emptyMock).plan(emptyList);
+    expect(sentOf(emptyMock)).not.toHaveProperty('deadNpcs');
+    const present = context();
+    present.deadNpcNames = Array.from({ length: 60 }, (_, index) => `Ghost ${index}`);
+    const presentMock = replying(singleLinePlan(present));
+    await ai(presentMock).plan(present);
+    expect(sentOf(presentMock).deadNpcs).toEqual(present.deadNpcNames.slice(0, 50));
+  });
+
+  it('refuses an addressed NPC who has died', async () => {
+    const ctx = context();
+    ctx.state.npcs[0].condition = 'dead';
+    const mock = replying(singleLinePlan(ctx));
+    await expect(ai(mock).plan(ctx)).rejects.toMatchObject({ code: 'invalid_context' });
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('refuses npc_death on an NPC that was not supplied and accepts one that was', async () => {
+    const ctx = context();
+    const killing = (npcId: string) => {
+      const base = rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id);
+      return rolledPlan([{ ...base, outcomes: { ...base.outcomes, setback: { publicText: 'It ends badly.', effects: [{ kind: 'npc_death', npcId }] } } }]);
+    };
+    const corrected = singleLinePlan(ctx);
+    const refusedMock = replying(killing('nobody'), corrected);
+    expect(await ai(refusedMock).plan(ctx)).toEqual(corrected);
+    expect(JSON.parse(String(refusedMock.mock.calls[1][1]?.body)).messages[2].content).toContain('npc_death effect on someone who is not a supplied participating NPC');
+    const accepted = killing(ctx.state.npcs[0].id);
+    const okMock = replying(accepted);
+    expect(await ai(okMock).plan(ctx)).toEqual(accepted);
+    expect(okMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a rules refusal for going down on a clean outcome back to the planner once', async () => {
+    const ctx = context();
+    const base = rolledContract(ctx, 'ask', 0, [], ctx.submissions[0].id);
+    const refused = rolledPlan([{ ...base, outcomes: { ...base.outcomes, clean: { publicText: 'It goes badly anyway.', effects: [{ kind: 'character_down', characterId: ctx.state.characters[0].id }] } } }]);
+    const corrected = singleLinePlan(ctx);
+    const mock = replying(refused, corrected);
+    expect(await ai(mock).plan(ctx)).toEqual(corrected);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(mock.mock.calls[1][1]?.body)).messages[2].content)
+      .toContain('The rules refused this plan: Going down can only come from a setback or a critical failure.');
   });
 });

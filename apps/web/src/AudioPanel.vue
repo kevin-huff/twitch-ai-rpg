@@ -17,6 +17,7 @@ const timeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '
 const dayAndTimeFormat = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const holder = ref<ShowAudioHolder | null>(null);
 const holderStopped = ref(false);
+const waitingToResume = ref(false);
 const holderError = ref('');
 const holderStopping = ref(false);
 let holderRequest = 0;
@@ -61,17 +62,18 @@ const holderSentence = computed(() => {
 // While the look-up is pending or has failed, the line "Another page has the show audio." is all the director sees.
 // A stop error stays with the holder shown beside it, and clears once a successful look-up shows a different holder or nobody.
 async function loadHolder() {
-  if (!directorControls.value || props.compact) { holder.value = null; return; }
+  if (!directorControls.value || props.compact) { holder.value = null; waitingToResume.value = false; return; }
   const request = ++holderRequest;
   try {
     const result = await api.showAudioHolder(props.sessionId);
     if (disposed || request !== holderRequest) return;
     holder.value = result.holder;
+    waitingToResume.value = result.waitingToResume === true;
     if (result.holder) holderStopped.value = false;
     if ((result.holder?.holderId ?? null) !== holderErrorFor) holderError.value = '';
   } catch {
     if (disposed || request !== holderRequest) return;
-    holder.value = null;
+    holder.value = null; waitingToResume.value = false;
   }
 }
 
@@ -121,7 +123,8 @@ function autoPlay() {
   if (!id || id === autoPlayHandled || id !== props.beatId || !directorControls.value || props.compact) return;
   const snapshot = state.snapshot;
   if (!snapshot || !latestReady.value || state.manifest?.beatId !== id) return;
-  if (!snapshot.presenter.available) { autoPlayHandled = id; return; }
+  // No page holds the audio yet: leave the beat unhandled so it starts once a page takes the audio.
+  if (!snapshot.presenter.available) return;
   if (snapshot.playbackId && snapshot.manifest?.beatId === id) { autoPlayHandled = id; return; }
   if (snapshot.status === 'playing' || state.commandPending) return;
   autoPlayHandled = id;
@@ -169,6 +172,12 @@ onUnmounted(() => { disposed = true; controller.dispose(); });
         </div>
       </div>
       <p v-else-if="!holderStopped" class="audio-detail" data-testid="audio-holder-unknown">Another page has the show audio.</p>
+      <div v-if="waitingToResume && state.snapshot?.status === 'paused'" class="audio-holder">
+        <p class="audio-detail" data-testid="audio-waiting-resume">Narration paused when the show audio dropped. It resumes by itself when a page takes the audio. Press Pause shared audio to keep it paused.</p>
+        <div class="actions">
+          <button data-testid="pause-audio" class="secondary" :disabled="state.commandPending" @click="controller.command('pause')">Pause shared audio</button>
+        </div>
+      </div>
       <p v-if="holderStopped" class="audio-detail" data-testid="audio-holder-stopped">Stopped. A page with the show's link, such as your OBS, takes over within a few seconds. If narration was playing, press Resume shared audio.</p>
       <p v-if="holderError" class="notice error" role="alert" data-testid="audio-holder-error">{{ holderError }}</p>
       <div class="actions">

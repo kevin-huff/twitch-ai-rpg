@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import type { AiDraft, DirectorSnapshot, PlanResult, ProviderContext, SessionState } from '@rpg/contracts';
+import type { AiCallOptions, AiDraft, DirectorSnapshot, PlanResult, ProviderContext, SessionState } from '@rpg/contracts';
 import { buildApp, hash } from '../src/app';
 import { createPool, transaction } from '../src/database';
 import { readState, saveState } from '../src/repository';
@@ -20,11 +20,11 @@ suite('director corrections and private beat steering', () => {
   let diceCalls: number;
   let contexts: ProviderContext[];
   const fake = new FakeAiProvider();
-  let plan: (context: ProviderContext) => Promise<PlanResult>;
-  let render: (context: ProviderContext) => Promise<AiDraft>;
+  let plan: (context: ProviderContext, options?: AiCallOptions) => Promise<PlanResult>;
+  let render: (context: ProviderContext, options?: AiCallOptions) => Promise<AiDraft>;
   const options = { databaseUrl: databaseUrl!, hostToken, origin, serveStatic: false, providerTimeoutMs: 2000,
     rollDie: () => { diceCalls++; return 4; },
-    provider: { plan: (context: ProviderContext) => { contexts.push(context); return plan(context); }, render: (context: ProviderContext) => { contexts.push(context); return render(context); } },
+    provider: { plan: (context: ProviderContext, callOptions?: AiCallOptions) => { contexts.push(context); return plan(context, callOptions); }, render: (context: ProviderContext, callOptions?: AiCallOptions) => { contexts.push(context); return render(context, callOptions); } },
   };
   const cookie = (response: { headers: Record<string, unknown> }) => String(response.headers['set-cookie']).split(';')[0]!;
   const request = (path: string, payload?: Record<string, unknown>, credential = host) => app.inject({ method: payload === undefined ? 'GET' : 'POST', url: path, headers: { origin, cookie: credential }, ...(payload === undefined ? {} : { payload }) });
@@ -61,7 +61,7 @@ suite('director corrections and private beat steering', () => {
     host = cookie(await request('/api/auth/host', { token: hostToken }, ''));
   });
   beforeEach(async () => {
-    diceCalls = 0; contexts = []; plan = value => fake.plan(value); render = value => fake.render(value);
+    diceCalls = 0; contexts = []; plan = (value, callOptions) => fake.plan(value, callOptions); render = (value, callOptions) => fake.render(value, callOptions);
     const created = (await request('/api/sessions', { commandId: randomUUID() })).json(); sessionId = created.sessionId;
     player = cookie(await request('/api/auth/redeem', { token: created.invites[0].token }, ''));
     stage = cookie(await request('/api/auth/redeem', { token: created.invites.at(-1).token }, ''));
@@ -327,16 +327,61 @@ suite('director corrections and private beat steering', () => {
       await refresh();
       const job = snapshot.jobs.at(-1)!;
       expect(job.status).toBe('running');
+      const savedAt = Date.now();
       const result = await ok(correction());
       const response = await pending;
+      const answeredAt = Date.now();
       expect(response.statusCode, response.body).toBe(409);
       expect(response.json()).toMatchObject({ code: 'superseded', message: 'The generation was superseded. Its result was discarded.' });
+      expect(answeredAt - savedAt).toBeLessThan(1000);
       await refresh();
       expect(snapshot.activeBeat).toMatchObject({ phase: 'collecting', classification: null, contracts: [], selectedSubmissionIds: lines });
       expect(snapshot.jobs.at(-1)).toMatchObject({ id: job.id, status: 'cancelled' });
       const data = (await pool.query("SELECT data FROM audit_events WHERE command_id=$1 AND kind='correction.recorded'", [result.json().commandId])).rows[0].data;
       expect(data.cancelledJobIds).toEqual([job.id]);
     } finally { finish?.({ classification: 'ordinary', contracts: [], directorSummary: '' }); await pending; }
+  });
+
+  it('aborts the signal handed to the provider when a correction cancels a waiting plan', async () => {
+    await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
+    await submit();
+    const lines = snapshot.submissions.filter(item => item.kind === 'say' && item.status === 'queued').map(item => item.id);
+    let signal: AbortSignal | undefined;
+    plan = (_context, callOptions) => { signal = callOptions?.signal; return new Promise<PlanResult>(() => undefined); };
+    const pending = command(beatCommand('plan_beat', { submissionIds: lines }));
+    await vi.waitFor(() => expect(signal).toBeDefined(), { timeout: 1000, interval: 10 });
+    expect(signal!.aborted).toBe(false);
+    await ok(correction());
+    expect(signal!.aborted).toBe(true);
+    expect((await pending).statusCode).toBe(409);
+  });
+
+  it('aborts the signal handed to the provider when the request budget runs out', async () => {
+    await ok({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
+    await submit();
+    const lines = snapshot.submissions.filter(item => item.kind === 'say' && item.status === 'queued').map(item => item.id);
+    let signal: AbortSignal | undefined;
+    plan = (_context, callOptions) => { signal = callOptions?.signal; return new Promise<PlanResult>(() => undefined); };
+    const pending = command(beatCommand('plan_beat', { submissionIds: lines }));
+    await vi.waitFor(() => expect(signal).toBeDefined(), { timeout: 1000, interval: 10 });
+    expect(signal!.aborted).toBe(false);
+    await pending;
+    expect(signal!.aborted).toBe(true);
+    await refresh();
+    expect(snapshot.jobs.at(-1)!.status).toBe('failed');
+  }, 10_000);
+
+  it('clears the lapse mark on the show audio when a beat is published, and bumps its revision', async () => {
+    await pool.query('INSERT INTO session_playback(session_id) VALUES($1) ON CONFLICT(session_id) DO NOTHING', [sessionId]);
+    await pool.query('UPDATE session_playback SET lapse_paused=true WHERE session_id=$1', [sessionId]);
+    const before = (await pool.query('SELECT revision, sample_revision FROM session_playback WHERE session_id=$1', [sessionId])).rows[0];
+    await prepare(); await ok(beatCommand('lock_beat')); await ok(beatCommand('render_beat'));
+    expect((await pool.query('SELECT lapse_paused FROM session_playback WHERE session_id=$1', [sessionId])).rows[0].lapse_paused).toBe(true);
+    await ok(beatCommand('publish_beat', { expectedStateRevision: snapshot.session.stateRevision, draftRevision: snapshot.activeBeat!.draftRevision, textOnly: true }));
+    const after = (await pool.query('SELECT lapse_paused, revision, sample_revision FROM session_playback WHERE session_id=$1', [sessionId])).rows[0];
+    expect(after.lapse_paused).toBe(false);
+    expect(Number(after.revision)).toBe(Number(before.revision) + 1);
+    expect(Number(after.sample_revision)).toBe(Number(before.sample_revision) + 1);
   });
 
   it('refuses a correction, Who is here and Rest once the dice are rolled, with the exact texts', async () => {

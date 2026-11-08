@@ -121,19 +121,28 @@ describe('rest panel', () => {
     expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('shows the round-open note and the longer saved notice while a round is open', async () => {
-    for (const phase of ['collecting', 'stakes_review']) {
+  it('shows the round-open note and the longer saved notice only while a plan exists or is being made', async () => {
+    const setJobs = (current: DirectorSnapshot, jobs: unknown[]) => { (current as unknown as { jobs: unknown[] }).jobs = jobs; };
+    const beat = (phase: string) => ({ id: 'b1', phase }) as DirectorSnapshot['activeBeat'];
+    const cases: Array<[string, (current: DirectorSnapshot) => void, boolean]> = [
+      ['collecting with no plan', current => { current.activeBeat = beat('collecting'); setJobs(current, []); }, false],
+      ['collecting with a running plan job', current => { current.activeBeat = beat('collecting'); setJobs(current, [{ beatId: 'b1', task: 'plan', status: 'running' }]); }, true],
+      ['collecting with a finished plan job', current => { current.activeBeat = beat('collecting'); setJobs(current, [{ beatId: 'b1', task: 'plan', status: 'succeeded' }]); }, false],
+      ['stakes review', current => { current.activeBeat = beat('stakes_review'); }, true],
+    ];
+    for (const [label, change, planned] of cases) {
       const current = snapshot();
-      current.activeBeat = { phase } as DirectorSnapshot['activeBeat'];
+      change(current);
       const wrapper = mountIt(current);
-      expect(wrapper.get(field('rest-round-open')).text()).toBe('A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.');
+      expect(wrapper.find(field('rest-round-open')).exists(), label).toBe(planned);
+      if (planned) expect(wrapper.get(field('rest-round-open')).text()).toBe('A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.');
       expect(saveDisabled(wrapper)).toBe(false);
       await wrapper.get(field('save-rest')).trigger('click');
       await wrapper.get(field('rest-confirm')).trigger('click');
       const [, onSaved] = wrapper.emitted('command')![0] as [unknown, () => void];
       onSaved();
       await wrapper.vm.$nextTick();
-      expect(wrapper.get(field('rest-saved')).text()).toBe('Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.');
+      expect(wrapper.get(field('rest-saved')).text(), label).toBe(planned ? 'Rest saved. Strain went down. The round went back to taking lines. Press Plan to plan it again.' : 'Rest saved. Strain went down.');
     }
     expect(mountIt().find(field('rest-round-open')).exists()).toBe(false);
   });

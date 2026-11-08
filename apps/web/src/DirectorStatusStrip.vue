@@ -107,7 +107,37 @@ const resumeNote = computed(() => {
   const time = new Date(current.resumedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return { stamp: current.resumedAt, text: `Narration resumed by itself on ${current.label} (${where}) at ${time}.` };
 });
-const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unknown' || stuckSeconds.value !== null || resumeNote.value !== null);
+const downChips = computed(() => {
+  const beat = props.snapshot.activeBeat;
+  const resolution = beat?.resolution ?? null;
+  const rolled = beat?.phase === 'locked' || beat?.phase === 'draft_review';
+  const chips: { id: string; text: string }[] = [];
+  for (const character of props.snapshot.characters ?? []) {
+    if (character.condition !== 'down') continue;
+    const name = character.displayName;
+    let text: string;
+    if (beat && (beat.phase === 'collecting' || beat.phase === 'stakes_review')) {
+      text = `${name} is down. Someone can save ${name} in this round. If nobody does, ${name} gets a last-chance roll when this round's dice are rolled.`;
+    } else if (rolled) {
+      const roll = resolution?.rolls.find(entry => entry.lastChance && entry.actorCharacterId === character.id);
+      const effects = [...(resolution?.effects ?? []), ...(resolution?.effectGroups ?? []).flat()];
+      if (roll) {
+        text = roll.band === 'clean' || roll.band === 'costly'
+          ? `${name}'s last chance rolled ${roll.total}: ${name} pulls through at 7 of 8 when you publish.`
+          : `${name}'s last chance rolled ${roll.total}: ${name} dies when you publish.`;
+      } else if (effects.some(effect => effect.kind === 'character_rescue' && effect.characterId === character.id)) {
+        text = `${name} is saved when you publish and comes back up at 6 of 8.`;
+      } else {
+        text = `${name} is down. This beat has no dice, so someone can still save ${name} in the next round.`;
+      }
+    } else {
+      text = `${name} is down. Someone can save ${name} in the next round. If nobody does, ${name} gets a last-chance roll when that round's dice are rolled.`;
+    }
+    chips.push({ id: character.id, text });
+  }
+  return chips;
+});
+const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unknown' || stuckSeconds.value !== null || resumeNote.value !== null || downChips.value.length > 0);
 </script>
 
 <template>
@@ -119,6 +149,7 @@ const hasWarning = computed(() => audio.value === 'none' || audio.value === 'unk
       {{ resumeNote.text }}
       <button type="button" class="quiet" data-testid="auto-resumed-dismiss" @click="dismissedResume = resumeNote.stamp">Dismiss</button>
     </li>
+    <li v-for="chip in downChips" :key="chip.id" class="chip" :data-testid="`condition-${chip.id}`">{{ chip.text }}</li>
     <li v-if="pinned" class="chip" data-testid="pinned-line">
       Pinned: {{ pinned.label }}
       <button type="button" class="secondary" data-testid="release-pinned" :disabled="releasing" @click="release">Release</button>

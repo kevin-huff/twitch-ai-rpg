@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
-import { STRAIN_MAX, type SessionSnapshot, type Submission } from '@rpg/contracts';
+import { conditionLineRefusal, countWords, DOWNED_SAY_WORDS, STRAIN_MAX, type SessionSnapshot, type Submission } from '@rpg/contracts';
 import { identityPath } from './identity';
 import { displayedPicture, pictureUrl, portraitAlt, shownScenePicture } from './pictures';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
@@ -56,7 +56,14 @@ const draftContext = computed(() => {
 const draftRestored = ref(false);
 // A send the server refused for a changed input window leaves the words in place and says why beside that box's Send button.
 const refusals = ref<Record<LineKind, string>>({ say: '', act: '', ooc: '' });
-const refusal = computed(() => refusals.value[kind.value]);
+const serverRefusal = computed(() => refusals.value[kind.value]);
+const sayWords = computed(() => countWords(sayText.value));
+// A downed character's Say line holds only a few words; the reason shows on that box and Send stays off until it fits.
+const wordRefusal = computed(() => {
+  const own = player.value?.ownCharacter;
+  return isDown.value && own && kind.value === 'say' ? conditionLineRefusal(own, 'say', sayWords.value) : null;
+});
+const refusal = computed(() => serverRefusal.value || wordRefusal.value || '');
 
 const name = computed(() => player.value?.ownCharacter?.displayName ?? 'your character');
 const card = computed(() => {
@@ -102,10 +109,17 @@ watch(shownSources, shown => {
   if (kept.length !== brokenPictures.value.length) brokenPictures.value = kept;
 });
 
+const condition = computed(() => player.value?.ownCharacter?.condition);
+const isDown = computed(() => condition.value === 'down');
+const isDead = computed(() => condition.value === 'dead');
 const turnDefault = computed<LineKind>(() => {
+  if (isDown.value) return 'say';
   const beat = player.value?.activeBeat;
   return beat?.kind === 'action' && (beat.phase === 'collecting' || beat.phase === 'stakes_review') ? 'act' : 'say';
 });
+
+// A downed character can only say a few words, so the Do box never shows for them.
+watch([isDown, kind], () => { if (isDown.value && kind.value === 'act') kind.value = 'say'; }, { immediate: true });
 
 const ownCharacterId = computed(() => player.value?.ownCharacter?.id ?? '');
 watch(ownCharacterId, id => {
@@ -151,7 +165,7 @@ function beginInput() {
   else if (!contexts.value[lineKind]) contexts.value[lineKind] = stampNow();
 }
 
-const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch }));
+const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch, condition: condition.value }));
 const toneLabel = computed(() => ({ wait: 'Hold on', act: 'Your turn', done: 'Sent' })[status.value.tone]);
 const presentNpcs = computed(() => snapshot.value?.npcs.filter(npc => npc.status === 'present') ?? []);
 const changingRecipient = ref(false);
@@ -172,9 +186,9 @@ const quietSince = (ctx: InputContext | null) => movedSince(ctx) && !storyChange
 const moved = computed(() => movedSince(activeContext.value));
 const quietChange = computed(() => quietSince(activeContext.value));
 const turnLocked = computed(() => turnLockedSince(activeContext.value));
-const stale = computed(() => Boolean(activeContext.value) && ((moved.value && !quietChange.value) || Boolean(refusal.value)));
+const stale = computed(() => Boolean(activeContext.value) && ((moved.value && !quietChange.value) || Boolean(serverRefusal.value)));
 // Say and Do boxes both holding words go together on one press, as two separate lines.
-const sendingBoth = computed(() => !editing.value && (kind.value === 'say' || kind.value === 'act') && Boolean(sayText.value.trim()) && Boolean(actionText.value.trim()));
+const sendingBoth = computed(() => !editing.value && !isDown.value && (kind.value === 'say' || kind.value === 'act') && Boolean(sayText.value.trim()) && Boolean(actionText.value.trim()));
 
 const submitLabel = computed(() => busy.value ? 'Sending…' : sendingBoth.value ? (stale.value ? 'Send both anyway' : 'Send both') : stale.value ? (editing.value ? 'Save changes anyway' : 'Send it anyway') : editing.value ? 'Save changes' : kind.value === 'ooc' ? 'Send privately' : 'Send');
 
@@ -311,6 +325,7 @@ function returnWords(item: Submission) {
   contexts.value[lineKind] = stampNow();
 }
 function editSubmission(item: Submission) {
+  if (isDown.value && item.kind === 'act') return;
   if (editing.value && editing.value.kind !== item.kind) finishLine(editing.value.kind);
   if (!editing.value) setAside.value = { kind: item.kind, mode: kind.value, text: textOf(item.kind), context: contexts.value[item.kind], recipient: recipient.value, recipientTouched: recipientTouched.value, stageDirection: stageDirection.value };
   kind.value = item.kind;
@@ -352,32 +367,34 @@ async function askPrivately() {
       </header>
       <section class="character">
         <template v-if="player.ownCharacter">
-          <p class="playing">You are playing</p><h2>{{ player.ownCharacter.displayName }}</h2>
-          <StrainMeter class="own-strain" words :value="player.ownCharacter.strain" :max="STRAIN_MAX" />
-          <p v-if="player.ownCharacter.strain >= STRAIN_MAX" class="spent-note" data-testid="seat-spent">Your Do lines will help someone else for now. What you say still rolls.</p>
+          <p class="playing">You are playing</p><div class="name-row"><h2>{{ player.ownCharacter.displayName }}</h2><span v-if="condition" class="seat-condition" :data-condition="condition" data-testid="seat-condition">{{ isDead ? 'Dead' : 'Down' }}</span></div>
+          <StrainMeter v-if="!isDead" class="own-strain" words :value="player.ownCharacter.strain" :max="STRAIN_MAX" />
+          <p v-if="isDead" class="condition-note" data-testid="seat-dead-note">{{ player.ownCharacter.displayName }} has died. You can keep watching the story here.</p>
+          <p v-else-if="isDown" class="condition-note" data-testid="seat-down-note">{{ player.ownCharacter.displayName }} is down. You can say a few words, up to {{ DOWNED_SAY_WORDS }}. Someone can still save {{ player.ownCharacter.displayName }} until the end of the next round.</p>
+          <p v-else-if="player.ownCharacter.strain >= STRAIN_MAX" class="spent-note" data-testid="seat-spent">Your Do lines will help someone else for now. What you say still rolls.</p>
           <details v-if="card.length || showable(ownPortraitSrc)" class="card"><summary>Who is {{ player.ownCharacter.displayName }}?</summary><img v-if="showable(ownPortraitSrc)" class="own-portrait" :src="ownPortraitSrc!" :alt="portraitAlt(name)" @error="pictureFailed(ownPortraitSrc)"><dl><template v-for="row in card" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl></details>
           <SeatVoice :snapshot="player" :busy="busy" @command="command => work(() => send(command))" />
         </template>
         <template v-else><h2>Unassigned seat</h2><p class="notice">This seat has no character yet. Ask the director.</p></template>
       </section>
-      <div class="player-status" :data-tone="status.tone" aria-live="polite"><span class="tone">{{ toneLabel }}</span><strong>{{ status.headline }}</strong><span>{{ status.detail }}</span></div>
+      <div v-if="!isDead" class="player-status" :data-tone="status.tone" aria-live="polite"><span class="tone">{{ toneLabel }}</span><strong>{{ status.headline }}</strong><span>{{ status.detail }}</span></div>
       <SeatStory :history="snapshot.history" :characters="snapshot.characters" :session-id="sessionId" />
-      <details class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
-      <section ref="formPanel" class="panel form-panel">
+      <details v-if="!isDead" class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
+      <section v-if="!isDead" ref="formPanel" class="panel form-panel">
         <form data-testid="submission-form" @submit.prevent="saveSubmission">
-          <div class="modes" role="group" aria-label="What do you want to send?">
+          <div class="modes" :class="{ single: isDown }" role="group" aria-label="What do you want to send?">
             <button type="button" class="secondary" :aria-pressed="kind === 'say'" :disabled="Boolean(editing)" @click="kind = 'say'">Say something</button>
-            <button type="button" class="secondary" :aria-pressed="kind === 'act'" :disabled="Boolean(editing)" @click="kind = 'act'">Do something</button>
+            <button v-if="!isDown" type="button" class="secondary" :aria-pressed="kind === 'act'" :disabled="Boolean(editing)" @click="kind = 'act'">Do something</button>
           </div>
-          <SeatItems :carrying="carrying" :wearing="wearing" :disabled="itemsDisabled" @prefill="prefillAction" />
+          <SeatItems v-if="!isDown" :carrying="carrying" :wearing="wearing" :disabled="itemsDisabled" @prefill="prefillAction" />
           <template v-if="kind === 'say'">
-            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist :key="assistKey" :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
+            <div><label>What {{ name }} says<textarea :aria-describedby="helpId('say')" v-model="sayText" data-testid="speech-input" rows="4" maxlength="4000" required placeholder="Type the exact words" @input="beginInput" /></label><LineAssist v-if="!isDown" :key="assistKey" :session-id="sessionId" :idea="sayText" :recipient-npc-ids="recipient ? [recipient] : []" :can-send="Boolean(player.ownCharacter) && playerReady && snapshot.session.status !== 'ended' && !busy" @use="text => { sayText = text; beginInput(); }" /><p v-if="isDown" class="word-count" :class="{ over: sayWords > DOWNED_SAY_WORDS }" data-testid="seat-word-count">{{ sayWords }} of {{ DOWNED_SAY_WORDS }} words</p><p :id="helpId('say')" class="field-help">Viewers see these words on stream, and hear them read aloud, once the director puts them in the story. Words in square brackets, like [laughs], set how the line is read and are never shown.</p></div>
             <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
             <div v-else-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
           </template>
-          <div v-else-if="kind === 'act'"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream as you write them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
+          <div v-else-if="kind === 'act' && !isDown"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream as you write them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
           <div v-else><label>Private note for the director<textarea :aria-describedby="helpId('note')" v-model="noteText" data-testid="note-input" rows="3" maxlength="4000" required @input="beginInput" /></label><p :id="helpId('note')" class="field-help">Only the director sees this. It never appears on stream.</p></div>
-          <div class="actions"><button class="send" :disabled="busy || !player.ownCharacter || (kind !== 'ooc' && !playerReady)">{{ submitLabel }}</button><button v-if="editing || kind === 'ooc'" type="button" class="quiet" @click="cancel">Cancel</button></div>
+          <div class="actions"><button class="send" :disabled="busy || !player.ownCharacter || (kind !== 'ooc' && !playerReady) || Boolean(wordRefusal)">{{ submitLabel }}</button><button v-if="editing || kind === 'ooc'" type="button" class="quiet" @click="cancel">Cancel</button></div>
           <p v-if="refusal" class="notice" role="alert" data-testid="send-refused">{{ refusal }}</p>
           <p v-if="receipt" class="notice" role="status">{{ receipt }}</p>
           <small v-if="activeContext">Not sent yet</small>
@@ -386,8 +403,8 @@ async function askPrivately() {
           <div v-if="activeContext && moved && !quietChange" class="notice"><template v-if="turnLocked">This turn is locked. Your line will wait for the director to pick it.</template><template v-else>The story moved on while you were typing. Read your words again. Do they still fit?</template><button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = stampNow(); refusals[kind] = ''">Yes, they still fit</button></div>
         </form>
       </section>
-      <SubmissionList :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" :beat="player.activeBeat" @edit="startEdit" @withdraw="withdraw" />
-      <div class="extras"><button type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
+      <SubmissionList v-if="!isDead" :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" :beat="player.activeBeat" @edit="startEdit" @withdraw="withdraw" />
+      <div class="extras"><button v-if="!isDead" type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
     </div>
   </template>
 </template>
@@ -405,6 +422,13 @@ async function askPrivately() {
 .character h2 { margin: 0; overflow-wrap: anywhere; }
 .character .notice { margin: 16px 0 0; }
 .own-strain { margin-top: 8px; max-width: 320px; }
+.name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.seat-condition { display: inline-block; padding: 2px 10px; font-family: var(--font-label); font-size: 16px; line-height: 20px; text-transform: uppercase; color: var(--on-candle); background: var(--heart); clip-path: var(--cut-1); }
+.seat-condition[data-condition="dead"] { background: var(--dust); }
+.condition-note { margin: 8px 0 0; color: var(--candle); overflow-wrap: anywhere; }
+.word-count { margin: 4px 0 0; color: var(--dust); }
+.word-count.over { color: var(--candle); }
+.modes.single { grid-template-columns: 1fr; }
 .spent-note { margin: 8px 0 0; color: var(--candle); overflow-wrap: anywhere; }
 .card { margin-top: 8px; }
 .card dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 8px 0 0; }

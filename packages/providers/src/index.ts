@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { fitToJsonSchema } from './fit-json-schema.js';
 import {
   ActionContractSchema, AiDraftSchema, CardDraftSchema, CardGenerationInputSchema, FieldGenerationRequestSchema, FieldGenerationResponseSchema,
-  elevenVoiceId, FIELD_GENERATION_FIELDS, hasAudioTags, LineAssistInputSchema, LineAssistResponseSchema, imageTypeOf, PictureDescriptionRequestSchema, MAX_IMAGE_BYTES, MOMENT_PORTRAIT_MAX, MOMENT_PROMPT_MAX, PICTURE_PROMPT_MAX, ScenarioDraftNpcSchema, ScenarioDraftSchema, ScenarioGenerationRequestSchema,
+  canSpeakInScene, DOWNED_SAY_WORDS, elevenVoiceId, FIELD_GENERATION_FIELDS, hasAudioTags, LineAssistInputSchema, LineAssistResponseSchema, imageTypeOf, PictureDescriptionRequestSchema, MAX_IMAGE_BYTES, MOMENT_PORTRAIT_MAX, MOMENT_PROMPT_MAX, PICTURE_PROMPT_MAX, ScenarioDraftNpcSchema, ScenarioDraftSchema, ScenarioGenerationRequestSchema,
   validateFieldGenerationText, voiceTextMatches,
   type AiDraft, type AiProvider, type CardDraft, type CardGenerationInput, type ImageContentType, type ImageProvider, type ImageReference, type ImageRequest,
   type ImageResult, type LineAssistInput, type LineAssistResponse, type Npc, type PlanResult, type ProviderContext, type VoiceChoice, type VoiceList, type VoiceOption, type VoiceSource,
@@ -99,8 +99,11 @@ function configuration<T>(schema: z.ZodType<T>, value: unknown, service: Service
   return parsed.data;
 }
 
-async function boundedRequest<T>(service: Service, timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function boundedRequest<T>(service: Service, timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
+  const callerAborted = () => controller.abort();
+  if (callerSignal?.aborted) controller.abort();
+  else callerSignal?.addEventListener('abort', callerAborted, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -108,13 +111,20 @@ async function boundedRequest<T>(service: Service, timeoutMs: number, operation:
       controller.abort();
     }, timeoutMs);
   });
+  const stopped = new Promise<never>((_resolve, reject) => {
+    if (controller.signal.aborted) reject(new ProviderError('network_error', service));
+    else controller.signal.addEventListener('abort', () => reject(new ProviderError('network_error', service)), { once: true });
+  });
+  stopped.catch(() => undefined);
   try {
-    return await Promise.race([operation(controller.signal), deadline]);
+    if (controller.signal.aborted) throw new ProviderError('network_error', service);
+    return await Promise.race([operation(controller.signal), deadline, stopped]);
   } catch (error) {
     if (error instanceof ProviderError) throw error;
     throw new ProviderError(controller.signal.aborted ? 'timeout' : 'network_error', service);
   } finally {
     clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', callerAborted);
   }
 }
 
@@ -145,8 +155,7 @@ async function responseBytes(response: Response, limit: number, service: Service
 }
 
 function participating(npc: Npc, context: ProviderContext): boolean {
-  return (npc.status === 'present' && npc.locationId === context.state.session.scene.locationId)
-    || Boolean(npc.communicationChannel);
+  return canSpeakInScene(npc, context.state.session.scene.locationId);
 }
 
 // Characters in the room go before offstage channel voices, which matters most when only two NPCs are sent.
@@ -219,7 +228,7 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
   const recent = context.history.slice(-2);
   return {
     task, rulesVersion: context.state.rulesVersion,
-    rules: `2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character's contract. A character helps at most one contract per round, and never one they lead. Strain runs from 0 to ${STRAIN_MAX}. At ${STRAIN_MAX}, full strain, a character cannot lead a risky action from a Do line but can always speak.`,
+    rules: `2d6 + trait + Edge. Edge is 0 or 1. 10+ clean; 7-9 achieves the goal with the declared cost; 6 or less setback. Both dice showing 1 is a critical failure, whatever the total. The server alone rolls. One action per line: each selected line lets its character lead one contract, with its own roll, or help another character's contract. A character helps at most one contract per round, and never one they lead. Strain runs from 0 to ${STRAIN_MAX}. At ${STRAIN_MAX}, full strain, a character cannot lead a risky action from a Do line but can always speak, and more strain on a character already at ${STRAIN_MAX} puts them down.`,
     scene: { id: scene.id, title: scene.title, ...(context.place ? { place: context.place } : {}), ...(context.cameFrom ? { cameFrom: context.cameFrom } : {}), description: scene.description, locationId: scene.locationId },
     ...(brief ? { scenario: { premise: brief.premise, genre: brief.genre, tone: brief.tone,
       objectives: brief.objectives, playerHooks: brief.playerHooks,
@@ -230,18 +239,21 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
     corrections: (context.corrections ?? []).slice(-12).map(({ id, publishedBeatId, beatNumber, stateRevision }) => ({
       id, publishedBeatId, beatNumber, stateRevision,
     })),
-    characters: context.state.characters.map((character) => ({
+    // A dead player character is sent as only an id, a name and the word dead; a downed one carries condition after strain.
+    characters: context.state.characters.map((character) => character.condition === 'dead' ? { id: character.id, displayName: character.displayName, condition: 'dead' as const } : ({
       id: character.id, displayName: character.displayName, pronouns: character.pronouns, appearance: character.appearance,
       // The card lists and the look note are sent only when they hold something; each is capped by the character card itself (12 worn, 300 characters of note, 8 promises, 8 feelings).
       ...(character.wearing?.length ? { wearing: character.wearing } : {}),
       ...(character.looksChanged ? { looksChanged: character.looksChanged } : {}),
       traits: character.traits, strain: character.strain,
+      ...(character.condition === 'down' ? { condition: 'down' as const } : {}),
       ...(actors.has(character.id) ? { specialty: character.specialty } : {}),
       // The planner writes item changes, so it needs every character's exact entries; the narrator only needs the actors'.
       ...(task === 'plan' || actors.has(character.id) ? { possessions: character.possessions } : {}),
       ...(character.owes?.length ? { owes: character.owes } : {}),
       ...(character.feelings?.length ? { feelings: character.feelings } : {}),
     })),
+    ...(context.deadNpcNames?.length ? { deadNpcs: context.deadNpcNames.slice(0, 50) } : {}),
     npcs: npcs.map((npc) => ({
       id: npc.id, displayName: npc.displayName, role: npc.role, appearance: npc.appearance,
       personality: npc.personality, mood: npc.mood, motivation: npc.motivation, goal: npc.goal, limits: npc.limits, dialogueExamples: npc.dialogueExamples,
@@ -284,7 +296,7 @@ function promptContext(context: ProviderContext, task: 'plan' | 'render') {
 
 // Validators return the refusal in words, because the reply goes back to the model once with that reason.
 function validatePlan(result: PlanResult, context: ProviderContext): string | null {
-  const { submissions } = selectedContext(context, 'plan');
+  const { submissions, npcs: suppliedNpcs } = selectedContext(context, 'plan');
   const submissionIds = new Set(submissions.map((submission) => submission.id));
   const characterIds = new Set(context.state.characters.map((character) => character.id));
   const contractIds = new Set(result.contracts.map((contract) => contract.id));
@@ -337,6 +349,7 @@ function validatePlan(result: PlanResult, context: ProviderContext): string | nu
     if (contract.prerequisites.some((prerequisite) => !contractIds.has(prerequisite.contractId))) return `${name} has a prerequisite that is not a contract in this plan.`;
     for (const branch of Object.values(contract.outcomes)) for (const effect of branch.effects) {
       if (effect.kind === 'track_delta' && !context.state.tracks.some((track) => track.id === effect.trackId && track.visibility === 'public')) return `${name} changes a track that was not supplied.`;
+      if (effect.kind === 'npc_death' && !suppliedNpcs.some((npc) => npc.id === effect.npcId)) return `${name} has an npc_death effect on someone who is not a supplied participating NPC.`;
       if ('characterId' in effect && !characterIds.has(effect.characterId)) return `${name} has a ${effect.kind} effect on someone who is not a supplied player character.`;
     }
   }
@@ -435,12 +448,12 @@ export class ClewdrAiProvider implements AiProvider {
     } catch { throw new ProviderError('configuration', 'ClewdR'); }
   }
 
-  async plan(context: ProviderContext): Promise<PlanResult> {
-    return this.request('plan', context, planSchema, validatePlan);
+  async plan(context: ProviderContext, options?: { signal?: AbortSignal }): Promise<PlanResult> {
+    return this.request('plan', context, planSchema, validatePlan, options?.signal);
   }
 
-  async render(context: ProviderContext): Promise<AiDraft> {
-    return this.request('render', context, AiDraftSchema, validateDraft);
+  async render(context: ProviderContext, options?: { signal?: AbortSignal }): Promise<AiDraft> {
+    return this.request('render', context, AiDraftSchema, validateDraft, options?.signal);
   }
 
   async describePicture(input: PictureDescriptionRequest): Promise<string> {
@@ -608,7 +621,7 @@ export class ClewdrAiProvider implements AiProvider {
     return ScenarioDraftSchema.parse({ ...rest, npcs });
   }
 
-  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>, refusal: (result: T, context: ProviderContext, final: boolean) => string | null): Promise<T> {
+  private async request<T>(task: 'plan' | 'render', context: ProviderContext, schema: z.ZodType<T>, refusal: (result: T, context: ProviderContext, final: boolean) => string | null, signal?: AbortSignal): Promise<T> {
     const selected = promptContext(context, task);
     const schemaJson = z.toJSONSchema(schema);
     const system = [
@@ -626,7 +639,10 @@ export class ClewdrAiProvider implements AiProvider {
       task === 'plan' ? `Every selected line, Say or Do, in any round gets a roll: write one contract with ruling "check", led by that line's character, unless the line helps another contract, which then cites it. Use ruling "blocked" only for a line that cannot happen. Never use ruling "no_check". The classification is always "action". The Do line of a character at full strain (strain ${STRAIN_MAX}) is "blocked" or helps another contract, and never leads a check; a Say line may still lead one.` : '',
       task === 'plan' ? 'A cost paid in strain is a strain_delta on the character who pays it, sized by the contract\'s risk. Costly: low risk costs no strain (use a small complication instead), normal 1, high 2. Setback: low 1, normal 2, high 3. Critical: at most one more than the setback. A clean result costs no strain.' : '',
       task === 'plan' ? 'A line meant to ease strain (rest, first aid, medicine, a calming word) rolls like any other line. Its relief is a negative strain_delta on the character it helps: clean -2, costly -1 with the price paid another way and never more strain on that character, setback 0, critical 0 with a small complication. Whenever an outcome describes relief, it carries that negative strain_delta.' : '',
-      task === 'plan' ? `Never push a character past strain ${STRAIN_MAX}. When a strain cost would go past it, put the rest on an enabled public danger track if one exists, otherwise make it a story cost such as something lost, broken or newly in the way. No outcome takes a character out of the story or kills them.` : '',
+      task === 'plan' ? `Strain stops at ${STRAIN_MAX}. A strain cost on a character already at full strain (${STRAIN_MAX}) puts them down, so give one only when the danger is deadly. Below ${STRAIN_MAX}, a cost that would pass it is cut to ${STRAIN_MAX}: put the rest on an enabled public danger track if one exists, otherwise make it a story cost such as something lost, broken or newly in the way.` : '',
+      task === 'plan' ? `A character_down effect puts a player character down, with their strain left where it is. Write it only on a setback or critical outcome, and only when the danger is deadly. A character whose condition is "down" takes no actions and says only a few words: their Do lines are "blocked", and their Say line of up to ${DOWNED_SAY_WORDS} words rolls like any line. They cannot lead or help any other contract. Another character's line may rescue them: put character_rescue on the clean and costly outcomes of that line only, never for a character who is not down or on their own line. A rescue brings them back up at 6 of 8 strain. The application rolls the last chance for a downed character nobody rescued, so never write it as a contract.` : '',
+      task === 'plan' ? 'An npc_death effect kills a supplied participating NPC and may sit on any outcome the story calls for. A character whose condition is "dead" neither acts nor speaks: give them no contract and no outcome. Names in deadNpcs have died and cannot appear in the scene.' : '',
+      task === 'render' ? 'Narrate a character going down, a rescue, a last chance (a roll marked lastChance, with its outcome) and a death only as fixedResults show: a character_down, character_rescue or npc_death effect, a lastChance roll, or a strain_delta that lands on a character with no condition who is already at 8 of 8 and so goes down. Never invent a down, a rescue or a death. A character whose condition is "down" does nothing and says only a few words. A character whose condition is "dead" neither acts nor speaks, and deadNpcs lists non-player characters who have died.' : '',
       task === 'plan' ? 'When beat.kind is "conversation", no outcome changes a countdown track.' : '',
       task === 'plan' ? 'Set the stakes of each roll from the action itself and the moment, and keep them local to that action instead of moving the plot. Small talk or a trivial action gets light, often funny stakes (a pratfall, an awkward silence, a joke that lands wrong) and risk "low". A tense moment gets humiliating or costly stakes (the insult lands, the NPC turns cold, something is dropped or broken) and risk "normal". Danger only when the scene is dangerous (the NPC wants to fight, a fall that hurts, the alarm goes off) and risk "high". For a Say line, clean means it lands as meant, costly means it lands with a price, setback means it comes across wrong, and critical means it comes across as badly as it possibly could. Never write or rewrite a player\'s words.' : '',
       task === 'plan' ? 'Every "check" contract carries a fourth outcome, "critical", used when both dice show 1: the worst plausible turn of that same action, a clear step beyond its setback, scaled to the moment, as one short sentence of at most 110 characters, with its own effects.' : '',
@@ -652,7 +668,8 @@ export class ClewdrAiProvider implements AiProvider {
     const effort = task === 'plan' && context.beat.kind === 'conversation' ? 'low' as const : undefined;
     // A reply the application has to refuse goes back once with the reason, so one slip does not fail the director's beat.
     for (let attempt = 1; ; attempt++) {
-      const text = await this.complete(system, messages, { label: task, effort });
+      if (signal?.aborted) throw new ProviderError('network_error', 'ClewdR');
+      const text = await this.complete(system, messages, { label: task, effort, signal });
       const checked = checkReply(text, schema, attempt === 2, (result, final) => refusal(result, context, final));
       if (typeof checked !== 'string') return checked.value;
       // The refusal sentences can hold character names and reply text, so the log gets a fixed category instead.
@@ -670,7 +687,7 @@ export class ClewdrAiProvider implements AiProvider {
     } catch { throw new ProviderError('invalid_response', 'ClewdR'); }
   }
 
-  private async complete(system: string, messages: NativeMessage[], options: { timeoutMs?: number; label?: AiCallLabel; effort?: 'low' } = {}): Promise<string> {
+  private async complete(system: string, messages: NativeMessage[], options: { timeoutMs?: number; label?: AiCallLabel; effort?: 'low'; signal?: AbortSignal } = {}): Promise<string> {
     const timeoutMs = options.timeoutMs === undefined ? this.timeoutMs : configuration(timeoutSchema, options.timeoutMs, 'ClewdR');
     const label = options.label ?? 'unlabelled';
     const startedAt = Date.now();
@@ -694,7 +711,7 @@ export class ClewdrAiProvider implements AiProvider {
         }
         try { return { content: nativeResponseSchema.parse(body).content, stopReason: 'end_turn', usage: tokenUsage(body) }; }
         catch { throw new ProviderError('invalid_response', 'ClewdR'); }
-      });
+      }, options.signal);
       console.info(`AI call ${label} ok ${Date.now() - startedAt}ms HTTP ${status ?? '-'} stop ${stopReason} tokens in ${usage.input} out ${usage.output}`);
       return content;
     } catch (error) {

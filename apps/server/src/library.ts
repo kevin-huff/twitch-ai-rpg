@@ -24,7 +24,7 @@ export function starterDefinitions(): { scenario: ScenarioDefinition; characters
   const scenario = ScenarioDefinitionSchema.parse({
     schemaVersion: 1, title: fixture.session.title,
     premise: 'Recover a missing club owner’s ledger before a buyer arrives.', genre: 'Comedy heist', tone: 'Dry humor, intrigue, and consequences the cast can see coming.',
-    boundaries: ['No permanent player-character death.', 'Players decide their own character’s words, choices, and feelings.'],
+    boundaries: ['Players decide their own character’s words, choices, and feelings.'],
     locations: [
       { id: scene.locationId, title: 'Public bar', description: scene.description },
       { id: corridorId, title: 'Service corridor', description: 'A narrow passage links the bar to the club’s offices.' },

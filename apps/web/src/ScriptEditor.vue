@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
-import { placePlayerLines, voicedWords, voiceTextMatches } from '@rpg/contracts';
+import { canSpeakInScene, placePlayerLines, voicedWords, voiceTextMatches } from '@rpg/contracts';
 import type { AiSegment, Npc } from '@rpg/contracts';
 import FieldGenerator from './FieldGenerator.vue';
 
 export interface ScriptPlayerLine { id: string; name: string; action: boolean; words: string }
-const props = withDefaults(defineProps<{ segments: AiSegment[]; npcs: Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel'>[]; locationId: string; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string; playerLines?: ScriptPlayerLine[] }>(), { playerLines: () => [] });
+const props = withDefaults(defineProps<{ segments: AiSegment[]; npcs: Pick<Npc, 'id' | 'displayName' | 'status' | 'locationId' | 'communicationChannel' | 'condition'>[]; locationId: string; busy: boolean; contextKey: string; premise?: string; premiseLabel?: string; playerLines?: ScriptPlayerLine[] }>(), { playerLines: () => [] });
 const placement = computed(() => placePlayerLines(props.playerLines.map(line => line.id), props.segments));
 function lineBefore(index: number): ScriptPlayerLine | null {
   const id = placement.value.before[index];
@@ -21,7 +21,7 @@ function rowKey(segment: AiSegment): number {
 }
 const openKeys = reactive(new Set<number>());
 // Same rule as the server's draft check: at this scene's place, or reachable through a communication channel. Speakers the script already uses stay listed.
-const speakerChoices = computed(() => props.npcs.filter(npc => (npc.status === 'present' && npc.locationId === props.locationId) || npc.communicationChannel || props.segments.some(segment => segment.kind === 'npc_dialogue' && segment.speakerNpcId === npc.id)));
+const speakerChoices = computed(() => props.npcs.filter(npc => canSpeakInScene(npc, props.locationId) || props.segments.some(segment => segment.kind === 'npc_dialogue' && segment.speakerNpcId === npc.id)));
 
 function speakerName(segment: AiSegment): string {
   if (segment.kind === 'narration') return 'Narrator';

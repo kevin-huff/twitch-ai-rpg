@@ -1,6 +1,6 @@
 import {
-  ActionContractSchema, CARD_LIST_MAX, CardListSchema, EffectSchema, STRAIN_MAX, TraitsSchema, cardListChange,
-  type ActionContract, type CardListChange, type Character, type Effect, type OutcomeBand, type Resolution, type SessionState,
+  ActionContractSchema, CARD_LIST_MAX, CardListSchema, EffectSchema, LAST_CHANCE_STRAIN, RESCUE_STRAIN, STRAIN_MAX, TraitsSchema, cardListChange, incidentKey, strainStep,
+  type ActionContract, type CardList, type CardListChange, type Character, type Effect, type OutcomeBand, type Resolution, type Roll, type SessionState,
 } from '@rpg/contracts';
 export { STRAIN_MAX } from '@rpg/contracts';
 
@@ -41,8 +41,7 @@ function uniqueEffects(effects: Effect[]): Effect[] {
   return effects.filter(effect => {
     EffectSchema.parse(effect);
     if (!effect.incidentId) return true;
-    const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
-    const key = `${effect.incidentId}:${effect.kind}:${target}`;
+    const key = incidentKey(effect);
     const signature = JSON.stringify(effect);
     const previous = incidents.get(key);
     if (previous && previous !== signature) throw new Error('Conflicting shared incident effects.');
@@ -52,11 +51,13 @@ function uniqueEffects(effects: Effect[]): Effect[] {
   });
 }
 
+const LIST_LABELS: Record<CardList, string> = { wearing: 'Wearing', owes: 'Promises and debts', feelings: 'How people feel' };
+
 // One engine for every exact-text list on a card: possessions (Carrying) keep their old messages word for word.
 function applyListChange(entries: string[], change: CardListChange, operations: Set<string>): void {
   const possessions = change.list === 'possessions';
   const operation = JSON.stringify([change.characterId, change.list, change.entry]);
-  if (operations.has(operation)) throw new Error(possessions ? 'Conflicting inventory changes require a ruling.' : `Conflicting ${change.list} changes require a ruling.`);
+  if (operations.has(operation)) throw new Error(change.list === 'possessions' ? 'Conflicting inventory changes require a ruling.' : `The outcomes change one entry in ${LIST_LABELS[change.list]} twice. Keep one change, then approve again.`);
   operations.add(operation);
   if (change.op === 'remove') {
     const index = entries.indexOf(change.entry);
@@ -77,6 +78,7 @@ const cardLists = CardListSchema.options.join('|');
 const mismatches = [
   /^Cannot consume an item the character does not possess/, /^Cannot duplicate an existing inventory item\.$/, /^Inventory capacity exceeded\.$/,
   /^Cannot remove an entry the character does not have\. /, new RegExp(`^Cannot duplicate an existing (${cardLists}) entry\\.$`), new RegExp(`^The (${cardLists}) list is full\\.$`),
+  /^.+ is already down\.$/, /^.+ has died\.$/, /^.+ is not down, so there is nobody to rescue\.$/, /^.+ has already died\.$/,
 ];
 
 export function isCardMismatch(message: string): boolean {
@@ -89,8 +91,12 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
   const strainDeltas = new Map<string, number>();
   const listOperations = new Set<string>();
   const lookChanges = new Set<string>();
+  const conditionEffects: Effect[] = [];
   for (const effect of uniqueEffects(effects)) {
-    if (effect.kind === 'track_delta') {
+    if (effect.kind === 'npc_death') {
+      if (!(next.npcs ?? []).some(npc => npc.id === effect.npcId)) throw new Error('Unknown non-player character in effect.');
+      conditionEffects.push(effect);
+    } else if (effect.kind === 'track_delta') {
       if (!next.tracks.some(track => track.id === effect.trackId)) throw new Error('Unknown track in effect.');
       trackDeltas.set(effect.trackId, (trackDeltas.get(effect.trackId) ?? 0) + effect.delta);
     } else if (effect.kind === 'fact_add') {
@@ -102,6 +108,8 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
       if (!character) throw new Error('Unknown character in effect.');
       if (effect.kind === 'strain_delta') {
         strainDeltas.set(effect.characterId, (strainDeltas.get(effect.characterId) ?? 0) + effect.delta);
+      } else if (effect.kind === 'character_down' || effect.kind === 'character_rescue') {
+        conditionEffects.push(effect);
       } else if (effect.kind === 'looks_set') {
         if (lookChanges.has(effect.characterId)) throw new Error(LOOK_CONFLICT);
         lookChanges.add(effect.characterId);
@@ -120,7 +128,24 @@ export function applyEffects(state: SessionState, effects: Effect[], sourceEvent
     }
   }
   next.tracks = next.tracks.map(track => ({ ...track, current: Math.max(0, Math.min(track.max, track.current + (trackDeltas.get(track.id) ?? 0))) }));
-  next.characters = next.characters.map(character => ({ ...character, strain: Math.max(0, Math.min(STRAIN_MAX, character.strain + (strainDeltas.get(character.id) ?? 0))) }));
+  // Strain lands first, judged on the strain and condition from before the group: a hit on someone up and already full puts them down.
+  next.characters = next.characters.map(character => {
+    const step = strainStep(character.strain, character.condition, strainDeltas.get(character.id) ?? 0);
+    return step.down ? { ...character, strain: step.strain, condition: 'down' } : { ...character, strain: step.strain };
+  });
+  for (const effect of conditionEffects) {
+    if (effect.kind === 'npc_death') {
+      const npc = next.npcs.find(npc => npc.id === effect.npcId)!;
+      if (npc.condition !== 'dead') Object.assign(npc, { condition: 'dead', status: 'offstage', version: npc.version + 1 });
+    } else if (effect.kind === 'character_down' || effect.kind === 'character_rescue') {
+      const character = next.characters.find(character => character.id === effect.characterId)!;
+      if (effect.kind === 'character_down' && character.condition === undefined) character.condition = 'down';
+      else if (effect.kind === 'character_rescue' && character.condition === 'down') {
+        delete character.condition;
+        character.strain = RESCUE_STRAIN;
+      }
+    }
+  }
   return next;
 }
 
@@ -134,7 +159,9 @@ export function tooManyRollsMessage(count: number): string {
 export interface ContractLine { id: string; characterId: string; kind?: 'say' | 'act' | 'ooc' }
 
 export function validateContracts(contracts: ActionContract[], state: SessionState, lines?: readonly ContractLine[]): void {
-  if (contracts.length > MAX_ROLLS_PER_ROUND) throw new Error(tooManyRollsMessage(contracts.length));
+  // Every downed character rolls a last chance when the round's dice are rolled, so those rolls count toward the cap too.
+  const rolls = contracts.length + state.characters.filter(character => character.condition === 'down').length;
+  if (rolls > MAX_ROLLS_PER_ROUND) throw new Error(tooManyRollsMessage(rolls));
   const ordered = orderedContracts(contracts.map(contract => ActionContractSchema.parse(contract)));
   const allowed = new Map<string, number>();
   for (const line of lines ?? []) allowed.set(line.characterId, (allowed.get(line.characterId) ?? 0) + 1);
@@ -150,6 +177,7 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
     const actor = state.characters.find(character => character.id === contract.actorCharacterId);
     if (!actor) throw new Error('Unknown action actor.');
     if (!validateTraits(actor.traits)) throw new Error('Invalid character traits.');
+    checkConditions(contract, state, lines);
     if (actor.strain >= STRAIN_MAX && contract.ruling === 'check') {
       const own = lines ? lines.filter(line => contract.submissionIds.includes(line.id) && line.characterId === contract.actorCharacterId) : [];
       if (!own.length || own.some(line => line.kind !== 'say')) throw new Error(`${nameOf(contract.actorCharacterId)} is at full strain (${STRAIN_MAX} of ${STRAIN_MAX}), so only something they say can roll. Choose No check or Blocked, or make the line help another character.`);
@@ -195,19 +223,49 @@ export function validateContracts(contracts: ActionContract[], state: SessionSta
   validatePossibleEffects(ordered, depths, state);
 }
 
+function checkConditions(contract: ActionContract, state: SessionState, lines?: readonly ContractLine[]): void {
+  const characterById = (characterId: string) => state.characters.find(character => character.id === characterId);
+  const actor = characterById(contract.actorCharacterId)!;
+  if (actor.condition === 'dead') throw new Error(`${actor.displayName} has died, so they cannot act.`);
+  if (actor.condition === 'down' && lines && contract.ruling !== 'blocked'
+    && lines.some(line => contract.submissionIds.includes(line.id) && line.characterId === actor.id && line.kind !== 'say')) {
+    throw new Error(`${actor.displayName} is down, so only a few spoken words from them can roll. Mark their Do line Blocked.`);
+  }
+  for (const helperId of contract.helperCharacterIds) {
+    const helper = characterById(helperId);
+    if (helper?.condition === 'dead') throw new Error(`${helper.displayName} has died, so they cannot act.`);
+    if (helper?.condition === 'down') throw new Error(`${helper.displayName} is down, so they cannot help another action.`);
+  }
+  for (const band of applicableBands(contract)) for (const effect of contract.outcomes[band]!.effects) {
+    if (effect.kind === 'character_down') {
+      if (band !== 'setback' && band !== 'critical') throw new Error('Going down can only come from a setback or a critical failure.');
+      const target = characterById(effect.characterId);
+      if (target?.condition === 'down') throw new Error(`${target.displayName} is already down.`);
+      if (target?.condition === 'dead') throw new Error(`${target.displayName} has died.`);
+    } else if (effect.kind === 'character_rescue') {
+      if (band !== 'clean' && band !== 'costly') throw new Error('A rescue can only come from a clean success or a success with a cost.');
+      if (effect.characterId === actor.id) throw new Error(`${actor.displayName} cannot rescue themselves. Another character's line has to do it.`);
+      if (actor.condition === 'down') throw new Error(`${actor.displayName} is down, so they cannot rescue anyone.`);
+      const target = characterById(effect.characterId);
+      if (target?.condition === 'dead') throw new Error(`${target.displayName} has died.`);
+      if (target && target.condition !== 'down') throw new Error(`${target.displayName} is not down, so there is nobody to rescue.`);
+    } else if (effect.kind === 'npc_death') {
+      const npc = (state.npcs ?? []).find(npc => npc.id === effect.npcId);
+      if (!npc) throw new Error('Unknown non-player character in effect.');
+      if (npc.condition === 'dead') throw new Error(`${npc.displayName} has already died.`);
+    }
+  }
+}
+
 function applicableBands(contract: ActionContract): OutcomeBand[] {
   return contract.ruling === 'blocked' ? [] : contract.ruling === 'no_check' ? ['clean'] : contract.outcomes.critical ? ['clean', 'costly', 'setback', 'critical'] : ['clean', 'costly', 'setback'];
 }
 
-function incidentKey(effect: Effect): string {
-  const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
-  return `${effect.incidentId}:${effect.kind}:${target}`;
-}
-
 // Mirrors applyResolution (global shared-incident check, then each group through applyEffects)
-// without cloning the state: only track ids, facts, card lists and look changes can make a branch fail.
+// without cloning the state: only track ids, facts, card lists, look changes and missing condition targets can make a branch fail.
 function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][]) => void {
   const trackIds = new Set(state.tracks.map(track => track.id));
+  const npcIds = new Set((state.npcs ?? []).map(npc => npc.id));
   const baseFacts = new Map<string, { text: string; visibility: string }>();
   for (const fact of state.facts) if (!baseFacts.has(fact.id)) baseFacts.set(fact.id, fact);
   const baseCharacters = new Map<string, Character>();
@@ -241,6 +299,8 @@ function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][])
         }
         if (effect.kind === 'track_delta') {
           if (!trackIds.has(effect.trackId)) throw new Error('Unknown track in effect.');
+        } else if (effect.kind === 'npc_death') {
+          if (!npcIds.has(effect.npcId)) throw new Error('Unknown non-player character in effect.');
         } else if (effect.kind === 'fact_add') {
           const existing = baseFacts.get(effect.factId) ?? addedFacts.get(effect.factId);
           if (existing && (existing.text !== effect.text || existing.visibility !== effect.visibility)) throw new Error('Conflicting fact updates require a ruling.');
@@ -248,7 +308,7 @@ function possibleEffectsChecker(state: SessionState): (effectGroups: Effect[][])
         } else {
           const base = baseCharacters.get(effect.characterId);
           if (!base) throw new Error('Unknown character in effect.');
-          if (effect.kind === 'strain_delta') continue;
+          if (effect.kind === 'strain_delta' || effect.kind === 'character_down' || effect.kind === 'character_rescue') continue;
           if (effect.kind === 'looks_set') {
             if (lookChanges.has(effect.characterId)) throw new Error(LOOK_CONFLICT);
             lookChanges.add(effect.characterId);
@@ -327,20 +387,52 @@ export function resolveContracts(contracts: ActionContract[], state: SessionStat
   }
   result.effects = uniqueEffects(result.effects);
   result.effectGroups = result.effectGroups!.filter(Boolean);
+  for (const character of state.characters) {
+    if (character.condition !== 'down') continue;
+    if (result.effects.some(effect => effect.kind === 'character_rescue' && effect.characterId === character.id)) continue;
+    const faces: [number, number] = [rollDie(), rollDie()];
+    if (faces.some(face => !Number.isInteger(face) || face < 1 || face > 6)) throw new Error('Dice must return integer faces between one and six.');
+    const total = faces[0] + faces[1];
+    const band: OutcomeBand = faces[0] === 1 && faces[1] === 1 ? 'critical' : outcomeForTotal(total);
+    const base = { contractId: `last-chance:${character.id}`, actorCharacterId: character.id };
+    const survives = band === 'clean' || band === 'costly';
+    result.rolls.push({ ...base, id: base.contractId, contractVersion: 1, faces, trait: 'force', traitModifier: 0, edge: 0, total, band, lastChance: true });
+    result.outcomes.push({ ...base, status: 'resolved', band, goalAchieved: survives,
+      publicText: `${character.displayName}'s last chance: ${character.displayName} ${survives ? `pulls through at ${LAST_CHANCE_STRAIN} of 8.` : 'dies.'}` });
+  }
   applyResolution(state, result);
   return result;
 }
 
 export function applyResolution(state: SessionState, resolution: Resolution, sourceEventId = 'pending'): SessionState {
+  return applyLastChances(applyEffectGroups(state, resolution, sourceEventId), resolution.rolls);
+}
+
+function applyEffectGroups(state: SessionState, resolution: Resolution, sourceEventId: string): SessionState {
   if (!resolution.effectGroups) return applyEffects(state, resolution.effects, sourceEventId);
   uniqueEffects(resolution.effects);
   const seen = new Set<string>();
   return resolution.effectGroups.reduce((current, group) => applyEffects(current, group.filter(effect => {
     if (!effect.incidentId) return true;
-    const target = effect.kind === 'track_delta' ? effect.trackId : effect.kind === 'fact_add' ? effect.factId : effect.characterId;
-    const key = `${effect.incidentId}:${effect.kind}:${target}`;
+    const key = incidentKey(effect);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   }), sourceEventId), state);
+}
+
+// Last chances land after every effect group, and only on characters who are still down by then.
+function applyLastChances(state: SessionState, rolls: readonly Roll[]): SessionState {
+  const lastChances = rolls.filter(roll => roll.lastChance);
+  if (!lastChances.length) return state;
+  const next = structuredClone(state);
+  for (const roll of lastChances) {
+    const character = next.characters.find(character => character.id === roll.actorCharacterId);
+    if (character?.condition !== 'down') continue;
+    if (roll.band === 'clean' || roll.band === 'costly') {
+      delete character.condition;
+      character.strain = LAST_CHANCE_STRAIN;
+    } else character.condition = 'dead';
+  }
+  return next;
 }

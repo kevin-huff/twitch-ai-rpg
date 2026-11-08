@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Roll, SessionSnapshot } from '@rpg/contracts';
-import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
+import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, rollSentence, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
 
 const roll = (id: string, actor: string, extra: Partial<Roll> = {}) =>
   ({ id, actorCharacterId: actor, faces: [4, 5], trait: 'wits', traitModifier: 1, edge: 1, ...extra }) as Roll;
@@ -82,5 +82,11 @@ describe('stage-format', () => {
     expect(helperCredit({ ruling: 'check', edge: 1 }, ['Ren', 'Ivy'])).toBe('With Ren, Ivy (+1 Edge)');
     expect(helperCredit({ ruling: 'check', edge: 0 }, ['Ren'])).toBe('With Ren');
     expect(helperCredit({ ruling: 'no_check', edge: 1 }, ['Ren'])).toBe('With Ren');
+  });
+  it('words last-chance rolls', () => {
+    expect(rollBreakdown(roll('r', 'a', { lastChance: true, faces: [3, 6] }))).toBe('Last chance: 3 + 6');
+    expect(rollBreakdown(roll('r', 'a'))).toBe('4 + 5 + Wits 1 + Edge 1');
+    expect(rollSentence({ total: 9, band: 'clean' }, 'Mara')).toBe('Mara rolled 9: Clean success');
+    expect(rollSentence({ total: 2, band: 'critical', lastChance: true }, 'Mara')).toBe("Mara's last chance rolled 2: Critical failure");
   });
 });

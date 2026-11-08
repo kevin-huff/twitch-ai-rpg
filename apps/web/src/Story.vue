@@ -11,7 +11,7 @@ withDefaults(defineProps<{ history: PublishedBeat[]; characters: PublicCharacter
       <div class="beat-label">Beat {{ beat.beatNumber }} · {{ beat.kind }} <span v-if="beat.kind === 'action'">· Round {{ beat.actionRoundNumber }}</span></div>
       <div v-if="beat.rolls.length" class="rolls" aria-label="Server dice results">
         <div v-for="roll in beat.rolls" :key="roll.id" class="roll">
-          <strong>{{ roll.total }}</strong> {{ roll.faces.join(' + ') }} + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span>
+          <strong>{{ roll.total }}</strong> {{ roll.faces.join(' + ') }}<template v-if="roll.lastChance"> · Last chance</template><template v-else> + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span></template>
           <small>{{ characters.find(character => character.id === roll.actorCharacterId)?.displayName }} · {{ bandLabel(roll.band) }}</small>
         </div>
       </div>

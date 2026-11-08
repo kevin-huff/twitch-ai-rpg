@@ -1053,4 +1053,79 @@ describe('sending a Say line and a Do line together', () => {
     await click(again, 'Do something');
     expect(value(again, 'action-input')).toBe('Climb the fire escape');
   });
+
+  describe('a downed or dead character', () => {
+    const downNote = 'Skooty is down. You can say a few words, up to 8. Someone can still save Skooty until the end of the next round.';
+    it('tells a downed player so, offers only short Say lines and no Do box', async () => {
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action') }, { condition: 'down', possessions: ['Lockpick'] }));
+      expect(w.get('[data-testid="seat-condition"]').text()).toBe('Down');
+      expect(w.get('[data-testid="seat-down-note"]').text()).toBe(downNote);
+      expect(w.get('.player-status').text()).toContain('What does Skooty say?');
+      expect(w.get('.player-status').text()).toContain('Type a few words, up to 8, then press Send.');
+      expect(w.find('[data-testid="seat-spent"]').exists()).toBe(false);
+      expect(buttonNamed(w, 'Do something')).toBeUndefined();
+      expect(w.find('[data-testid="action-input"]').exists()).toBe(false);
+      expect(w.text()).not.toContain('What I have');
+      expect(w.find('[data-testid="speech-input"]').exists()).toBe(true);
+      await w.get('[data-testid="speech-input"]').setValue('Help me please');
+      expect(w.get('[data-testid="seat-word-count"]').text()).toBe('3 of 8 words');
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'say', text: 'Help me please', intent: '' }));
+    });
+
+    it('refuses a Say line over 8 words with the plain reason, but still sends a private note', async () => {
+      const w = await mountSeat(snapshot({}, { condition: 'down' }));
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine');
+      expect(w.get('[data-testid="seat-word-count"]').text()).toBe('9 of 8 words');
+      expect(w.get('button.send').attributes('disabled')).toBeDefined();
+      expect(w.get('[data-testid="send-refused"]').text()).toBe('Skooty is down, so they can say only a few words, up to 8. This line has 9.');
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight');
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+      expect(w.find('[data-testid="send-refused"]').exists()).toBe(false);
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine');
+      await click(w, 'Ask the director privately');
+      await w.get('[data-testid="note-input"]').setValue('I am hurt, can we talk about it later and slowly?');
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+      await submit(w);
+      expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'ooc' }));
+    });
+
+    it('switches a Do box left open to Say when the character goes down', async () => {
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action') }));
+      expect(pressed(w, 'Do something')).toBe('true');
+      await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action') }, { condition: 'down' }));
+      expect(w.find('[data-testid="action-input"]').exists()).toBe(false);
+      expect(w.find('[data-testid="speech-input"]').exists()).toBe(true);
+    });
+
+    it('tells a dead player so, keeps the story and the pause button, and drops every line box', async () => {
+      const w = await mountSeat(snapshot({ history: [{ ...publishedMarker('p1'), segments: [{ id: 'g1', kind: 'narration', text: 'The lights flicker.' }] }] }, { condition: 'dead' }));
+      expect(w.get('[data-testid="seat-condition"]').text()).toBe('Dead');
+      expect(w.get('[data-testid="seat-dead-note"]').text()).toBe('Skooty has died. You can keep watching the story here.');
+      expect(w.find('textarea').exists()).toBe(false);
+      expect(w.find('[data-testid="submission-form"]').exists()).toBe(false);
+      expect(w.find('[data-testid="strain-meter"]').exists()).toBe(false);
+      expect(w.find('.player-status').exists()).toBe(false);
+      expect(w.findComponent(SubmissionList).exists()).toBe(false);
+      expect(buttonNamed(w, 'Ask the director privately')).toBeUndefined();
+      expect(buttonNamed(w, 'Ask for a pause')).toBeDefined();
+      expect(w.text()).toContain('Cast & lobby');
+      expect(w.text()).toContain('The lights flicker.');
+      await click(w, 'Ask for a pause');
+      expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'ooc', text: PAUSE_REQUEST_TEXT }));
+    });
+
+    it('leaves an up seat as it was', async () => {
+      const w = await mountSeat(snapshot());
+      expect(w.find('[data-testid="seat-condition"]').exists()).toBe(false);
+      expect(w.find('[data-testid="seat-down-note"]').exists()).toBe(false);
+      expect(w.find('[data-testid="seat-dead-note"]').exists()).toBe(false);
+      expect(w.find('[data-testid="seat-word-count"]').exists()).toBe(false);
+      expect(buttonNamed(w, 'Do something')).toBeDefined();
+      expect(buttonNamed(w, 'Ask the director privately')).toBeDefined();
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine ten');
+      expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+    });
+  });
 });

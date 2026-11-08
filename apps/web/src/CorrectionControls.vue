@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue';
 import { CommandSchema, STRAIN_MAX } from '@rpg/contracts';
-import type { Command, CorrectionChange, DirectorSnapshot } from '@rpg/contracts';
+import type { Command, CorrectionChange, DirectorSnapshot, PublicCharacter } from '@rpg/contracts';
 import StrainMeter from './StrainMeter.vue';
 
 const props = defineProps<{ snapshot: DirectorSnapshot; busy: boolean }>();
@@ -31,6 +31,11 @@ const gate = computed(() => {
   return '';
 });
 const roundOpen = computed(() => Boolean(props.snapshot.activeBeat) && ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat!.phase));
+const planInPlay = computed(() => {
+  const beat = props.snapshot.activeBeat;
+  return Boolean(beat && (beat.phase === 'stakes_review' || (props.snapshot.jobs ?? []).some(job => job.beatId === beat.id && job.task === 'plan' && (job.status === 'queued' || job.status === 'running'))));
+});
+const roundOpenWithPlan = computed(() => roundOpen.value && planInPlay.value);
 const locked = computed(() => props.busy || Boolean(gate.value));
 const stale = computed(() => baseline.value !== null && (baseline.value.session.id !== props.snapshot.session.id || baseline.value.session.stateRevision !== props.snapshot.session.stateRevision));
 function begin() {
@@ -39,7 +44,12 @@ function begin() {
   beatId.value = props.snapshot.history.at(-1)?.id ?? '';
   publicText.value = ''; reason.value = ''; changes.value = []; error.value = ''; savedNotice.value = ''; retry = undefined;
 }
+const isCondition = (kind: Kind) => kind === 'condition_set' || kind === 'npc_condition_set';
+const conditionWords: Record<string, string> = { up: 'Up', down: 'Down', dead: 'Dead', alive: 'Alive' };
+const currentCondition = (character: PublicCharacter) => character.condition ?? 'up';
 function options(kind: Kind) {
+  if (kind === 'condition_set') return baseline.value?.characters.map(character => ({ id: character.id, label: character.displayName, value: currentCondition(character), max: 0 })) ?? [];
+  if (kind === 'npc_condition_set') return baseline.value?.npcDetails.map(npc => ({ id: npc.id, label: npc.displayName, value: npc.condition === 'dead' ? 'dead' : 'alive', max: 0 })) ?? [];
   if (kind === 'fact_replace') return baseline.value?.facts.map(fact => ({ id: fact.id, label: fact.text, value: 0, max: 0 })) ?? [];
   if (kind === 'strain_set') return baseline.value?.characters.map(character => ({ id: character.id, label: character.displayName, value: character.strain, max: STRAIN_MAX })) ?? [];
   return baseline.value?.tracks.map(track => ({ id: track.id, label: track.label, value: track.current, max: track.max })) ?? [];
@@ -47,11 +57,33 @@ function options(kind: Kind) {
 function used(kind: Kind, targetId: string, except?: DraftChange) { return changes.value.some(change => change !== except && change.kind === kind && change.targetId === targetId); }
 function available(kind: Kind) { return options(kind).find(option => !used(kind, option.id)); }
 function original(change: DraftChange) { return options(change.kind).find(option => option.id === change.targetId); }
-function before(change: DraftChange) { return change.kind === 'fact_replace' ? original(change)?.label ?? '' : original(change)?.value ?? ''; }
+function before(change: DraftChange) {
+  if (isCondition(change.kind)) return conditionWords[String(original(change)?.value ?? '')] ?? '';
+  return change.kind === 'fact_replace' ? original(change)?.label ?? '' : original(change)?.value ?? '';
+}
+function conditionChoices(change: DraftChange) {
+  const current = String(original(change)?.value ?? '');
+  const choices = change.kind === 'condition_set'
+    ? [{ value: current === 'up' ? '' : 'up', label: 'Bring back' }, { value: 'down', label: 'Down' }, { value: 'dead', label: 'Dead' }]
+    : [{ value: current === 'dead' ? 'alive' : '', label: 'Bring back' }, { value: 'dead', label: 'Dead' }];
+  return choices.filter(choice => choice.value && choice.value !== current);
+}
+function targetValue(change: DraftChange) { return `${change.kind === 'npc_condition_set' ? 'npc' : 'character'}:${change.targetId}`; }
+function pickTarget(change: DraftChange, event: Event) {
+  const [group, ...rest] = (event.target as HTMLSelectElement).value.split(':');
+  change.kind = group === 'npc' ? 'npc_condition_set' : 'condition_set'; change.targetId = rest.join(':');
+  loadTarget(change);
+}
+function conditionHelp(change: DraftChange) {
+  const name = original(change)?.label ?? 'the character';
+  return change.kind === 'npc_condition_set'
+    ? `Dead takes ${name} off stage, and nobody can speak with them until a correction brings them back. Bring back leaves them offstage; tick them in Who is here to bring them on.`
+    : `Bring back sets ${name} up again with their strain as it is now. Down starts a rescue window that closes when the next dice are rolled. Dead takes ${name} out of the story until a correction brings them back.`;
+}
 function loadTarget(change: DraftChange) {
   const target = original(change);
   change.text = change.kind === 'fact_replace' ? target?.label ?? '' : '';
-  change.value = target?.value ?? 0;
+  change.value = isCondition(change.kind) ? conditionChoices(change)[0]?.value ?? '' : target?.value ?? 0;
   change.knowledgeUpdates = change.kind === 'fact_replace' && target ? (baseline.value?.npcDetails ?? []).flatMap(npc => npc.knowledge.filter(memory => memory.category === 'fact' && memory.statement === target.label).map(memory => ({ npcId: npc.id, knowledgeId: memory.id, mode: 'correct' as const }))) : [];
 }
 function add(kind: Kind) {
@@ -59,6 +91,10 @@ function add(kind: Kind) {
   if (locked.value || !baseline.value || !target || changes.value.length >= 10) return;
   const change: DraftChange = { key: nextKey++, kind, targetId: target.id, text: '', value: 0, knowledgeUpdates: [] };
   loadTarget(change); changes.value.push(change);
+}
+function addCondition() {
+  const kind: Kind = available('condition_set') ? 'condition_set' : 'npc_condition_set';
+  add(kind);
 }
 function remove(index: number) { if (!locked.value) changes.value.splice(index, 1); }
 function npcName(id: string) { return baseline.value?.npcDetails.find(npc => npc.id === id)?.displayName ?? 'Character'; }
@@ -71,7 +107,9 @@ function save() {
     const target = original(change);
     if (!target) { error.value = 'Choose an existing public fact, character, or track for each change.'; return; }
     if (used(change.kind, change.targetId, change)) { error.value = 'Choose each correction target only once.'; return; }
-    if (change.kind === 'fact_replace') {
+    if (isCondition(change.kind)) {
+      if (!conditionChoices(change).some(choice => choice.value === change.value)) { error.value = `${target.label} is already ${conditionWords[String(target.value)]!.toLowerCase()}. Choose a different condition or remove this change.`; return; }
+    } else if (change.kind === 'fact_replace') {
       if (change.text.trim() === target.label) { error.value = 'This fact is unchanged. Edit it or remove this change to publish only a clarification.'; return; }
     } else {
       if (typeof change.value !== 'number' || !Number.isInteger(change.value) || change.value < 0 || change.value > target.max) { error.value = `${target.label} needs a whole number from 0 to ${target.max}.`; return; }
@@ -84,6 +122,8 @@ function save() {
     changes: changes.value.map(change => change.kind === 'fact_replace'
       ? { kind: change.kind, factId: change.targetId, text: change.text, knowledgeUpdates: change.knowledgeUpdates }
       : change.kind === 'strain_set' ? { kind: change.kind, characterId: change.targetId, value: change.value }
+      : change.kind === 'condition_set' ? { kind: change.kind, characterId: change.targetId, condition: change.value }
+      : change.kind === 'npc_condition_set' ? { kind: change.kind, npcId: change.targetId, condition: change.value }
       : { kind: change.kind, trackId: change.targetId, value: change.value }),
   };
   const key = JSON.stringify(candidate);
@@ -91,7 +131,7 @@ function save() {
   const parsed = CommandSchema.safeParse({ ...candidate, commandId: retry.commandId });
   if (!parsed.success) { error.value = parsed.error.issues.slice(0, 3).map(issue => `${issue.path.join('.') || 'Correction'}: ${issue.message}`).join('\n'); return; }
   const savedEpoch = epoch;
-  const wasOpen = roundOpen.value;
+  const wasOpen = roundOpenWithPlan.value;
   emit('command', parsed.data, () => {
     if (savedEpoch !== epoch) return;
     baseline.value = null; retry = undefined;
@@ -103,9 +143,9 @@ function save() {
 <template>
   <details class="panel correction-controls" data-testid="correction-controls">
     <summary>Corrections</summary>
-    <p>Append a public clarification to a published beat, with optional corrections to current facts, strain, or tracks. Earlier narration, dice, and recordings remain unchanged.</p>
+    <p>Append a public clarification to a published beat, with optional corrections to current facts, strain, tracks, or who is down or dead. Earlier narration, dice, and recordings remain unchanged.</p>
     <p v-if="gate" class="notice">{{ gate }}</p>
-    <p v-if="roundOpen" class="notice" data-testid="correction-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
+    <p v-if="roundOpenWithPlan" class="notice" data-testid="correction-round-open">A round is open. Saving this sends it back to taking lines and throws away its plan, even one the AI is still making. Press Plan to plan it again. That is another AI call.</p>
     <p v-if="savedNotice" class="notice" role="status">{{ savedNotice }}</p>
     <button v-if="!baseline" type="button" class="secondary" data-testid="begin-correction" :disabled="locked" @click="begin">Record a correction</button>
     <form v-else novalidate @submit.prevent="save">
@@ -119,10 +159,18 @@ function save() {
         <h3>Current state changes · optional</h3>
         <p class="field-help">A clarification can have no state changes. Setting a track does not fire completion effects or reroll dice. Private reasons and character-memory decisions are not published in the correction note.</p>
         <section v-for="(change, index) in changes" :key="change.key" class="correction-change">
-          <h4>{{ change.kind === 'fact_replace' ? 'Replace public fact' : change.kind === 'strain_set' ? 'Set character strain' : 'Set track value' }}</h4>
-          <label>{{ change.kind === 'fact_replace' ? 'Public fact' : change.kind === 'strain_set' ? 'Character' : 'Public track' }}<select v-model="change.targetId" :data-testid="`correction-target-${index}`" :aria-describedby="helpId('target', change.key)" @change="loadTarget(change)"><option v-for="option in options(change.kind)" :key="option.id" :value="option.id" :disabled="used(change.kind, option.id, change)">{{ option.label }}</option></select></label>
+          <h4>{{ change.kind === 'fact_replace' ? 'Replace public fact' : change.kind === 'strain_set' ? 'Set character strain' : isCondition(change.kind) ? 'Set a condition' : 'Set track value' }}</h4>
+          <label v-if="isCondition(change.kind)">Character<select :value="targetValue(change)" :data-testid="`correction-target-${index}`" :aria-describedby="helpId('target', change.key)" @change="pickTarget(change, $event)">
+            <optgroup label="Players' characters"><option v-for="option in options('condition_set')" :key="option.id" :value="`character:${option.id}`" :disabled="used('condition_set', option.id, change)">{{ option.label }}</option></optgroup>
+            <optgroup label="Non-player characters"><option v-for="option in options('npc_condition_set')" :key="option.id" :value="`npc:${option.id}`" :disabled="used('npc_condition_set', option.id, change)">{{ option.label }}</option></optgroup>
+          </select></label>
+          <label v-else>{{ change.kind === 'fact_replace' ? 'Public fact' : change.kind === 'strain_set' ? 'Character' : 'Public track' }}<select v-model="change.targetId" :data-testid="`correction-target-${index}`" :aria-describedby="helpId('target', change.key)" @change="loadTarget(change)"><option v-for="option in options(change.kind)" :key="option.id" :value="option.id" :disabled="used(change.kind, option.id, change)">{{ option.label }}</option></select></label>
           <p :id="helpId('target', change.key)" class="field-help">Choose an existing target. Each target can be corrected only once in this correction.</p>
-          <template v-if="change.kind === 'fact_replace'">
+          <template v-if="isCondition(change.kind)">
+            <label>Condition<select v-model="change.value" :data-testid="`correction-condition-${index}`" :aria-describedby="helpId('condition', change.key)"><option v-for="choice in conditionChoices(change)" :key="choice.value" :value="choice.value">{{ choice.label }}</option></select></label>
+            <p :id="helpId('condition', change.key)" class="field-help">{{ conditionHelp(change) }}</p>
+          </template>
+          <template v-else-if="change.kind === 'fact_replace'">
             <label>Corrected fact<textarea v-model="change.text" :data-testid="`correction-fact-text-${index}`" :aria-describedby="helpId('text', change.key)" maxlength="6000" rows="3" /></label>
             <p :id="helpId('text', change.key)" class="field-help">Replaces this public fact. Review what each character already knows below.</p>
             <div v-for="(knowledge, memoryIndex) in change.knowledgeUpdates" :key="`${knowledge.npcId}:${knowledge.knowledgeId}`">
@@ -136,10 +184,10 @@ function save() {
             <p :id="helpId('value', change.key)" class="field-help">Set the current value from 0 to {{ original(change)?.max }}. This does not change any earlier roll or outcome.</p>
             <StrainMeter v-if="change.kind === 'strain_set'" :value="typeof change.value === 'number' ? change.value : 0" :max="original(change)?.max ?? STRAIN_MAX" />
           </template>
-          <p :data-testid="`correction-change-preview-${index}`" class="change-preview">{{ before(change) }} becomes {{ change.kind === 'fact_replace' ? change.text.trim() : change.value }}</p>
+          <p :data-testid="`correction-change-preview-${index}`" class="change-preview">{{ before(change) }} becomes {{ change.kind === 'fact_replace' ? change.text.trim() : isCondition(change.kind) ? conditionWords[String(change.value)] : change.value }}</p>
           <button type="button" class="quiet" :data-testid="`remove-correction-${index}`" @click="remove(index)">Remove change {{ index + 1 }}</button>
         </section>
-        <div class="actions"><button type="button" class="secondary" data-testid="add-correction-fact" :disabled="changes.length >= 10 || !available('fact_replace')" @click="add('fact_replace')">Correct a fact</button><button type="button" class="secondary" data-testid="add-correction-strain" :disabled="changes.length >= 10 || !available('strain_set')" @click="add('strain_set')">Correct strain</button><button type="button" class="secondary" data-testid="add-correction-track" :disabled="changes.length >= 10 || !available('track_set')" @click="add('track_set')">Correct a track</button></div>
+        <div class="actions"><button type="button" class="secondary" data-testid="add-correction-fact" :disabled="changes.length >= 10 || !available('fact_replace')" @click="add('fact_replace')">Correct a fact</button><button type="button" class="secondary" data-testid="add-correction-strain" :disabled="changes.length >= 10 || !available('strain_set')" @click="add('strain_set')">Correct strain</button><button type="button" class="secondary" data-testid="add-correction-track" :disabled="changes.length >= 10 || !available('track_set')" @click="add('track_set')">Correct a track</button><button type="button" class="secondary" data-testid="add-correction-condition" :disabled="changes.length >= 10 || !available('condition_set') && !available('npc_condition_set')" @click="addCondition">Correct a condition</button></div>
         <label>Private reason<textarea v-model="reason" data-testid="correction-reason" maxlength="1000" rows="2" :aria-describedby="helpId('reason')" /></label>
         <p :id="helpId('reason')" class="field-help">A required private audit note explaining why you made this correction. It is not shown to players or the stage.</p>
         <p v-if="error" class="notice error" role="alert">{{ error }}</p>
