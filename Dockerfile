@@ -19,4 +19,7 @@ COPY --from=build --chown=node:node /app /app
 RUN mkdir -p /app/.local/audio && chown -R node:node /app/.local
 USER node
 EXPOSE 3000
-CMD ["npm", "start"]
+# Run node directly, not npm start: the stop signal Railway sends when it retires a deployment then reaches the
+# server's own handler, which closes cleanly and exits 0. npm reports being stopped as a failure, which Railway
+# emails as "Deploy Crashed!".
+CMD ["node", "--env-file-if-exists=.env", "--import", "tsx", "apps/server/src/main.ts"]
