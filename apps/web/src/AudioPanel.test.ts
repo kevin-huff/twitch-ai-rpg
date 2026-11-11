@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlaybackSnapshot } from '../../../packages/contracts/src/playback';
 import AudioPanel from './AudioPanel.vue';
+import NarrationLine, { type NarrationState } from './NarrationLine.vue';
 
 const playbackId = '11111111-1111-4111-8111-111111111111';
 const leaseId = '22222222-2222-4222-8222-222222222222';
@@ -708,5 +709,93 @@ describe('lapse-paused narration and stopped pages', () => {
     await vi.advanceTimersByTimeAsync(2500); await flushPromises();
     expect(plain.get('[role="alert"]').text()).toContain(lost);
     expect(plain.get('[role="alert"]').text()).not.toContain(stopped);
+  });
+});
+
+describe('AudioPanel narration state', () => {
+  const lastNarration = (wrapper: ReturnType<typeof mount>) => (wrapper.emitted('narration') ?? []).at(-1)?.[0];
+  it('emits null before the playback state loads, then idle', async () => {
+    const wrapper = panel();
+    expect(wrapper.emitted('narration')?.[0]?.[0]).toBeNull();
+    await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ status: 'idle', beatId: null, audioHere: false, pending: false });
+  });
+  it('emits playing, paused, complete and no-presenter states', async () => {
+    active();
+    const wrapper = panel(); await flushPromises();
+    expect(lastNarration(wrapper)).toEqual({ status: 'playing', beatId: 'beat-1', audioHere: true, pending: false });
+    active({ status: 'paused', anchorTimeMs: null }); await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ status: 'paused' });
+    active({ status: 'complete' }); shared.sampleRevision++; await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ status: 'complete' });
+    active({ presenter: { available: false, leaseExpiresAtMs: null } }); shared.sampleRevision++; await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ audioHere: false });
+  });
+  it('carries a refused control to the narration line, and clears it when the next control works', async () => {
+    active();
+    const wrapper = panel(); await flushPromises();
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => (String(input).endsWith('/commands') ? ({ ok: false, status: 503, json: async () => ({ message: 'The show audio could not be paused.' }) }) as Response : original(input, init)));
+    await (wrapper.vm as unknown as { control: (type: string) => Promise<void> }).control('pause'); await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ status: 'playing', error: 'The show audio could not be paused.' });
+    vi.mocked(fetch).mockImplementation(original);
+    await (wrapper.vm as unknown as { control: (type: string) => Promise<void> }).control('pause'); await flushPromises();
+    expect(lastNarration(wrapper)).toMatchObject({ status: 'paused' });
+    expect(lastNarration(wrapper)).not.toHaveProperty('error');
+  });
+  it('does not emit for the stage or compact panels', async () => {
+    const stage = panel({ director: false, stage: true, beatId: 'beat-1' }); await flushPromises();
+    expect(stage.emitted('narration')).toBeUndefined();
+    const compact = panel({ director: false, compact: true, beatId: 'beat-1' }); await flushPromises();
+    expect(compact.emitted('narration')).toBeUndefined();
+  });
+  it('control sends the same command as the panel buttons', async () => {
+    active();
+    const wrapper = panel(); await flushPromises();
+    await (wrapper.vm as unknown as { control: (type: string) => Promise<void> }).control('pause'); await flushPromises();
+    expect(JSON.parse(String(requests('/commands').at(-1)?.[1]?.body))).toMatchObject({ type: 'pause', playbackId });
+  });
+});
+
+describe('NarrationLine', () => {
+  const base: NarrationState = { status: 'playing', beatId: 'b', audioHere: true, pending: false };
+  const line = (state: NarrationState | null, beatNumber: number | null = 3) => mount(NarrationLine, { props: { state, beatNumber } });
+  const text = (w: ReturnType<typeof mount>) => w.get('[data-testid="narration-line-text"]').text();
+  const buttons = (w: ReturnType<typeof mount>) => w.findAll('button').map(b => b.text());
+  it('renders nothing without a state', () => { expect(line(null).find('[data-testid="narration-line"]').exists()).toBe(false); });
+  it('says so on the line when a control was refused, and shows nothing extra otherwise', () => {
+    expect(line(base).find('[data-testid="narration-line-error"]').exists()).toBe(false);
+    const refused = line({ ...base, error: 'The show audio could not be paused.' }).get('[data-testid="narration-line-error"]');
+    expect(refused.text()).toBe('The show audio could not be paused.');
+    expect(refused.attributes('role')).toBe('alert');
+  });
+  it('words every state, with and without a beat number', () => {
+    expect(text(line(base))).toBe('Narration playing: beat 3.');
+    expect(text(line({ ...base, status: 'paused' }))).toBe('Narration paused: beat 3.');
+    expect(text(line({ ...base, status: 'complete' }))).toBe('Narration finished: beat 3.');
+    expect(text(line({ ...base, status: 'stopped' }))).toBe('Narration stopped: beat 3.');
+    expect(text(line({ ...base, status: 'idle' }))).toBe('No narration is playing.');
+    expect(text(line(base, null))).toBe('Narration playing.');
+    expect(text(line({ ...base, status: 'complete' }, null))).toBe('Narration finished.');
+  });
+  it('says when no page holds the audio', () => {
+    expect(text(line({ ...base, audioHere: false, status: 'idle' }))).toBe('No page is playing the show audio.');
+    expect(text(line({ ...base, audioHere: false, status: 'complete' }))).toBe('No page is playing the show audio.');
+    expect(text(line({ ...base, audioHere: false }))).toBe('No page is playing the show audio. Narration playing: beat 3.');
+    expect(text(line({ ...base, audioHere: false, status: 'paused' }, null))).toBe('No page is playing the show audio. Narration paused.');
+  });
+  it('shows the right buttons and disables them', async () => {
+    expect(buttons(line(base))).toEqual(['Pause narration', 'Stop narration']);
+    const paused = line({ ...base, status: 'paused' });
+    expect(buttons(paused)).toEqual(['Resume narration', 'Stop narration']);
+    expect(line({ ...base, status: 'paused', audioHere: false }).get('[data-testid="narration-resume"]').attributes('disabled')).toBeDefined();
+    for (const status of ['idle', 'stopped', 'complete'] as const) expect(buttons(line({ ...base, status }))).toEqual([]);
+    const pending = line({ ...base, pending: true });
+    expect(pending.findAll('button').every(b => b.attributes('disabled') !== undefined)).toBe(true);
+    await line(base).get('[data-testid="narration-stop"]').trigger('click');
+    const w = line(base); await w.get('[data-testid="narration-pause"]').trigger('click');
+    expect(w.emitted('control')).toEqual([['pause']]);
+    const r = line({ ...base, status: 'paused' }); await r.get('[data-testid="narration-resume"]').trigger('click');
+    expect(r.emitted('control')).toEqual([['resume']]);
   });
 });

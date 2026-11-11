@@ -6,6 +6,18 @@ const paragraphs = topics.flatMap((t) =>
 );
 
 describe('help content', () => {
+  it('explains the dice moment on stream, its sounds, and the narration waiting for it', () => {
+    const stage = topics.find((t) => t.title === 'Stage and OBS')!;
+    const dice = stage.sections.find((s) => s.heading === 'The dice on stream');
+    expect(dice).toBeDefined();
+    const text = (dice!.paragraphs ?? []).join(' ');
+    expect(text).toContain('3 to 5 seconds');
+    expect(text).toContain('Pieces stay silent');
+    expect(text).toContain('A page opened or reloaded after you publish shows the dice strip as usual');
+    expect(text).toContain('Until the dice land, the rest of the stream keeps showing what it showed before you published');
+    expect(paragraphs.some((p) => p.includes('the narration starts by itself when the dice finish'))).toBe(true);
+  });
+
   it('tells players to press Save my card in step 2', () => {
     expect(firstSteps.player[1]).toContain('Save my card');
   });

@@ -8,19 +8,21 @@ import DirectorGuidance from './DirectorGuidance.vue';
 import StakesCards from './StakesCards.vue';
 import ScriptEditor from './ScriptEditor.vue';
 import BeatStepper from './BeatStepper.vue';
-import { bandLabel } from './stage-format';
+import { bandLabel, lastChanceResult, sortRolls } from './stage-format';
+import { momentLengthMs } from './dice-moment';
 import { ticksOutsidePlan } from './plan-coverage';
 import type { VoiceState } from './voice-state';
 import { GOLD_LABELS, GOLD_TEST_IDS, beatStep, goldAction, stepPosition, usesActionSteps, type GoldAction } from './beat-step';
 
 const props = withDefaults(defineProps<{ selected: string[]; showAudio?: 'checking' | 'presenting' | 'none' | 'unknown'; playbackError?: string }>(), { showAudio: 'checking', playbackError: '' });
-const emit = defineEmits<{ published: [beatId: string, voiced: boolean]; 'start-playback': [] }>();
+// published carries how long the stream's dice moment runs for this beat, so the automatic narration can wait for it.
+const emit = defineEmits<{ published: [beatId: string, voiced: boolean, waitMs: number]; 'start-playback': [] }>();
 const selected = computed(() => props.selected);
 
 const helpPrefix = useId();
 const helpId = (...parts: (string | number)[]) => `${helpPrefix}-help-${encodeURIComponent(JSON.stringify(parts))}`;
 
-const { sessionId, stage, snapshot, busy, beatBusy, director, beatWork, send, onSnapshot, nameOf, phaseName, publicationLines } = useTable();
+const { sessionId, stage, snapshot, error, busy, beatBusy, director, beatWork, send, refresh, onSnapshot, nameOf, phaseName, publicationLines } = useTable();
 
 const MAX_PLANNED_LINES = 12;
 const beat = computed(() => director.value?.activeBeat ?? null);
@@ -33,9 +35,10 @@ const scriptEditor = ref<InstanceType<typeof ScriptEditor> | null>(null);
 const steerText = ref('');
 const currentNote = computed(() => { const text = beat.value?.steering?.trim() ?? ''; return /[.!?…]$/.test(text) ? text : `${text}.`; });
 const scriptContext = computed(() => `${sessionId}:${beat.value?.id}:${beat.value?.revision}:${scriptEpoch.value}`);
+const running = ref<{ task: 'plan' | 'render'; since: number } | null>(null);
 const savedClassification = computed<'ordinary' | 'action'>(() => beat.value?.classification === 'ordinary' ? 'ordinary' : 'action');
-const contractsDirty = computed(() => JSON.stringify(reviewClassification.value === 'ordinary' ? [] : contracts.value) !== JSON.stringify(beat.value?.contracts ?? []) || reviewClassification.value !== savedClassification.value);
-const scriptDirty = computed(() => JSON.stringify(script.value) !== JSON.stringify(beat.value?.draft?.segments ?? []));
+const contractsDirty = computed(() => !running.value && (JSON.stringify(reviewClassification.value === 'ordinary' ? [] : contracts.value) !== JSON.stringify(beat.value?.contracts ?? []) || reviewClassification.value !== savedClassification.value));
+const scriptDirty = computed(() => !running.value && JSON.stringify(script.value) !== JSON.stringify(beat.value?.draft?.segments ?? []));
 const rendering = computed(() => director.value?.jobs.some(job => job.beatId === beat.value?.id && job.generation === beat.value?.generation && job.task === 'render' && ['queued', 'running'].includes(job.status)) ?? false);
 const paused = computed(() => snapshot.value?.session.status === 'paused');
 const continuityPending = computed(() => {
@@ -48,19 +51,21 @@ const tickedIds = computed(() => {
   return [...selected.value].sort((a, b) => (order.get(a) ?? Infinity) - (order.get(b) ?? Infinity)).slice(0, MAX_PLANNED_LINES);
 });
 const outsidePlan = computed(() => director.value ? ticksOutsidePlan(director.value, selected.value).length : 0);
+const stakesPlanFailed = computed(() => Boolean(!idle.value && beat.value?.phase === 'stakes_review' && beat.value.lastError));
 const outsidePlanText = computed(() => outsidePlan.value === 1 ? '1 ticked line is not in this plan.' : `${outsidePlan.value} ticked lines are not in this plan.`);
-const stepInput = computed(() => ({ beat: beat.value, selectedCount: selected.value.length, contractsDirty: contractsDirty.value, scriptDirty: scriptDirty.value, rendering: rendering.value, paused: paused.value, continuityPending: continuityPending.value }));
+const handStakes = ref(false);
+const failedPlan = computed(() => Boolean(beat.value && beat.value.phase === 'collecting' && beat.value.lastError && beat.value.selectedSubmissionIds.length > 0));
+const stepInput = computed(() => ({ beat: beat.value, handStakes: handStakes.value, selectedCount: selected.value.length, contractsDirty: contractsDirty.value, scriptDirty: scriptDirty.value, rendering: rendering.value, paused: paused.value, continuityPending: continuityPending.value }));
 const ordinary = computed(() => reviewClassification.value === 'ordinary' && beat.value?.classification !== 'needs_action');
 const quickLock = computed(() => ['stakes', 'lock'].includes(beatStep(stepInput.value).step) && ordinary.value);
 const step = computed(() => beatStep(quickLock.value ? { ...stepInput.value, quickLock: true } : stepInput.value));
 const idle = computed(() => !beat.value || ['published', 'aborted'].includes(beat.value.phase));
-const showStakes = computed(() => !idle.value && (beat.value!.phase === 'stakes_review' || (beat.value!.phase === 'collecting' && beat.value!.selectedSubmissionIds.length > 0 && Boolean(beat.value!.lastError))));
+const showStakes = computed(() => !idle.value && (beat.value!.phase === 'stakes_review' || (failedPlan.value && handStakes.value)));
 const showScript = computed(() => !idle.value && ['locked', 'draft_review'].includes(beat.value!.phase));
 const position = computed(() => stepPosition(step.value.step, usesActionSteps(idle.value ? null : beat.value, showStakes.value ? reviewClassification.value : undefined)));
 const gold = computed<GoldAction>(() => goldAction({ step: step.value.step, beat: idle.value ? null : beat.value, paused: paused.value, ordinary: ordinary.value }));
 
 const barError = ref('');
-const running = ref<{ task: 'plan' | 'render'; since: number } | null>(null);
 const seenJobs = reactive(new Map<string, number>());
 const activeJob = computed(() => idle.value ? null : director.value?.jobs.find(job => job.beatId === beat.value?.id && job.generation === beat.value?.generation && ['queued', 'running'].includes(job.status)) ?? null);
 watch(activeJob, job => { if (job && !seenJobs.has(job.id)) seenJobs.set(job.id, Date.now()); }, { immediate: true });
@@ -86,7 +91,8 @@ const statusText = computed(() => {
   return voice.value.status === 'ready' ? 'Voice ready' : '';
 });
 const chainLabel = ref<string | null>(null);
-const goldLabel = computed(() => chainLabel.value ?? (gold.value === 'publish' && voicePending.value && !scriptDirty.value ? 'Preparing voice…' : GOLD_LABELS[gold.value]));
+// While the notice that a player threw the plan away shows, the button carries the notice's own words.
+const goldLabel = computed(() => chainLabel.value ?? (gold.value === 'publish' && voicePending.value && !scriptDirty.value ? 'Preparing voice…' : gold.value === 'plan' && thrownAwayText.value ? GOLD_LABELS['plan-again'] : GOLD_LABELS[gold.value]));
 const noShowAudio = computed(() => hasDraft.value && voice.value.status !== 'unavailable' && props.showAudio === 'none');
 let ticker: ReturnType<typeof setInterval> | undefined;
 watch(() => Boolean(working.value), active => {
@@ -103,9 +109,29 @@ const supersededText = computed(() => {
   if (!supersededWhilePaused.value) return 'The show changed while the AI was working, so its work was thrown away. Try again.';
   return `You paused, so the AI's work on this round was thrown away. Press ${failedStep.value === 'plan' ? 'Plan again' : 'Draft the scene again'} when you resume.`;
 });
-const errorText = computed(() => (barError.value === SUPERSEDED_BY_SERVER ? supersededText.value : barError.value) || (!idle.value && beat.value?.lastError) || '');
+const stopping = ref(false);
+const stoppedHere = ref(false);
+const stopped = ref(false);
+const stoppedJobId = ref<string | null>(null);
+const canStop = computed(() => Boolean(working.value) && !(stopped.value && (running.value !== null || activeJob.value?.id === stoppedJobId.value)));
+watch(() => activeJob.value?.id, id => {
+  if (!id || !stoppedHere.value || id === stoppedJobId.value) return;
+  if (running.value) stoppedJobId.value = id;
+  else { stopped.value = false; stoppedHere.value = false; }
+});
+const thrownAwayText = computed(() => {
+  const thrown = director.value?.planThrownAway;
+  if (idle.value || !thrown) return '';
+  return `${nameOf(thrown.characterId)} ${thrown.change === 'took_back' ? 'took back' : 'changed'} a line that was in the plan, so the plan was thrown away. Plan again.`;
+});
+// The table drops a reload once a newer one has started, so the panel's own reload can return while the page is still behind.
+// The thrown-away sentence waits until a reload lands or fails, and goes for good once the page names who threw the plan away.
+const behind = ref(false);
+watch(error, message => { if (message) behind.value = false; });
+watch(thrownAwayText, text => { if (text && barError.value === SUPERSEDED_BY_SERVER) barError.value = ''; });
+const errorText = computed(() => (barError.value === SUPERSEDED_BY_SERVER ? (thrownAwayText.value || stoppedHere.value || behind.value ? '' : supersededText.value) : barError.value) || (!idle.value && beat.value?.lastError) || '');
 
-const needsLines = computed(() => ['answer', 'plan'].includes(gold.value));
+const needsLines = computed(() => ['answer', 'plan', 'plan-again'].includes(gold.value));
 const MAX_ROLLS_PER_ROUND = 12;
 const tickedLineCount = computed(() => {
   const kinds = new Map((director.value?.submissions ?? []).map(item => [item.id, item.kind]));
@@ -141,11 +167,13 @@ defineExpose({ focusPrimary });
 const confirmRegenerate = ref<null | 'plain' | 'note' | 'replace'>(null);
 watch(() => `${beat.value?.id}:${beat.value?.revision}`, () => { confirmRegenerate.value = null; });
 watch(() => `${beat.value?.id}:${beat.value?.draftRevision}`, () => { skipFacts.value = false; });
-watch(() => beat.value?.id, () => { barError.value = ''; steerText.value = ''; });
+watch(() => beat.value?.id, () => { barError.value = ''; steerText.value = ''; handStakes.value = false; stopped.value = false; stoppedHere.value = false; });
+watch(() => Boolean(beat.value?.lastError), failed => { if (!failed) handStakes.value = false; });
 watch(reviewClassification, value => { if (value === 'action') ensureContracts(); });
 let editorRevision = '';
 
 function applyEditorReset(next: NonNullable<typeof snapshot.value>) {
+  if (running.value) return;
   if (next.role === 'director' && !stage) {
     const key = next.activeBeat ? `${next.activeBeat.id}:${next.activeBeat.revision}` : '';
     if (key !== editorRevision) {
@@ -159,7 +187,7 @@ function applyEditorReset(next: NonNullable<typeof snapshot.value>) {
   }
 }
 if (snapshot.value) applyEditorReset(toRaw(snapshot.value));
-const stopListening = onSnapshot(applyEditorReset);
+const stopListening = onSnapshot(next => { behind.value = false; applyEditorReset(next); });
 onUnmounted(stopListening);
 
 async function saveGuidance(command: Command, done: (error?: string) => void) {
@@ -174,26 +202,52 @@ function beatMeta() {
 
 function runBar(task: () => Promise<void>) {
   barError.value = '';
+  stopped.value = false;
+  stoppedHere.value = false;
   return beatWork(async () => {
     try { await task(); }
     catch (cause) {
-      barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.';
-      if (barError.value === SUPERSEDED_BY_SERVER) supersededWhilePaused.value = paused.value;
+      const message = cause instanceof Error ? cause.message : 'The request could not be completed.';
+      if (message !== SUPERSEDED_BY_SERVER) barError.value = message;
+      else {
+        behind.value = true;
+        await refresh();
+        if (error.value) behind.value = false;
+        if (!stoppedHere.value && !director.value?.planThrownAway) { supersededWhilePaused.value = paused.value; barError.value = message; }
+      }
     }
     finally { running.value = null; }
   });
+}
+async function stopAi() {
+  const current = beat.value;
+  if (!current || stopping.value || !canStop.value) return;
+  stopping.value = true;
+  stoppedHere.value = true;
+  stoppedJobId.value = activeJob.value?.id ?? null;
+  stopped.value = false;
+  barError.value = '';
+  try {
+    await send({ type: 'stop_ai', commandId: crypto.randomUUID(), beatId: current.id });
+    stopped.value = true;
+  } catch (cause) {
+    stoppedHere.value = false;
+    barError.value = cause instanceof Error ? cause.message : 'The request could not be completed.';
+  } finally { stopping.value = false; }
 }
 function reached(beatId: string, phase: Beat['phase']) {
   const current = beat.value;
   return Boolean(current && current.id === beatId && !current.lastError && current.phase === phase);
 }
+function settleEditors() { running.value = null; if (snapshot.value) applyEditorReset(toRaw(snapshot.value)); }
 async function planStep(submissionIds: string[]) {
+  handStakes.value = false;
   running.value = { task: 'plan', since: Date.now() };
-  try { await send({ type: 'plan_beat', ...beatMeta(), submissionIds }); } catch (cause) { failedStep.value = 'plan'; throw cause; } finally { running.value = null; }
+  try { await send({ type: 'plan_beat', ...beatMeta(), submissionIds }); } catch (cause) { failedStep.value = 'plan'; throw cause; } finally { settleEditors(); }
 }
 async function renderStep() {
   running.value = { task: 'render', since: Date.now() };
-  try { await send({ type: 'render_beat', ...beatMeta() }); } catch (cause) { failedStep.value = 'render'; throw cause; } finally { running.value = null; }
+  try { await send({ type: 'render_beat', ...beatMeta() }); } catch (cause) { failedStep.value = 'render'; throw cause; } finally { settleEditors(); }
 }
 async function lockAndDraftSteps(beatId: string) {
   await send({ type: 'approve_stakes', ...beatMeta(), classification: 'ordinary', contracts: [] });
@@ -230,6 +284,7 @@ function answerLines() {
     await planStep(ids);
   });
 }
+function writeStakesMyself() { handStakes.value = true; ensureContracts(); }
 function plan() { const ids = tickedIds.value; if (!ids.length) return; return runBar(() => planStep(ids)); }
 function lockAndDraft() {
   if (paused.value || !ordinary.value) return;
@@ -316,13 +371,14 @@ function runPublish(audioPreparationId?: string) {
     const current = beat.value!;
     const beatId = current.id;
     const draftRevision = current.draftRevision;
+    const diceWaitMs = momentLengthMs(sortRolls(current.resolution?.rolls ?? [], director.value?.characters ?? []));
     if (continuityPending.value > 0 && !skipFacts.value) {
       await send({ type: 'approve_continuity', ...beatMeta(), updates: current.draft!.continuity });
       const next = beat.value;
       if (!next || next.id !== beatId || next.lastError || next.phase !== 'draft_review' || next.draftRevision !== draftRevision) return;
     }
     await send({ type: 'publish_beat', ...beatMeta(), expectedStateRevision: snapshot.value!.session.stateRevision, draftRevision, textOnly: !audioPreparationId, ...(audioPreparationId ? { audioPreparationId } : {}) });
-    emit('published', beatId, Boolean(audioPreparationId));
+    emit('published', beatId, Boolean(audioPreparationId), diceWaitMs);
   });
 }
 function publish() {
@@ -354,7 +410,7 @@ function runGold() {
   switch (gold.value) {
     case 'resume': return resumeShow();
     case 'answer': return runChain(answerLines);
-    case 'plan': return plan();
+    case 'plan': case 'plan-again': return plan();
     case 'lock-and-draft': return runChain(lockAndDraft);
     case 'approve-and-roll': return runChain(approveAndRoll);
     case 'draft': case 'try-again': return render();
@@ -370,7 +426,7 @@ function runGold() {
       <template v-if="idle || !beat"><p class="muted">Keep the exchange short, or bring the cast together for a consequential action.</p></template>
       <template v-else>
         <StakesCards v-if="showStakes" :beat="beat" :contracts="contracts" :busy="panelBusy" v-model:classification="reviewClassification" />
-        <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }}<template v-if="roll.lastChance"> · Last chance</template><template v-else> + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span></template><small>{{ nameOf(roll.actorCharacterId) }} · {{ bandLabel(roll.band) }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
+        <template v-if="showScript"><div v-if="beat.resolution?.rolls.length" class="rolls"><div v-for="roll in beat.resolution.rolls" :key="roll.id" class="roll"><strong>{{ roll.total }}</strong>{{ roll.faces.join(' + ') }}<template v-if="roll.lastChance"> · Last chance</template><template v-else> + {{ roll.traitModifier }}<span v-if="roll.edge"> + 1 Edge</span></template><small>{{ nameOf(roll.actorCharacterId) }} · {{ roll.lastChance ? lastChanceResult(roll.band) : bandLabel(roll.band) }}</small></div></div><p v-if="beat.resolution?.rolls.length" class="muted"><small>The dice are rolled. Regenerating the script keeps them.</small></p>
           <section v-if="readFirst.length" class="player-lines" data-testid="player-lines"><h4>Read aloud first, word for word</h4><p v-for="line in readFirst" :key="line.id" data-testid="player-line"><strong>{{ nameOf(line.characterId) }}</strong> <span v-if="line.action" class="player-line-tag">Action</span> <span class="player-line-words">{{ line.words }}</span></p></section>
           <ScriptEditor ref="scriptEditor" :segments="script" :npcs="director.npcDetails" :location-id="director.session.scene.locationId" :busy="panelBusy" :player-lines="scriptPlayerLines" :context-key="scriptContext" :premise="director.session.brief?.premise" :premise-label="`Show scenario: ${director.session.title}`" />
           <div v-if="beat.draft" style="margin-top: 1.5rem"><p v-if="beat.draft.directorSummary" class="private-note">{{ beat.draft.directorSummary }}</p><section v-if="continuityPending > 0" class="beat-facts" data-testid="facts-to-remember" aria-label="Facts to remember"><strong>Facts to remember</strong><ul><li v-for="(update, index) in beat.draft.continuity" :key="index">{{ update.kind === 'npc_knowledge' ? `${snapshot.npcs.find(npc => npc.id === update.npcId)?.displayName} learns (${update.category}): ${update.statement}` : `World fact: ${update.text}` }}</li></ul><label class="check"><input v-model="skipFacts" type="checkbox" data-testid="skip-facts" :disabled="locked" />Don't keep these</label></section><div v-if="publication.length" class="notice"><strong>Changes on publication</strong><p v-for="(line, index) in publication" :key="index" style="margin: .25rem 0">{{ line }}</p></div><p class="muted"><small>Player lines play word for word when you publish: the lines under Read aloud first play first, and a line shown inside the script plays just before the part that answers it. Only saved script edits will be published.</small></p><DraftAudioPanel :session-id="sessionId" :beat-id="beat.id" :beat-revision="beat.revision" :draft-revision="beat.draftRevision" :generation="beat.generation" :dirty="scriptDirty" :busy="panelBusy" :rendering="rendering" :paused="paused" @voice="onVoice" /></div>
@@ -379,7 +435,12 @@ function runGold() {
       <DirectorGuidance :snapshot="director" @command="saveGuidance" />
       <div ref="actionsBar" class="beat-actions" role="region" tabindex="-1" aria-label="Beat actions">
         <p class="beat-next" data-testid="beat-next">{{ step.next }}<span v-if="step.reason" class="beat-reason">{{ ' ' + step.reason }}</span></p>
-        <p v-if="statusText" class="beat-status" data-testid="beat-status">{{ statusText }}</p>
+        <div v-if="statusText || working" class="beat-status-row">
+          <p v-if="statusText" class="beat-status" data-testid="beat-status">{{ statusText }}</p>
+          <button v-if="canStop" type="button" class="quiet" :disabled="stopping" data-testid="stop-ai" @click="stopAi">Stop the AI</button>
+        </div>
+        <p v-if="stopped" class="notice" role="status" data-testid="ai-stopped">You stopped the AI. Nothing from that try was used.</p>
+        <p v-if="thrownAwayText" class="notice" role="status" data-testid="plan-thrown-away">{{ thrownAwayText }}</p>
         <p v-if="hasDraft && !scriptDirty && voice.status === 'failed'" class="beat-status" data-testid="voice-failed">The voice could not be prepared. Press Prepare voice again, or Publish without voice.</p>
         <p v-if="noShowAudio" class="beat-status" data-testid="no-show-audio">No show audio: the main show link isn't open in OBS.</p>
         <p v-if="errorText" class="notice error beat-error" data-testid="beat-error" role="alert">{{ errorText }}</p>
@@ -389,15 +450,14 @@ function runGold() {
         <p v-if="director.guidance?.standingNote" class="beat-status" data-testid="standing-note-on">Standing note on</p>
         <div class="actions">
           <button :data-testid="GOLD_TEST_IDS[gold]" :disabled="goldDisabled" @click="runGold">{{ goldLabel }}</button>
-          <template v-if="outsidePlan">
-            <p class="beat-status" data-testid="outside-plan">{{ outsidePlanText }}</p>
-            <button class="secondary" :disabled="locked || !tickedIds.length || Boolean(working)" data-testid="plan-again-bar" @click="plan">Plan again</button>
-          </template>
+          <button v-if="failedPlan && !handStakes" class="secondary" :disabled="locked" data-testid="write-stakes-myself" @click="writeStakesMyself">Write the stakes myself</button>
+          <p v-if="outsidePlan" class="beat-status" data-testid="outside-plan">{{ outsidePlanText }}</p>
+          <button v-if="outsidePlan || stakesPlanFailed" class="secondary" :disabled="locked || !tickedIds.length || Boolean(working)" data-testid="plan-again-bar" @click="plan">Plan again</button>
           <p v-if="tooManyLines" class="beat-status" data-testid="too-many-lines">{{ tooManyWarning }}</p>
           <button v-if="step.step === 'open'" class="secondary" :disabled="locked" data-testid="open-action" @click="openBeat('action')">Open action round</button>
           <button v-if="step.step === 'open' && !snapshot.history.length" class="secondary" :disabled="locked" data-testid="narrate-scene" @click="narrateScene">Narrate the opening</button>
           <button v-if="hasDraft && voice.status !== 'unavailable'" class="secondary" :disabled="locked || scriptDirty || rendering || Boolean(working)" data-testid="publish-text-only" @click="publishTextOnly">Publish without voice</button>
-          <button v-if="step.step === 'draft' && !idle && beat?.lastError" class="secondary" :disabled="locked" data-testid="write-it-myself" @click="writeItMyself">Write it myself</button>
+          <button v-if="step.step === 'draft' && !idle && !working" class="secondary" :disabled="locked" data-testid="write-it-myself" @click="writeItMyself">Write it myself</button>
         </div>
         <details ref="more" class="beat-more" data-testid="beat-more"><summary>More</summary>
           <div class="actions">
@@ -427,6 +487,7 @@ function runGold() {
 .beat-next { margin: 0; }
 .beat-status { margin: 0; color: var(--dust); font-size: 20px; line-height: 24px; }
 .beat-error { margin: 0; }
+.beat-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .beat-more > summary, .beat-abandon > summary { color: var(--dust); }
 .beat-more > summary:hover, .beat-abandon > summary:hover { color: var(--candle); }
 .beat-more .actions { margin-top: 12px; }

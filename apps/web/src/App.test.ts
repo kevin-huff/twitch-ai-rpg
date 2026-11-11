@@ -66,7 +66,7 @@ beforeEach(() => {
   for (const name of ['producerLink', 'createProducer', 'revokeProducer', 'producerSignIn', 'createStreamLink', 'streamLink', 'revokeStreamLink', 'streamAccess', 'inviteLink', 'reissueInvite', 'playback'] as const) transport[name].mockImplementation(unavailable);
   window.history.replaceState({}, '', '/sessions/show/stage');
 });
-afterEach(() => { document.body.innerHTML = ''; sessionStorage.clear(); });
+afterEach(() => { document.body.innerHTML = ''; sessionStorage.clear(); localStorage.clear(); });
 
 describe('public performance and player authority', () => {
   it.each(['director', 'player', 'stage'])('shows session operations only in the director workspace, including before a beat (%s)', async role => {
@@ -550,11 +550,58 @@ describe('public performance and player authority', () => {
     for (const role of ['player', 'director']) {
       window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
       transport.snapshot.mockResolvedValue(snapshot(role));
+      let report: (value: boolean) => void = () => {};
+      transport.subscribe.mockImplementation((_id: string, _changed: () => void, connection: (value: boolean) => void) => { report = connection; return () => {}; });
       const wrapper = mount(App); await flushPromises();
+      report(false); await flushPromises();
       expect(wrapper.text().includes(lost)).toBe(role === 'player');
       expect(wrapper.text().includes(interrupted)).toBe(role === 'director');
       wrapper.unmount();
     }
+  });
+
+  it('shows no connection notice while the first connection is still being made', async () => {
+    for (const role of ['player', 'director']) {
+      window.history.replaceState({}, '', `/sessions/show/${role === 'player' ? 'play' : role}`);
+      transport.snapshot.mockResolvedValue(snapshot(role));
+      const wrapper = mount(App); await flushPromises();
+      expect(wrapper.text()).not.toContain('Connection lost');
+      expect(wrapper.text()).not.toContain('Connection interrupted');
+      wrapper.unmount();
+    }
+  });
+
+  it('clears the connection notice when the connection comes back', async () => {
+    window.history.replaceState({}, '', '/sessions/show/play');
+    transport.snapshot.mockResolvedValue(snapshot('player'));
+    let report: (value: boolean) => void = () => {};
+    transport.subscribe.mockImplementation((_id: string, _changed: () => void, connection: (value: boolean) => void) => { report = connection; return () => {}; });
+    const wrapper = mount(App); await flushPromises();
+    report(true); await flushPromises();
+    expect(wrapper.text()).not.toContain('Connection lost');
+    report(false); await flushPromises();
+    expect(wrapper.text()).toContain('Connection lost');
+    report(true); await flushPromises();
+    expect(wrapper.text()).not.toContain('Connection lost');
+    wrapper.unmount();
+  });
+
+  it('words the header chip Connecting, Connected and Reconnecting', async () => {
+    window.history.replaceState({}, '', '/sessions/show/play');
+    transport.snapshot.mockResolvedValue(snapshot('player'));
+    let report: (value: boolean) => void = () => {};
+    transport.subscribe.mockImplementation((_id: string, _changed: () => void, connection: (value: boolean) => void) => { report = connection; return () => {}; });
+    const wrapper = mount(App); await flushPromises();
+    const chip = () => wrapper.get('.app-header .status');
+    expect(chip().text()).toBe('Connecting');
+    expect(chip().classes()).not.toContain('offline');
+    report(true); await flushPromises();
+    expect(chip().text()).toBe('Connected');
+    expect(chip().classes()).not.toContain('offline');
+    report(false); await flushPromises();
+    expect(chip().text()).toBe('Reconnecting');
+    expect(chip().classes()).toContain('offline');
+    wrapper.unmount();
   });
 
   it('leaves the paused notice to the seat banner', async () => {
@@ -859,7 +906,14 @@ describe('public performance and player authority', () => {
     } });
     const wrapper = mount(App);
     await flushPromises();
-    expect(wrapper.get('[data-testid="stakes-cards"]').text()).toContain('Planning failed.');
+    expect(wrapper.get('[data-testid="plan"]').text()).toBe('Plan again');
+    expect(wrapper.get('[data-testid="plan"]').classes()).not.toContain('secondary');
+    expect(wrapper.get('[data-testid="beat-next"]').text()).toContain('The plan could not be made. Plan again, or write the stakes yourself.');
+    expect(wrapper.find('[data-testid="stakes-cards"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="approve-and-roll"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="write-stakes-myself"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-testid="stakes-cards"]').text()).toContain('The AI did not make a plan. Write what could happen for each line below, then approve and roll.');
     expect(wrapper.get('[data-testid="approve-and-roll"]').text()).toBe('Approve and roll');
     expect(wrapper.find('[data-testid="stakes-ordinary-edit"]').exists()).toBe(false);
     await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
@@ -926,6 +980,7 @@ describe('field explanations', () => {
     const submissions = ['one space', 'two space', 'private space'].map((id, index) => ({ id, characterId: `pc ${index}`, kind: index === 2 ? 'ooc' : 'act', text: 'Question', intent: 'Enter', approach: 'Sneak', status: 'selected' }));
     transport.snapshot.mockResolvedValue({ ...snapshot('director'), submissions, activeBeat: { id: 'beat space', kind: 'conversation', phase: 'collecting', revision: 2, selectedSubmissionIds: submissions.map(item => item.id), contracts: [], classification: 'ordinary', stakesApproved: false, draft: null, lastError: 'Failed' } });
     const wrapper = mount(App, options); await flushPromises(); checkHelp(wrapper);
+    await wrapper.get('[data-testid="write-stakes-myself"]').trigger('click');
     await wrapper.get('[data-testid="stakes-ordinary-edit"]').trigger('click');
     await wrapper.get('[data-testid="stakes-classification"]').setValue('action'); checkHelp(wrapper);
     for (const edit of wrapper.findAll('[data-testid^="stakes-edit-"]')) await edit.trigger('click');

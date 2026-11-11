@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue';
 import type { DirectorSnapshot, Submission } from '@rpg/contracts';
-import { ticksOutsidePlan } from './plan-coverage';
+import { lineBlock, ticksOutsidePlan } from './plan-coverage';
 
 const props = defineProps<{ snapshot: DirectorSnapshot; modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>();
@@ -17,7 +17,8 @@ const questionCount = computed(() => questions.value.length === 0 ? '' : questio
 const countText = computed(() => `${lineCount.value}${questionCount.value}`);
 const activeBeatId = computed(() => props.snapshot.activeBeat?.id ?? null);
 const phaseAllows = computed(() => ['collecting', 'stakes_review'].includes(props.snapshot.activeBeat?.phase ?? 'collecting'));
-const canSelect = (item: Submission) => item.kind !== 'ooc' && phaseAllows.value;
+const blockOf = (item: Submission) => lineBlock(props.snapshot, item);
+const canSelect = (item: Submission) => item.kind !== 'ooc' && phaseAllows.value && !blockOf(item);
 const selectable = computed(() => pending.value.filter(canSelect));
 
 const nameOf = (id: string) => props.snapshot.characters.find(character => character.id === id)?.displayName ?? 'Player';
@@ -53,8 +54,9 @@ const toggle = (id: string, checked: boolean) => {
       </div>
     </template>
     <div v-for="item in inCharacter" :key="item.id" class="queue-item">
-      <label class="check"><input type="checkbox" :aria-describedby="helpId(item.id)" :checked="modelValue.includes(item.id)" :disabled="!canSelect(item)" @change="toggle(item.id, ($event.target as HTMLInputElement).checked)"><strong>{{ nameOf(item.characterId) }}</strong></label>
+      <label class="check"><input type="checkbox" :aria-describedby="helpId(item.id)" :checked="!blockOf(item) && modelValue.includes(item.id)" :disabled="!canSelect(item)" @change="toggle(item.id, ($event.target as HTMLInputElement).checked)"><strong>{{ nameOf(item.characterId) }}</strong></label>
       <p :id="helpId(item.id)" class="field-help">{{ helpText(item) }}</p>
+      <p v-if="blockOf(item)" class="field-help" :data-testid="`queue-block-${item.id}`">{{ blockOf(item) }}</p>
       <span v-if="leftover(item)" class="queue-tag">From an earlier exchange</span>
       <span v-if="outsidePlan.has(item.id)" class="queue-tag">Not in this plan</span>
       <p>{{ item.kind === 'act' ? item.intent : item.text }}</p>

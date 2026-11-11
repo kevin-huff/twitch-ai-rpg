@@ -240,7 +240,7 @@ At four strain, the character **needs help** and cannot initiate another risky a
 
 Helping someone recover uses an action and clears two strain. It succeeds automatically in safety; under threat it uses the normal contract/check process. A genuine safe scene break clears remaining strain. Equipment losses and other enduring consequences do not automatically disappear.
 
-No permanent player-character death by default. Capture, lost objectives, damaged reputation, retreat, and rescue are available failure states. Any lethal variant is a later explicit group option.
+Player characters can die, as built (the death ladder): a character at full strain who takes more goes down, or goes down on a setback or critical outcome the director approves. A down character sends no Do lines and only short Say lines (8 words or fewer). Another character can rescue them on a clean or costly result (back at 6 of 8). If nobody does, one last-chance roll of two plain dice decides when the round's dice are rolled: 7 or more pulls through (back at 7 of 8), 6 or less or double 1s dies. A dead player keeps watching, and the director can bring anyone back with a correction. Capture, lost objectives, damaged reputation and retreat remain available failure states.
 
 ## 4.8 Progress, danger, countdowns, and combat
 

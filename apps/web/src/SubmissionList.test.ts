@@ -55,7 +55,7 @@ describe('SubmissionList', () => {
     const expected: Record<string, string> = {
       queued: 'Sent. Waiting for the director to pick lines.',
       selected: 'Picked by the director. You can still change it.',
-      locked: 'Locked in. Watch the stream to see what happens.',
+      locked: 'Locked in. The result will appear under The story.',
       published: 'This is in the story now.',
       cancelled: 'Taken back. Send it again if you still want it.',
     };
@@ -131,5 +131,35 @@ describe('SubmissionList', () => {
     const w = make([item]);
     await buttons(w, 'Change')[0].trigger('click');
     expect(w.emitted('edit')).toEqual([[item]]);
+  });
+
+  const planBeat = (over: object = {}) => ({ phase: 'collecting', planning: true, ...over }) as never;
+  const mk = (submissions: Submission[], beat: object | null, extra: object = {}) => mount(SubmissionList, { props: { submissions, npcs, busy: false, beat: beat as never, ...extra } });
+  it('warns that changing a picked line makes the director plan again', () => {
+    const again = 'Picked for this round. If you change it or take it back, the director has to plan again.';
+    expect(mk([sub(1, { status: 'selected' })], planBeat()).text()).toContain(again);
+    expect(mk([sub(1, { status: 'selected' })], { phase: 'stakes_review' }).text()).toContain(again);
+    expect(mk([sub(1, { status: 'selected' })], { phase: 'collecting' }).text()).toContain('Picked by the director. You can still change it.');
+  });
+  it('says an unpicked line waits for the next turn while a plan runs', () => {
+    expect(mk([sub(1)], planBeat()).text()).toContain('Not in this round. It waits for the next turn.');
+  });
+  it('does not offer one more line while the round is being planned', () => {
+    expect(mk([sub(1, { status: 'selected' })], planBeat()).find('[data-testid="one-more-line"]').exists()).toBe(false);
+    expect(mk([sub(1, { status: 'selected' })], { phase: 'collecting' }).find('[data-testid="one-more-line"]').exists()).toBe(true);
+  });
+  it('hides Change on a downed character\'s waiting Do line and says why', () => {
+    const doLine = sub(1, { kind: 'act', text: '', intent: 'Climb up', approach: 'Climb up' });
+    const w = mk([doLine], { phase: 'collecting' }, { condition: 'down', name: 'Rook' });
+    expect(buttons(w, 'Change')).toHaveLength(0);
+    expect(buttons(w, 'Take it back')).toHaveLength(1);
+    expect(w.get('[data-testid="sub-blocked"]').text()).toBe("Rook is down, so this Do line can't be used or changed. You can take it back.");
+  });
+  it('keeps Change on a downed character\'s Say line and on an up character\'s Do line', () => {
+    expect(buttons(mk([sub(1)], { phase: 'collecting' }, { condition: 'down', name: 'Rook' }), 'Change')).toHaveLength(1);
+    const doLine = sub(1, { kind: 'act', text: '', intent: 'Climb up', approach: 'Climb up' });
+    const w = mk([doLine], { phase: 'collecting' }, { condition: 'up', name: 'Rook' });
+    expect(buttons(w, 'Change')).toHaveLength(1);
+    expect(w.find('[data-testid="sub-blocked"]').exists()).toBe(false);
   });
 });

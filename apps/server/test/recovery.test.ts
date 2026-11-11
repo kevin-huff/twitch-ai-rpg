@@ -62,7 +62,7 @@ suite('adversarial generation and stale input recovery', () => {
   it('rejects invented player dialogue and unknown NPCs before public publication', async () => {
     await prepareAction(); await act('lock_beat');
     render = async () => ({ segments: [{ kind: 'player_dialogue', text: 'I give up.', recipientCharacterIds: [], delivery: 'neutral' }], continuity: [], directorSummary: '' } as unknown as AiDraft);
-    await act('render_beat'); expect(state.activeBeat!.draft).toBeNull(); expect(state.activeBeat!.lastError).toContain('validation');
+    await act('render_beat'); expect(state.activeBeat!.draft).toBeNull(); expect(state.activeBeat!.lastError).toBe("The AI's reply failed the app's checks. Your lines and dice are safe. Try again, or write the script yourself.");
     render = async () => ({ segments: [{ kind: 'npc_dialogue', speakerNpcId: 'unknown-speaker', text: 'I know your secrets.', recipientCharacterIds: [], delivery: 'neutral' }], continuity: [], directorSummary: '' });
     await act('render_beat'); expect(state.activeBeat!.draft).toBeNull(); expect(state.history).toHaveLength(0); expect(rolls).toBe(2);
   });

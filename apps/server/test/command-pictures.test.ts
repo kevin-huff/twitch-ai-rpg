@@ -446,7 +446,7 @@ suite('command hooks for pictures', () => {
     await lockedRound('action');
     provider = new FailingProvider();
     const failed = await beatCommand('render_beat');
-    expect(failed.activeBeat!.lastError).toMatch(/Generation failed/);
+    expect(failed.activeBeat!.lastError).toMatch(/The AI request failed/);
     expect(failed.activeBeat!.draft).toBeNull();
     expect(pictures.calls).toEqual([]);
     expect(pictures.runs).toEqual([]);

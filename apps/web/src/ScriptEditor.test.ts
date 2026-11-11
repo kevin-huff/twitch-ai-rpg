@@ -170,4 +170,15 @@ describe('script editor', () => {
     const { wrapper } = mountEditor([dialogue('away', 'Hello')], { npcs: list });
     expect(wrapper.get(id('script-add-line')).findAll('option').map(o => o.text())).toContain('Away');
   });
+
+  it('does not offer a dead non-player character who is present, but keeps one already speaking in the script', async () => {
+    const dead = { ...npc('rook', 'Rook'), condition: 'dead' as const };
+    const list = [npc('ana', 'Ana'), dead];
+    const first = mountEditor([dialogue('ana', 'Halt!')], { npcs: list });
+    expect(first.wrapper.get(id('script-add-line')).findAll('option').map(o => o.text())).toEqual(['Add a line…', 'Narrator', 'Ana']);
+    await first.wrapper.get(id('script-line-0')).trigger('click');
+    expect(first.wrapper.get(id('script-speaker-0')).findAll('option').map(o => o.text())).toEqual(['Ana']);
+    const second = mountEditor([dialogue('rook', 'Last words.')], { npcs: list });
+    expect(second.wrapper.get(id('script-add-line')).findAll('option').map(o => o.text())).toContain('Rook');
+  });
 });

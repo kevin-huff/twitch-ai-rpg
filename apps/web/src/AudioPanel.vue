@@ -3,9 +3,10 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import type { ShowAudioHolder } from '@rpg/contracts';
 import { api } from './api';
 import { createPlaybackController } from './playback';
+import type { NarrationState } from './NarrationLine.vue';
 
 const props = defineProps<{ sessionId: string; beatId?: string; director: boolean; stage?: boolean; compact?: boolean; autoPlayBeatId?: string | null }>();
-const emit = defineEmits<{ 'playback-failed': [message: string] }>();
+const emit = defineEmits<{ 'playback-failed': [message: string]; narration: [state: NarrationState | null] }>();
 const controller = createPlaybackController({ ...props });
 const state = controller.state;
 const ownershipPending = ref(false);
@@ -114,7 +115,18 @@ async function startAndReport(beatId?: string) {
   if (state.error) emit('playback-failed', `The narration did not start. ${state.error}`);
 }
 async function startLatest() { await startAndReport(); }
-defineExpose({ startLatest });
+async function control(type: 'pause' | 'resume' | 'stop') { await controller.command(type); }
+defineExpose({ startLatest, control });
+
+// The director page's narration line reads the same playback state as this panel.
+const narrationState = computed<NarrationState | null>(() => {
+  const current = state.snapshot;
+  if (!current) return null;
+  // A refused Pause, Resume or Stop reports itself in state.error; the line shows it, because this panel is usually folded shut.
+  return { status: current.status, beatId: current.manifest?.beatId ?? null, audioHere: presenterAvailable.value, pending: state.commandPending, ...(state.error ? { error: state.error } : {}) };
+});
+watch(narrationState, value => { if (directorControls.value && !props.compact) emit('narration', value); },
+  { immediate: true, deep: true });
 
 // Starts the narration of a just-published beat once, when the shared player is free and a presenter is connected.
 let autoPlayHandled: string | null = null;

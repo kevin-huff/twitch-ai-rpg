@@ -280,6 +280,23 @@ const labels = [
   'Worn',
   'Spent',
   'Your Do lines will help someone else for now. What you say still rolls.',
+  'Stop the AI',
+  'Write the stakes myself',
+  'You stopped the AI. Nothing from that try was used.',
+  'Taking lines',
+  'Setting stakes',
+  'Stakes are set',
+  'Writing the story',
+  'Story coming up',
+  'Pulls through',
+  'Dies',
+  'What is at stake for you',
+  'What changed for you',
+  'The story moved on',
+  'Pause narration',
+  'Resume narration',
+  'Stop narration',
+  'Could not reach the show. Check your connection and try again.',
 ];
 
 // Help pages quote these as buttons; they ship on the help page itself.

@@ -1,3 +1,21 @@
+<script lang="ts">
+import { strainWord } from './StrainMeter.vue';
+
+export type SeatChangeState = { strain: number; condition?: 'down' | 'dead' | undefined };
+export function changedForYou(input: { name: string; before: SeatChangeState; after: SeatChangeState; lastChanceRolled: boolean }): string | null {
+  const { name, before, after } = input;
+  if (after.condition === 'dead' && before.condition !== 'dead') return `${name} died.`;
+  if (!before.condition && after.condition === 'down') return `${name} went down.`;
+  if (before.condition === 'down' && !after.condition) {
+    return input.lastChanceRolled
+      ? `${name} pulled through the last chance and is back up at ${after.strain} of 8.`
+      : `${name} was saved and is back up at ${after.strain} of 8.`;
+  }
+  if (before.strain !== after.strain) return `${name}'s strain went from ${before.strain} to ${after.strain} of 8: ${strainWord(after.strain, 8)}.`;
+  return null;
+}
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { isPlayerSegmentKind } from '@rpg/contracts';
@@ -5,7 +23,7 @@ import type { PublicCharacter, PublishedBeat, ScriptSegment } from '@rpg/contrac
 import { rollSentence } from './stage-format';
 import { createBeatAudio } from './beat-audio';
 
-const props = defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[]; sessionId?: string }>();
+const props = defineProps<{ history: PublishedBeat[]; characters: PublicCharacter[]; sessionId?: string; changed?: { beatId: string; text: string } | null }>();
 const open = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
@@ -50,6 +68,7 @@ function toggleSound(beat: PublishedBeat) {
     <h2>The story</h2>
     <p v-if="!history.length" class="seat-story-empty" data-testid="seat-story-empty">The story starts when the director publishes the first beat.</p>
     <template v-else>
+      <p v-if="changed && changed.beatId === history[history.length - 1]?.id" class="seat-story-changed" data-testid="seat-changed"><span class="seat-story-tag">What changed for you{{ ' ' }}</span><span class="seat-story-words">{{ changed.text }}</span></p>
       <div ref="scroller" class="seat-story-scroll" data-testid="seat-story-scroll" tabindex="0" aria-label="The story">
         <article v-for="beat in beats" :key="beat.id" class="seat-story-beat" data-testid="seat-story-beat">
           <p v-if="open" class="seat-story-label">Beat {{ beat.beatNumber }}</p>
@@ -76,6 +95,7 @@ function toggleSound(beat: PublishedBeat) {
 .seat-story h2 { font-family: var(--font-label); font-size: 16px; line-height: 20px; text-transform: uppercase; color: var(--candle); margin-bottom: 12px; }
 .seat-story-empty { color: var(--dust); margin: 0; }
 .seat-story-scroll { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; margin-bottom: 16px; padding: 12px 12px 4px; background: var(--night-raised); box-shadow: var(--frame-slot); clip-path: var(--cut-1); }
+.seat-story-changed { margin: 0 0 12px; font-family: var(--font-body); font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
 .seat-story-beat + .seat-story-beat { margin-top: 20px; }
 .seat-story-beat p { margin: 0 0 8px; font-family: var(--font-body); font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
 .seat-story-label { font-family: var(--font-label); font-size: 16px; line-height: 20px; text-transform: uppercase; color: var(--dust); }

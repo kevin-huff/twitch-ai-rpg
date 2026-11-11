@@ -60,6 +60,17 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
   };
   const conditionOf = async () => (await api(page, path)).characters.find((item: { id: string }) => item.id === character.id).condition;
 
+  // A Do line the character queues while still up, before going down.
+  const DO_INTENT = 'Light the far lantern';
+  snapshot = await api(page, path);
+  const queuedDo = (await command({ type: 'save_submission', contextBeatId: null, expectedInputEpoch: snapshot.session.inputEpoch, expectedSubmissionRevision: 0, kind: 'act', text: '', intent: DO_INTENT, approach: 'Carry a taper up the stairs', recipientNpcIds: [], stageDirection: '', alreadySpokenAloud: false }, seatIdentity))
+    .submissions.find((input: { intent: string }) => input.intent === DO_INTENT);
+  expect(queuedDo).toBeTruthy();
+  const doId: string = queuedDo.id;
+  const ladder = `7 or more on two dice and ${name} pulls through; 6 or less, or double 1s, and ${name} dies.`;
+  const base = `${name} is down. You can say a few words, up to 8.`;
+  const doLine = (seatPage: Page) => seatPage.locator('.sub-item').filter({ hasText: DO_INTENT });
+
   // 1. A downed seat at phone width.
   await setCondition('down');
   expect(await conditionOf()).toBe('down');
@@ -67,7 +78,11 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
   await seat.setViewportSize({ width: 390, height: 844 });
   await seat.goto(`${path}/play?identity=${seatIdentity}`);
   await expect(seat.getByTestId('seat-condition')).toHaveText('Down');
-  await expect(seat.getByTestId('seat-down-note')).toHaveText(`${name} is down. You can say a few words, up to 8. Someone can still save ${name} until the end of the next round.`);
+  await expect(seat.getByTestId('seat-down-note')).toHaveText(`${base} Someone can still save ${name} in the next round. If nobody does, one last-chance roll decides: ${ladder}`);
+  // The waiting Do line has no Change button and says why; Take it back stays.
+  await expect(doLine(seat).getByTestId('sub-blocked')).toHaveText(`${name} is down, so this Do line can't be used or changed. You can take it back.`);
+  await expect(doLine(seat).getByRole('button', { name: 'Change', exact: true })).toHaveCount(0);
+  await expect(doLine(seat).getByRole('button', { name: 'Take it back', exact: true })).toBeVisible();
   await expect(seat.getByTestId('seat-dead-note')).toHaveCount(0);
   await expect(seat.getByRole('button', { name: 'Do something', exact: true })).toHaveCount(0);
   await seat.getByRole('button', { name: 'Say something', exact: true }).click();
@@ -78,9 +93,10 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
 
   snapshot = await api(page, path);
   const sayLine = (text: string) => rawApi(page, `${path}/commands`, { commandId: crypto.randomUUID(), type: 'save_submission', contextBeatId: null, expectedInputEpoch: snapshot.session.inputEpoch, expectedSubmissionRevision: 0, kind: 'say', text, recipientNpcIds: [mara.id], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true }, seatIdentity);
-  const accepted = await sayLine('one two three four five six seven eight');
+  const SAY = 'Double ones: two three four five six seven';
+  const accepted = await sayLine(SAY);
   expect(accepted.status, JSON.stringify(accepted.data)).toBe(200);
-  const refused = await sayLine('one two three four five six seven eight nine');
+  const refused = await sayLine(`${SAY} eight`);
   expect(refused.status).toBe(400);
   expect(JSON.stringify(refused.data)).toContain(`${name} is down, so they can say only a few words, up to 8. This line has 9.`);
 
@@ -110,10 +126,65 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
   await expect(windowChip).toBeVisible();
   await expect(windowChip).toContainText(`${name} is down. Someone can save ${name} in the next round.`);
   await expect(windowChip).toContainText('last-chance roll');
+  // The Do line queued before the character went down arrives unticked, with its reason.
+  const queueDo = page.locator('.queue-item').filter({ hasText: DO_INTENT });
+  await expect(page.getByTestId(`queue-block-${doId}`)).toHaveText(`${name} is down, so this Do line can't be used.`);
+  await expect(queueDo.getByRole('checkbox')).not.toBeChecked();
+  await expect(queueDo.getByRole('checkbox')).toBeDisabled();
+  // Bringing the character back lets the same line be ticked again on the open page; going down again blocks it again.
+  await setCondition('up');
+  await expect(page.getByTestId(`queue-block-${doId}`)).toHaveCount(0);
+  await expect(queueDo.getByRole('checkbox')).toBeChecked();
+  await expect(queueDo.getByRole('checkbox')).toBeEnabled();
+  await setCondition('down');
+  await expect(page.getByTestId(`queue-block-${doId}`)).toHaveText(`${name} is down, so this Do line can't be used.`);
+  await expect(queueDo.getByRole('checkbox')).not.toBeChecked();
+  await expect(queueDo.getByRole('checkbox')).toBeDisabled();
 
-  // 4. Dead: the seat says so, has no line boxes, and still shows the story.
-  await setCondition('dead');
+  // 4. A round for the downed character: the note follows the round, the seat shows its stakes, and the last chance is rolled.
+  snapshot = await api(page, path);
+  await command({ type: 'open_beat', kind: 'conversation', expectedInputEpoch: snapshot.session.inputEpoch });
+  await expect(seat.getByTestId('seat-down-note')).toHaveText(`${base} Someone can still save ${name} in this round. If nobody does, one last-chance roll decides when the dice are rolled: ${ladder}`);
+  await noSideScroll(seat);
+  snapshot = await api(page, path);
+  const sayId: string = snapshot.submissions.find((input: { text: string }) => input.text === SAY).id;
+  await beatCommand({ type: 'plan_beat', submissionIds: [sayId] });
+  await expect(seat.getByTestId('seat-stakes')).toHaveCount(0);
+  const classification = snapshot.activeBeat.classification === 'ordinary' ? 'ordinary' : 'action';
+  await beatCommand({ type: 'approve_stakes', classification, contracts: classification === 'ordinary' ? [] : snapshot.activeBeat.contracts });
+  const own = (await api(page, path, undefined, seatIdentity)).activeBeat.stakes.filter((stake: { actorCharacterId: string }) => stake.actorCharacterId === character.id);
+  expect(own.length).toBeGreaterThan(0);
+  const stakes = seat.getByTestId('seat-stakes');
+  await expect(stakes).toBeVisible();
+  await expect(stakes.getByText('What is at stake for you')).toBeVisible();
+  await expect(stakes.getByTestId('seat-stake').first()).toContainText(own[0].intent);
+  await expect(stakes.getByTestId('seat-stake').first().locator('.seat-stake-row')).not.toHaveCount(0);
+  await expect(stakes).not.toContainText(/rolled \d/i);
+  await noSideScroll(seat);
+
+  await beatCommand({ type: 'lock_beat' });
+  await expect(seat.getByTestId('seat-down-note')).toHaveText(`${base} The dice are rolled. The story will tell what happens to ${name}.`);
+  await expect(stakes).toBeVisible();
+  await noSideScroll(seat);
+  await beatCommand({ type: 'render_beat' });
+  await beatCommand({ type: 'publish_beat', expectedStateRevision: snapshot.session.stateRevision, draftRevision: snapshot.activeBeat.draftRevision, textOnly: true });
   expect(await conditionOf()).toBe('dead');
+
+  // After the publish the stakes are gone and the seat says what changed, above the story box so a phone shows it without scrolling inside the box.
+  await expect(stakes).toHaveCount(0);
+  const changed = seat.getByTestId('seat-story').getByTestId('seat-changed');
+  await expect(changed).toBeVisible();
+  await expect(seat.getByTestId('seat-story-scroll').getByTestId('seat-changed')).toHaveCount(0);
+  await expect(changed).toContainText('What changed for you');
+  await expect(changed).toContainText(`${name} died.`);
+  await noSideScroll(seat);
+  await seat.getByRole('button', { name: 'Ask for a pause', exact: true }).click();
+  const receipt = seat.getByTestId('pause-receipt');
+  await expect(receipt).toHaveText('Pause requested. Say so on the voice call too.');
+  await expect(receipt).toHaveAttribute('role', 'status');
+  await noSideScroll(seat);
+
+  // Dead: the seat says so, has no line boxes, and still shows the story.
   await seat.reload();
   await expect(seat.getByTestId('seat-condition')).toHaveText('Dead');
   await expect(seat.getByTestId('seat-dead-note')).toHaveText(`${name} has died. You can keep watching the story here.`);
@@ -127,6 +198,7 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
 
   // 5. Bring back through the Corrections panel on the director page.
   await page.reload();
+  await expect(page.getByTestId(`queue-block-${doId}`)).toHaveText(`${name} has died, so this line can't be used.`);
   await expect(page.getByTestId('show-tools')).toBeVisible();
   const fold = page.getByTestId('show-tools');
   if (!(await fold.evaluate(details => (details as HTMLDetailsElement).open))) await fold.locator(':scope > summary').click();
@@ -143,10 +215,15 @@ test('a downed seat, the party piece, the director chip, a dead seat and Bring b
   await expect.poll(conditionOf).toBeUndefined();
   const corrected = (await api(page, path)).corrections.at(-1);
   expect(JSON.stringify(corrected)).toContain(`${name} gets up again.`);
+  // The reason is gone from the open page once the character is back. (A correction made between rounds unticks every waiting line, so the box is left unticked here.)
+  await expect(page.getByTestId(`queue-block-${doId}`)).toHaveCount(0);
+  await expect(page.locator('.queue-item').filter({ hasText: DO_INTENT }).getByRole('checkbox')).toBeEnabled();
 
   await seat.reload();
   await expect(seat.getByTestId('seat-condition')).toHaveCount(0);
   await expect(seat.getByTestId('seat-dead-note')).toHaveCount(0);
   await expect(seat.getByRole('button', { name: 'Do something', exact: true })).toBeVisible();
+  await expect(doLine(seat).getByRole('button', { name: 'Change', exact: true })).toBeVisible();
+  await expect(doLine(seat).getByTestId('sub-blocked')).toHaveCount(0);
   await noSideScroll(seat);
 });

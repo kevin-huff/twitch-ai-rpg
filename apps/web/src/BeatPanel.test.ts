@@ -3,8 +3,10 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import BeatPanel from './BeatPanel.vue';
+import { momentLengthMs } from './dice-moment';
 import { createTable, provideTable, type Table } from './table';
 import StakesCards from './StakesCards.vue';
+import ScriptEditor from './ScriptEditor.vue';
 
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), login: vi.fn(), redeem: vi.fn(), create: vi.fn(), testSeat: vi.fn(), sessions: vi.fn(), library: vi.fn(), generateField: vi.fn() }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
@@ -439,17 +441,25 @@ describe('beat panel chains', () => {
     wrapper.unmount();
   });
 
-  it('offers dice after a failed conversation plan with no classification', async () => {
+  it('offers Plan again after a failed conversation plan, and dice only after Write the stakes myself', async () => {
     const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1', 'say-2'], lastError: 'A round can show at most six rolls, and this plan needs 8. Untick some lines.' });
     const two = { submissions: [line('say-1'), line('say-2')] };
     const wrapper = await mountPanel(snapshot(failed, 'live', two), ['say-1', 'say-2']);
-    expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
+    expect(goldButtons(wrapper)).toEqual(['Plan again']);
+    expect(wrapper.get('[data-testid="plan"]').text()).toBe('Plan again');
     expect(buttonNamed(wrapper, 'Lock and draft')).toBeUndefined();
+    expect(wrapper.find('[data-testid="stakes-cards"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="beat-next"]').text()).toContain('The plan could not be made. Plan again, or write the stakes yourself.');
+    const hand = outsideMore(wrapper).find(button => button.attributes('data-testid') === 'write-stakes-myself')!;
+    expect(hand.text()).toBe('Write the stakes myself');
+    expect(hand.classes()).toContain('secondary');
+    await hand.trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-testid="write-stakes-myself"]').exists()).toBe(false);
+    expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
+    expect(wrapper.find('[data-testid="stakes-cards"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="beat-step-count"]').text()).toBe('Step 3 of 5');
     expect(wrapper.text()).not.toContain('Ordinary conversation: no dice');
-    await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
-    expect(transport.command).toHaveBeenLastCalledWith('show', expect.objectContaining({ type: 'plan_beat', submissionIds: ['say-1', 'say-2'] }));
-    transport.command.mockClear();
+    expect(transport.command).not.toHaveBeenCalled();
     for (const contract of wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>) {
       contract.outcomes.clean.publicText = 'It works.'; contract.outcomes.costly.publicText = 'It works, and it costs you.'; contract.outcomes.setback.publicText = 'It fails.';
     }
@@ -458,6 +468,39 @@ describe('beat panel chains', () => {
     const first = transport.command.mock.calls[0]?.[1];
     expect(first).toMatchObject({ type: 'approve_stakes', classification: 'action' });
     expect(first.contracts).toHaveLength(2);
+    wrapper.unmount();
+  });
+
+  it('plans the ticked lines again with one press of the gold button after a failed plan', async () => {
+    const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1'], lastError: 'The planner timed out.' });
+    const wrapper = await mountPanel(snapshot(failed, 'live', { submissions: [line('say-1'), line('say-2')] }), ['say-2', 'say-1']);
+    expect(goldButtons(wrapper)).toEqual(['Plan again']);
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['plan_beat']);
+    expect(transport.command.mock.calls[0][1]).toMatchObject({ submissionIds: ['say-1', 'say-2'] });
+    wrapper.unmount();
+  });
+
+  it('disables the gold Plan again with no ticked line and keeps the hand-written path', async () => {
+    const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1'], lastError: 'The planner timed out.' });
+    const wrapper = await mountPanel(snapshot(failed, 'live', { submissions: [line('say-1')] }), []);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-testid="write-stakes-myself"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('goes back to Plan again when the next plan starts after Write the stakes myself', async () => {
+    const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1'], lastError: 'The planner timed out.' });
+    const wrapper = await mountPanel(snapshot(failed, 'live', { submissions: [line('say-1')] }), ['say-1']);
+    await wrapper.get('[data-testid="write-stakes-myself"]').trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-testid="stakes-cards"]').exists()).toBe(true);
+    const again = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1'], lastError: 'The planner timed out again.', revision: 4 });
+    transport.snapshot.mockResolvedValue(snapshot(again, 'live', { submissions: [line('say-1')] }));
+    await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['plan_beat']);
+    expect(wrapper.find('[data-testid="stakes-cards"]').exists()).toBe(false);
+    expect(goldButtons(wrapper)).toEqual(['Plan again']);
+    expect(wrapper.find('[data-testid="write-stakes-myself"]').exists()).toBe(true);
     wrapper.unmount();
   });
 
@@ -494,6 +537,7 @@ describe('beat panel chains', () => {
       const state = { submissions: [{ ...line('say-1'), text: '[laughs] Fine.' }, line('act-1', 'act'), line('say-2', 'say', 'pc-2')] };
       const failed = beat({ kind: 'conversation', phase: 'collecting', classification: null, selectedSubmissionIds: ['say-1', 'act-1', 'say-2'], lastError: 'The planner timed out.' });
       const wrapper = await mountPanel(snapshot(failed, 'live', state), ['say-1', 'act-1', 'say-2']);
+      await wrapper.get('[data-testid="write-stakes-myself"]').trigger('click'); await flushPromises();
       const list = wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>;
       expect(list).toHaveLength(3);
       expect(list.map(contract => contract.submissionIds)).toEqual([['say-1'], ['act-1'], ['say-2']]);
@@ -699,7 +743,21 @@ describe('beat panel publish', () => {
     await wrapper.get('[data-testid="publish"]').trigger('click'); await flushPromises();
     expect(sentTypes()).toEqual(['publish_beat']);
     expect(transport.command).toHaveBeenLastCalledWith('show', expect.objectContaining({ type: 'publish_beat', textOnly: false, audioPreparationId: AUDIO_ID, draftRevision: 1, expectedStateRevision: 4 }));
-    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', true]]);
+    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', true, 0]]);
+    wrapper.unmount();
+  });
+
+  it('reports how long the dice moment runs, so the narration can wait for the dice', async () => {
+    const rolls = [
+      { id: 'r2', contractId: 'k2', contractVersion: 1, actorCharacterId: 'pc-2', faces: [2, 5], trait: 'wits', traitModifier: 1, edge: 0, total: 8, band: 'costly' },
+      { id: 'r1', contractId: 'k1', contractVersion: 1, actorCharacterId: 'pc-1', faces: [6, 6], trait: 'force', traitModifier: 2, edge: 1, total: 15, band: 'clean' },
+    ];
+    const wrapper = await mountPanel(snapshot(review({ resolution: { rolls, outcomes: [], effects: [] } })));
+    await wrapper.get('[data-testid="publish"]').trigger('click'); await flushPromises();
+    const [beatId, voiced, waitMs] = panel(wrapper).emitted('published')![0]!;
+    expect([beatId, voiced]).toEqual(['beat-2', true]);
+    expect(waitMs).toBe(momentLengthMs([rolls[1], rolls[0]] as never));
+    expect(waitMs).toBeGreaterThan(3000);
     wrapper.unmount();
   });
 
@@ -713,7 +771,7 @@ describe('beat panel publish', () => {
     expect(sentTypes()).toEqual(['publish_beat']);
     expect(transport.command.mock.calls[0][1]).toMatchObject({ textOnly: true });
     expect(transport.command.mock.calls[0][1]).not.toHaveProperty('audioPreparationId');
-    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', false]]);
+    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', false, 0]]);
     wrapper.unmount();
   });
 
@@ -725,7 +783,7 @@ describe('beat panel publish', () => {
     await wrapper.get('[data-testid="publish"]').trigger('click'); await flushPromises();
     expect(transport.command.mock.calls[0][1]).toMatchObject({ type: 'publish_beat', textOnly: true });
     expect(transport.command.mock.calls[0][1]).not.toHaveProperty('audioPreparationId');
-    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', false]]);
+    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', false, 0]]);
     wrapper.unmount();
   });
 
@@ -751,7 +809,7 @@ describe('beat panel publish', () => {
     await voice(wrapper, READY);
     expect(sentTypes()).toEqual(['publish_beat']);
     expect(transport.command.mock.calls[0][1]).toMatchObject({ textOnly: false, audioPreparationId: AUDIO_ID });
-    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', true]]);
+    expect(panel(wrapper).emitted('published')).toEqual([['beat-2', true, 0]]);
     wrapper.unmount();
   });
 
@@ -1189,10 +1247,13 @@ describe('beat panel script editor', () => {
     wrapper.unmount();
   });
 
-  it('opens a blank narration line from Write it myself after a failed draft, and only then', async () => {
+  it('opens a blank narration line from Write it myself at the draft step, and only there', async () => {
     const plain = await mountPanel(snapshot(locked()));
-    expect(plain.find('[data-testid="write-it-myself"]').exists()).toBe(false);
+    expect(plain.find('[data-testid="write-it-myself"]').exists()).toBe(true);
     plain.unmount();
+    const collecting = await mountPanel(snapshot(beat()));
+    expect(collecting.find('[data-testid="write-it-myself"]').exists()).toBe(false);
+    collecting.unmount();
     const wrapper = await mountPanel(snapshot(locked({ lastError: 'The AI timed out.' })));
     const button = outsideMore(wrapper).find(item => item.attributes('data-testid') === 'write-it-myself')!;
     expect(button.text()).toBe('Write it myself');
@@ -1472,6 +1533,11 @@ describe('beat panel changes on publication', () => {
     const rows = wrapper.findAll('.roll').map(row => row.text());
     expect(rows[0]).toContain('4 + 5 · Last chance');
     expect(rows[0]).not.toContain('Edge');
+    // The director's own dice list words a last chance as the stream does, never as an ordinary result.
+    expect(rows[0]).toContain('Pulls through');
+    expect(rows[0]).not.toContain('Clean success');
+    expect(rows[1]).toContain('Dies');
+    expect(rows[1]).not.toContain('Setback');
     wrapper.unmount();
   });
 
@@ -1503,5 +1569,504 @@ describe('beat panel changes on publication', () => {
     expect(text).toContain('Mara dies');
     expect(text).toContain('Scrot goes down');
     wrapper.unmount();
+  });
+});
+
+describe('beat panel while its own AI request is pending', () => {
+  const held = () => {
+    let finish: (value?: unknown) => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    return (state: ReturnType<typeof snapshot>) => { transport.snapshot.mockResolvedValue(state); finish({}); };
+  };
+  const job = (task: 'plan' | 'render') => ({ id: 'job-1', beatId: 'beat-2', generation: 1, task, status: 'running' });
+  const planned = (overrides: Record<string, unknown> = {}) => beat({ phase: 'stakes_review', kind: 'action', classification: 'needs_action', selectedSubmissionIds: ['act-1'], contracts: [actionContract()], revision: 3, ...overrides });
+  const acts = { submissions: [line('act-1', 'act')] };
+
+  it('leaves an open stakes editor alone while a plan request waits, then shows the new plan', async () => {
+    const wrapper = await mountPanel(snapshot(planned(), 'live', acts), ['act-1']);
+    await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
+    const release = held();
+    await wrapper.get('[data-testid="plan-again"]').trigger('click'); await flushPromises();
+    const cards = () => wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>;
+    cards()[0]!.intent = 'Typed by the director.';
+    transport.snapshot.mockResolvedValue(snapshot(planned({ revision: 4 }), 'live', { ...acts, jobs: [job('plan')] }));
+    await table.refresh(); await flushPromises();
+    expect(cards()[0]!.intent).toBe('Typed by the director.');
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Planning');
+    release(snapshot(planned({ revision: 5, contracts: [actionContract({ intent: 'A fresh plan.' })] }), 'live', acts));
+    await flushPromises();
+    expect(cards()[0]!.intent).toBe('A fresh plan.');
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('leaves the script editor alone while a script request waits, then shows the new script', async () => {
+    const wrapper = await mountPanel(snapshot(locked({ revision: 3 })), []);
+    const release = held();
+    await wrapper.get('[data-testid="render"]').trigger('click'); await flushPromises();
+    const typed = { kind: 'narration', speakerNpcId: null, text: 'Typed by the director.', recipientCharacterIds: [], delivery: 'neutral' };
+    (wrapper.getComponent(ScriptEditor).props('segments') as unknown[]).push(typed);
+    transport.snapshot.mockResolvedValue(snapshot(locked({ revision: 4 }), 'live', { jobs: [job('render')] }));
+    await table.refresh(); await flushPromises();
+    expect((wrapper.getComponent(ScriptEditor).props('segments') as Array<{ text: string }>).map(item => item.text)).toEqual(['Typed by the director.']);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    release(snapshot(review({ revision: 5 })));
+    await flushPromises();
+    expect((wrapper.getComponent(ScriptEditor).props('segments') as Array<{ text: string }>).map(item => item.text)).toEqual(['The room falls silent.']);
+    wrapper.unmount();
+  });
+
+  it('keeps the More fold closed when an AI script arrives after a wait', async () => {
+    const wrapper = await mountPanel(snapshot(locked({ revision: 3 })), []);
+    const release = held();
+    await wrapper.get('[data-testid="render"]').trigger('click'); await flushPromises();
+    transport.snapshot.mockResolvedValue(snapshot(locked({ revision: 4 }), 'live', { jobs: [job('render')] }));
+    await table.refresh(); await flushPromises();
+    release(snapshot(review({ revision: 5 })));
+    await flushPromises();
+    expect((more(wrapper).element as HTMLDetailsElement).open).toBe(false);
+    expect(wrapper.get('[data-testid="beat-next"]').text()).toBe('Read the script, then publish.');
+    expect(wrapper.find('[data-testid="save-script"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps the More fold closed when an AI script arrives at once', async () => {
+    const wrapper = await mountPanel(snapshot(locked({ revision: 3 })), []);
+    transport.snapshot.mockResolvedValue(snapshot(review({ revision: 4 })));
+    await wrapper.get('[data-testid="render"]').trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['render_beat']);
+    expect((more(wrapper).element as HTMLDetailsElement).open).toBe(false);
+    expect(wrapper.get('[data-testid="beat-next"]').text()).toBe('Read the script, then publish.');
+    wrapper.unmount();
+  });
+
+  it('keeps the More fold closed when a regenerated script replaces the draft', async () => {
+    const wrapper = await mountPanel(snapshot(review({ revision: 3 })), []);
+    const release = held();
+    await wrapper.get('[data-testid="regenerate"]').trigger('click');
+    await buttonNamed(wrapper, 'Yes, regenerate')!.trigger('click'); await flushPromises();
+    const rewritten = [{ ...segments[0]!, text: 'The room erupts.' }];
+    release(snapshot(review({ revision: 4, draftRevision: 2, draft: { segments: rewritten, continuity: [], directorSummary: '' } })));
+    await flushPromises();
+    expect((wrapper.getComponent(ScriptEditor).props('segments') as Array<{ text: string }>).map(item => item.text)).toEqual(['The room erupts.']);
+    expect((more(wrapper).element as HTMLDetailsElement).open).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('still opens the More fold when the director edits the script by hand', async () => {
+    const wrapper = await mountPanel(snapshot(review({ revision: 3 })), []);
+    expect((more(wrapper).element as HTMLDetailsElement).open).toBe(false);
+    (wrapper.getComponent(ScriptEditor).props('segments') as Array<{ text: string }>)[0]!.text = 'Edited by the director.';
+    await flushPromises();
+    expect((more(wrapper).element as HTMLDetailsElement).open).toBe(true);
+    expect(wrapper.find('[data-testid="save-script"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('never calls the stakes changed while its own plan request waits', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ kind: 'action', selectedSubmissionIds: [], revision: 3 }), 'live', acts), ['act-1']);
+    const release = held();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    transport.snapshot.mockResolvedValue(snapshot(planned({ revision: 4, stakesApproved: true }), 'live', acts));
+    await table.refresh(); await flushPromises();
+    expect(wrapper.get('[data-testid="beat-next"]').text()).not.toContain('Stakes changed since approval');
+    release(snapshot(planned({ revision: 4, stakesApproved: true }), 'live', acts));
+    await flushPromises();
+    expect(wrapper.get('[data-testid="beat-next"]').text()).not.toContain('Stakes changed since approval');
+    wrapper.unmount();
+  });
+
+  it('still resets the editors for a snapshot that arrives when no request of this page is waiting', async () => {
+    const wrapper = await mountPanel(snapshot(planned(), 'live', acts), ['act-1']);
+    transport.snapshot.mockResolvedValue(snapshot(planned({ revision: 4, contracts: [actionContract({ intent: 'Changed elsewhere.' })] }), 'live', acts));
+    await table.refresh(); await flushPromises();
+    expect((wrapper.getComponent(StakesCards).props('contracts') as Array<Record<string, any>>)[0]!.intent).toBe('Changed elsewhere.');
+    wrapper.unmount();
+  });
+});
+
+describe('beat panel Remove and a second failed plan', () => {
+  const effect = { kind: 'strain_delta', characterId: 'pc-1', delta: 1 };
+  const withEffect = () => actionContract({ outcomes: { ...actionContract().outcomes, clean: { publicText: 'It opens.', effects: [effect] } } });
+  const planned = (overrides: Record<string, unknown> = {}) => beat({ phase: 'stakes_review', kind: 'action', classification: 'needs_action', selectedSubmissionIds: ['act-1'], contracts: [withEffect()], revision: 3, ...overrides });
+  const acts = { submissions: [line('act-1', 'act')] };
+
+  it('sends approve_stakes without an effect struck with Remove', async () => {
+    const wrapper = await mountPanel(snapshot(planned(), 'live', acts), ['act-1']);
+    await wrapper.get('[data-testid^="stakes-edit-"]').trigger('click');
+    await wrapper.get('[data-testid="effect-remove-clean-0"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="approve-and-roll"]').trigger('click'); await flushPromises();
+    expect(sentTypes()[0]).toBe('approve_stakes');
+    const sent = transport.command.mock.calls[0]![1];
+    expect(sent.contracts[0].outcomes.clean.effects).toEqual([]);
+    expect(sent.contracts[0].outcomes.clean.publicText).toBe('It opens.');
+    wrapper.unmount();
+  });
+
+  it('shows Plan again in the bar when a second plan failed, and one press plans the ticked lines', async () => {
+    const wrapper = await mountPanel(snapshot(planned({ lastError: 'The planner timed out.' }), 'live', acts), ['act-1']);
+    expect(wrapper.find('[data-testid="outside-plan"]').exists()).toBe(false);
+    const again = outsideMore(wrapper).find(button => button.attributes('data-testid') === 'plan-again-bar')!;
+    expect(again.text()).toBe('Plan again');
+    expect(again.classes()).toContain('secondary');
+    expect(goldButtons(wrapper)).toEqual(['Approve and roll']);
+    await again.trigger('click'); await flushPromises();
+    expect(sentTypes()).toEqual(['plan_beat']);
+    expect(transport.command.mock.calls[0]![1]).toMatchObject({ submissionIds: ['act-1'] });
+    wrapper.unmount();
+  });
+
+  it('shows no Plan again in the bar for planned stakes with no error and nothing outside the plan', async () => {
+    const wrapper = await mountPanel(snapshot(planned(), 'live', acts), ['act-1']);
+    expect(wrapper.find('[data-testid="plan-again-bar"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps Try again and Write it myself for a failed script', async () => {
+    const wrapper = await mountPanel(snapshot(locked({ lastError: 'The AI timed out.' })));
+    expect(goldButtons(wrapper)).toEqual(['Try again']);
+    expect(wrapper.find('[data-testid="write-it-myself"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="write-stakes-myself"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe('beat panel Stop the AI and the thrown-away notice', () => {
+  const SERVER_WORDS = 'The generation was superseded. Its result was discarded.';
+  const STOPPED = 'You stopped the AI. Nothing from that try was used.';
+  const lines = { submissions: [line('say-1')] };
+  const job = (task: 'plan' | 'render') => ({ id: 'job-1', beatId: 'beat-2', generation: 1, task, status: 'running' });
+  const stopCalls = () => transport.command.mock.calls.map(call => call[1]).filter(command => command.type === 'stop_ai');
+  // Holds the waiting plan or script request open and lets the test end it with the server's answer.
+  const holdRequest = () => {
+    let end: (error?: Error) => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise((resolve, reject) => { end = (error?: Error) => error ? reject(error) : resolve({}); }));
+    return (error?: Error) => { end(error); };
+  };
+
+  it('keeps Stop the AI enabled while this page waits for a plan, and one press sends stop_ai with no revision', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines), ['say-1']);
+    expect(wrapper.find('[data-testid="stop-ai"]').exists()).toBe(false);
+    holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    const stop = wrapper.get('[data-testid="stop-ai"]');
+    expect(stop.text()).toBe('Stop the AI');
+    expect(stop.classes()).toContain('quiet');
+    expect(stop.attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Planning');
+    await stop.trigger('click'); await flushPromises();
+    expect(stopCalls()).toHaveLength(1);
+    expect(stopCalls()[0]).toEqual({ type: 'stop_ai', commandId: expect.any(String), beatId: 'beat-2' });
+    expect('expectedBeatRevision' in stopCalls()[0]).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows the notice and no error when the waiting plan ends with the superseded answer, then Plan works again', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click');
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.get('[data-testid="ai-stopped"]').attributes('role')).toBe('status');
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('thrown away');
+    expect(wrapper.find('[data-testid="stop-ai"]').exists()).toBe(false);
+    expect(goldButtons(wrapper)).toEqual(['Plan']);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('shows no error when the waiting request ends before the stop answer arrives', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    let answer: () => void = () => {};
+    transport.command.mockImplementationOnce(() => new Promise(resolve => { answer = () => resolve({}); }));
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-testid="stop-ai"]').attributes('disabled')).toBeDefined();
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    answer(); await flushPromises();
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('stops a waiting script, keeps the dice and offers Draft the scene with Write it myself', async () => {
+    const wrapper = await mountPanel(snapshot(locked(), 'live'), []);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="render"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Writing the script');
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click');
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(stopCalls()[0]).toMatchObject({ type: 'stop_ai', beatId: 'beat-2' });
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(goldButtons(wrapper)).toEqual(['Draft the scene']);
+    expect(wrapper.find('[data-testid="write-it-myself"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('works after a reload, from the running job in the snapshot alone', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', { ...lines, jobs: [job('plan')] }), ['say-1']);
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Planning');
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeDefined();
+    const stop = wrapper.get('[data-testid="stop-ai"]');
+    expect(stop.attributes('disabled')).toBeUndefined();
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines));
+    await stop.trigger('click'); await flushPromises();
+    expect(stopCalls()).toHaveLength(1);
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.find('[data-testid="stop-ai"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('shows the server sentence as the bar error when the stop is refused, and no notice', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', { ...lines, jobs: [job('plan')] }), ['say-1']);
+    transport.command.mockRejectedValueOnce(new Error('The AI had already finished, so there was nothing to stop.'));
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('The AI had already finished, so there was nothing to stop.');
+    expect(wrapper.find('[data-testid="ai-stopped"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('clears the notice when the next bar action starts', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', { ...lines, jobs: [job('plan')] }), ['say-1']);
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines));
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-testid="ai-stopped"]').exists()).toBe(true);
+    holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-testid="ai-stopped"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('names the player in the bar when a changed or taken-back line threw the plan away', async () => {
+    const changed = await mountPanel(snapshot(beat({ classification: null }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'changed' } }), ['say-1']);
+    const notice = changed.get('[data-testid="plan-thrown-away"]');
+    expect(notice.text()).toBe('Skooty changed a line that was in the plan, so the plan was thrown away. Plan again.');
+    expect(notice.attributes('role')).toBe('status');
+    expect(notice.classes()).toContain('notice');
+    // The notice says Plan again, so the gold button carries the same words while it shows.
+    expect(changed.get('[data-testid="plan"]').text()).toBe('Plan again');
+    changed.unmount();
+    const tookBack = await mountPanel(snapshot(beat({ classification: null }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'took_back' } }), ['say-1']);
+    expect(tookBack.get('[data-testid="plan-thrown-away"]').text()).toBe('Skooty took back a line that was in the plan, so the plan was thrown away. Plan again.');
+    tookBack.unmount();
+    const plain = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    expect(plain.find('[data-testid="plan-thrown-away"]').exists()).toBe(false);
+    expect(plain.get('[data-testid="plan"]').text()).toBe('Plan');
+    plain.unmount();
+  });
+
+  it('shows no generic thrown-away error when the snapshot carries the named notice', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, revision: 4 }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'changed' } }));
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="plan-thrown-away"]').text()).toContain('Skooty changed a line');
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    wrapper.unmount();
+  });
+
+  // Holds the next reload of the show open, so the test can look at the bar while that reload is still on its way. Given an error, that reload fails.
+  const holdReload = (state: ReturnType<typeof snapshot> | Error) => {
+    let release: () => void = () => {};
+    transport.snapshot.mockImplementationOnce(() => new Promise((resolve, reject) => { release = () => { if (state instanceof Error) reject(state); else resolve(state); }; }));
+    return async () => { release(); await flushPromises(); };
+  };
+
+  it('never draws the thrown-away error after a stop, even while the reload that follows is still on its way', async () => {
+    const state = snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines);
+    const wrapper = await mountPanel(state, ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    const release = holdReload(state);
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('thrown away');
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    await release();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('thrown away');
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('never draws the generic thrown-away error when a player threw the plan away, even while the reload is still on its way', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    const release = holdReload(snapshot(beat({ classification: null, revision: 4 }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'took_back' } }));
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    await release();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    expect(wrapper.get('[data-testid="plan-thrown-away"]').text()).toBe('Skooty took back a line that was in the plan, so the plan was thrown away. Plan again.');
+    wrapper.unmount();
+  });
+
+  it('still says the show changed, after the reload, when nobody stopped the AI and no player is named', async () => {
+    const state = snapshot(beat({ classification: null }), 'live', lines);
+    const wrapper = await mountPanel(state, ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    const release = holdReload(state);
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    await release();
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe('The show changed while the AI was working, so its work was thrown away. Try again.');
+    wrapper.unmount();
+  });
+
+  const CHANGED = 'The show changed while the AI was working, so its work was thrown away. Try again.';
+  const TOOK_BACK = 'Skooty took back a line that was in the plan, so the plan was thrown away. Plan again.';
+  const UNREACHABLE = 'Could not reach the show. Check your connection and try again.';
+  const tookBack = () => snapshot(beat({ classification: null, revision: 4 }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'took_back' } });
+  const movedOn = () => snapshot(beat({ classification: null, revision: 4 }), 'live', lines);
+  // The table drops a reload as soon as a newer one starts. This ends the waiting plan with the thrown-away answer, then lets the usual
+  // refresh notice start a newer reload while the panel's own reload is still on its way. Each of the two answers when the test lets it.
+  const overtakeReload = async (own: ReturnType<typeof snapshot> | Error, newer: ReturnType<typeof snapshot> | Error) => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    const releaseOwn = holdReload(own);
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    const releaseNewer = holdReload(newer);
+    void table.refresh(); await flushPromises();
+    return { wrapper, releaseOwn, releaseNewer };
+  };
+
+  it('never draws the generic thrown-away error beside the named notice when a newer reload overtakes the panel\'s own', async () => {
+    const { wrapper, releaseOwn, releaseNewer } = await overtakeReload(tookBack(), tookBack());
+    await releaseOwn();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    expect(wrapper.find('[data-testid="plan-thrown-away"]').exists()).toBe(false);
+    await releaseNewer();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    expect(wrapper.get('[data-testid="plan-thrown-away"]').text()).toBe(TOOK_BACK);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('keeps showing the plan as running, with no error, until the page has caught up with who threw it away', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'], revision: 4 }), 'live', { ...lines, jobs: [job('plan')] }));
+    await table.refresh(); await flushPromises();
+    const thrown = () => snapshot(beat({ classification: null, revision: 5 }), 'live', { ...lines, planThrownAway: { characterId: 'pc-1', change: 'took_back' } });
+    const releaseOwn = holdReload(thrown());
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    const releaseNewer = holdReload(thrown());
+    void table.refresh(); await flushPromises();
+    await releaseOwn();
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Planning');
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    await releaseNewer();
+    expect(wrapper.find('[data-testid="beat-status"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="plan-thrown-away"]').text()).toBe(TOOK_BACK);
+    expect(wrapper.get('[data-testid="plan"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('does not bring the generic thrown-away error back when the named notice clears after an overtaken reload', async () => {
+    const { wrapper, releaseOwn, releaseNewer } = await overtakeReload(tookBack(), tookBack());
+    await releaseOwn();
+    await releaseNewer();
+    expect(wrapper.get('[data-testid="plan-thrown-away"]').text()).toBe(TOOK_BACK);
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, revision: 5 }), 'live', lines));
+    await table.refresh(); await flushPromises();
+    expect(wrapper.find('[data-testid="plan-thrown-away"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('The show changed while the AI was working');
+    wrapper.unmount();
+  });
+
+  it('waits for the newer reload before saying the show changed, when the panel\'s own reload was overtaken and no player is named', async () => {
+    const { wrapper, releaseOwn, releaseNewer } = await overtakeReload(movedOn(), movedOn());
+    await releaseOwn();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    await releaseNewer();
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe(CHANGED);
+    expect(wrapper.find('[data-testid="plan-thrown-away"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it.each([
+    ['fails', false],
+    ['fails the same way an earlier reload already had', true],
+  ])('says the show changed at once when the reload after the thrown-away answer %s', async (_case, failedBefore) => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    if (failedBefore) { transport.snapshot.mockRejectedValueOnce(new Error(UNREACHABLE)); await table.refresh(); await flushPromises(); }
+    transport.snapshot.mockRejectedValueOnce(new Error(UNREACHABLE));
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe(CHANGED);
+    wrapper.unmount();
+  });
+
+  it('says the show changed when the newer reload fails after it overtook the panel\'s own', async () => {
+    const { wrapper, releaseOwn, releaseNewer } = await overtakeReload(movedOn(), new Error(UNREACHABLE));
+    await releaseOwn();
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    await releaseNewer();
+    expect(bar(wrapper).get('[data-testid="beat-error"]').text()).toBe(CHANGED);
+    wrapper.unmount();
+  });
+
+  it('takes Stop the AI away once the stop worked, so a second press cannot undo the notice', async () => {
+    const wrapper = await mountPanel(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', lines), ['say-1']);
+    const end = holdRequest();
+    await wrapper.get('[data-testid="plan"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-testid="stop-ai"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.get('[data-testid="beat-status"]').text()).toContain('Planning');
+    end(new Error(SERVER_WORDS)); await flushPromises();
+    expect(stopCalls()).toHaveLength(1);
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.find('[data-testid="beat-error"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps Stop the AI away while the page still shows the work it stopped, and offers it again for new work', async () => {
+    const stale = snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', { ...lines, jobs: [job('plan')] });
+    const wrapper = await mountPanel(stale, ['say-1']);
+    await wrapper.get('[data-testid="stop-ai"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-testid="ai-stopped"]').text()).toBe(STOPPED);
+    expect(wrapper.find('[data-testid="stop-ai"]').exists()).toBe(false);
+    transport.snapshot.mockResolvedValue(snapshot(beat({ classification: null, selectedSubmissionIds: ['say-1'] }), 'live', { ...lines, jobs: [{ ...job('plan'), id: 'job-2' }] }));
+    await table.refresh(); await flushPromises();
+    expect(wrapper.get('[data-testid="stop-ai"]').attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('[data-testid="ai-stopped"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows Write it myself at the draft step with no draft, and hides it while the AI works', async () => {
+    const plain = await mountPanel(snapshot(locked()));
+    expect(outsideMore(plain).find(item => item.attributes('data-testid') === 'write-it-myself')?.text()).toBe('Write it myself');
+    plain.unmount();
+    const working = await mountPanel(snapshot(locked(), 'live', { jobs: [job('render')] }));
+    expect(working.find('[data-testid="write-it-myself"]').exists()).toBe(false);
+    working.unmount();
+    const drafted = await mountPanel(snapshot(review()));
+    expect(drafted.find('[data-testid="write-it-myself"]').exists()).toBe(false);
+    drafted.unmount();
   });
 });

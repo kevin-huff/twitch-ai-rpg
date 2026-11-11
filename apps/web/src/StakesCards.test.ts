@@ -286,12 +286,48 @@ describe('StakesCards', () => {
 
   it('keeps the planning-failed and needs-action notices, and every button is secondary or quiet', async () => {
     const { wrapper } = await mountCards({ contracts: [contract('c-1')], beatOverrides: { phase: 'collecting', lastError: 'The AI timed out.' } });
-    expect(wrapper.text()).toContain('Planning failed.');
+    expect(wrapper.text()).toContain('The AI did not make a plan. Write what could happen for each line below, then approve and roll.');
     expect(wrapper.text()).toContain('This exchange has consequences.');
     await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
     const buttons = wrapper.findAll('button');
     expect(buttons.length).toBeGreaterThan(1);
     for (const button of buttons) expect(button.classes().some(name => name === 'secondary' || name === 'quiet')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('highlights a strain hit that would put someone down', async () => {
+    skootyStrain = 8;
+    const hit = contract('c-1');
+    hit.outcomes.costly.effects = [{ kind: 'strain_delta', characterId: 'pc-1', delta: 1 }];
+    const { wrapper } = await mountCards({ contracts: [hit] });
+    const flagged = wrapper.get('[data-testid="strain-down"]');
+    expect(flagged.text()).toContain('goes down');
+    expect(flagged.classes()).toContain('over');
+    expect(wrapper.find('[data-testid="strain-over"]').exists()).toBe(false);
+    wrapper.unmount();
+    skootyStrain = 0;
+  });
+
+  it('removes one proposed effect and keeps the outcome words', async () => {
+    const c = contract('c-1');
+    c.outcomes.costly.effects = [
+      { kind: 'strain_delta', characterId: 'pc-1', delta: 1 },
+      { kind: 'fact_add', visibility: 'public', text: 'The lock is bent' },
+    ] as never;
+    (c.outcomes as Record<string, unknown>).critical = { publicText: 'Alarm.', effects: [{ kind: 'strain_delta', characterId: 'pc-1', delta: 2 }] };
+    const { wrapper, contracts } = await mountCards({ contracts: [c] });
+    await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
+    const button = wrapper.get('[data-testid="effect-remove-costly-0"]');
+    expect(button.text()).toBe('Remove');
+    expect(button.classes()).toContain('quiet');
+    expect(button.attributes('aria-label')).toMatch(/^Remove: Skooty strain/);
+    await button.trigger('click');
+    expect(contracts[0].outcomes.costly.effects).toEqual([{ kind: 'fact_add', visibility: 'public', text: 'The lock is bent' }]);
+    expect(contracts[0].outcomes.costly.publicText).toBe('It opens, but noisily.');
+    await wrapper.get('[data-testid="effect-remove-critical-0"]').trigger('click');
+    expect((contracts[0].outcomes as { critical?: { publicText: string; effects: unknown[] } }).critical).toMatchObject({ publicText: 'Alarm.', effects: [] });
+    await wrapper.get('[data-testid="stakes-edit-c-1"]').trigger('click');
+    expect(wrapper.text()).not.toContain('Skooty strain');
     wrapper.unmount();
   });
 });

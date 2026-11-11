@@ -3,13 +3,14 @@ import type { InjectionKey } from 'vue';
 import { LAST_CHANCE_STRAIN, RESCUE_STRAIN, STRAIN_MAX, incidentKey, strainStep } from '@rpg/contracts';
 import type { CharacterCondition, Command, DirectorSnapshot, Effect, PlayerSnapshot, Resolution, SessionSnapshot } from '@rpg/contracts';
 import { api, subscribeToSession } from './api';
-import { identityPath, selectIdentity } from './identity';
+import { getIdentity, identityPath, selectIdentity } from './identity';
+import { USED_INVITATION, forgetSeat, seatsForShow } from './seat-memory';
 
 export const PAUSE_REQUEST_TEXT = 'Pause requested. Please check in with the table.';
 export const AI_STILL_WORKING = 'The connection to the server closed while the AI was still working. It keeps going, and the result appears here when it finishes.';
 
 // The host closes a request with no data moving after 5 minutes: the browser then sees a network error or a gateway status.
-const droppedRequest = (cause: unknown) => cause instanceof TypeError || [502, 503, 504].includes(Number((cause as { status?: unknown } | null)?.status));
+const droppedRequest = (cause: unknown) => cause instanceof TypeError || [0, 502, 503, 504].includes(Number((cause as { status?: unknown } | null)?.status));
 
 export function createTable() {
   const path = window.location.pathname;
@@ -28,6 +29,7 @@ export function createTable() {
   const aiWorking = ref(false);
   let aiRequests = 0;
   const connected = ref(false);
+  const connectionLost = ref(false);
   const director = computed<DirectorSnapshot | null>(() => !stage && snapshot.value?.role === 'director' ? snapshot.value : null);
   const player = computed<PlayerSnapshot | null>(() => !stage && snapshot.value?.role === 'player' ? snapshot.value : null);
   const setup = computed(() => director.value?.setup ?? player.value?.setup);
@@ -116,7 +118,7 @@ export function createTable() {
       }
       for (const effect of fresh) {
         if (effect.kind === 'character_down') { const entry = stateOf(effect.characterId); if (entry.condition === undefined) entry.condition = 'down'; }
-        else if (effect.kind === 'character_rescue') { const entry = stateOf(effect.characterId); if (entry.condition === 'down') { entry.condition = undefined; entry.strain = RESCUE_STRAIN; } }
+        else if (effect.kind === 'character_rescue') { const entry = stateOf(effect.characterId); if (entry.condition === 'down') { entry.condition = undefined; entry.strain = RESCUE_STRAIN; entry.over = 0; entry.down = false; } }
       }
       for (const effect of fresh) {
         if (effect.kind !== 'strain_delta') lines.push(effectLabel(effect));
@@ -136,6 +138,22 @@ export function createTable() {
   };
   const inputContext = () => ({ epoch: snapshot.value?.session.inputEpoch ?? 0, beatId: snapshot.value?.activeBeat && ['collecting', 'stakes_review'].includes(snapshot.value.activeBeat.phase) ? snapshot.value.activeBeat.id : null });
 
+  function forgetCurrentSeat() {
+    try {
+      const identityId = getIdentity();
+      return identityId !== undefined && forgetSeat(identityId);
+    } catch { return false; }
+  }
+
+  function returnToRememberedSeat() {
+    if (view !== 'play' || testCharacterId !== null) return;
+    try {
+      if (getIdentity() !== undefined) return;
+      const seats = seatsForShow(sessionId).filter(seat => seat.role === 'player');
+      if (seats.length === 1) selectIdentity(seats[0]!.identityId);
+    } catch { /* An invalid identity in the address is reported by the first request. */ }
+  }
+
   async function refresh() {
     if (testCharacterId !== null) return;
     const sequence = ++refreshSequence;
@@ -144,7 +162,10 @@ export function createTable() {
       if (sequence !== refreshSequence) return;
       snapshot.value = next;
       for (const listener of [...listeners]) listener(next);
-    } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load the show.'; }
+    } catch (cause) {
+      if (Number((cause as { status?: unknown } | null)?.status) === 401 && forgetCurrentSeat()) error.value = USED_INVITATION;
+      else error.value = cause instanceof Error ? cause.message : 'Could not load the show.';
+    }
     finally { loading.value = false; }
   }
 
@@ -200,9 +221,10 @@ export function createTable() {
       loading.value = false;
       return;
     }
+    returnToRememberedSeat();
     await refresh();
     if (snapshot.value && !unsubscribe) {
-      try { unsubscribe = subscribeToSession(sessionId, () => { void refresh(); }, value => { connected.value = value; }); }
+      try { unsubscribe = subscribeToSession(sessionId, () => { void refresh(); }, value => { connected.value = value; connectionLost.value = !value; }); }
       catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not connect to the show.'; }
     }
   }
@@ -219,7 +241,7 @@ export function createTable() {
 
   return {
     path, sessionId, view, stage, inviteToken, testCharacterId,
-    snapshot, error, notice, loading, busy, beatBusy, aiWorking, connected,
+    snapshot, error, notice, loading, busy, beatBusy, aiWorking, connected, connectionLost,
     director, player, setup, latestHistory,
     refresh, work, beatWork, send, restoreSession, dispose, onSnapshot,
     requestPause, setStatus,

@@ -42,6 +42,18 @@ function snapshot(overrides: Record<string, unknown> = {}, status: 'lobby' | 'li
   } as unknown as SessionSnapshot;
 }
 
+function lastRoll(id: string, actor: string, band: string, total: number) {
+  return { ...roll(id, actor, total), faces: [3, 4], band, lastChance: true };
+}
+function lastChanceSnap(rolls: unknown[], beat: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): SessionSnapshot {
+  const base = snapshot();
+  return snapshot({
+    history: [{ ...base.history[0]!, rolls }],
+    activeBeat: { id: 'b2', kind: 'action', phase: 'collecting', revision: 1, locked: false, stakes: [], stakesApproved: true, lastChanceFor: [], ...beat },
+    ...extra
+  });
+}
+
 const markup = (html: string) => html.replace(/ data-v-[0-9a-f]+=""/g, '');
 const props = (snap: SessionSnapshot, characterId?: string | null) => ({ snapshot: snap, connected: true, characterId });
 
@@ -96,6 +108,59 @@ describe('StageDice piece', () => {
     const rows = cssRule(diceSource, '.dice-rows');
     expect(rows).toContain('top: 686px');
     expect(rows).toContain('height: 144px');
+  });
+
+  it('marks every last-chance roll card with the words, at 1, 5 and 12 rolls', () => {
+    for (const count of [1, 5, 12]) {
+      const rolls = Array.from({ length: count }, (_, i) => i === 0 ? lastRoll('rl', 'c1', 'setback', 5) : roll(`r${i}`, 'c2'));
+      rolls.push(...(count === 5 ? [lastRoll('rl2', 'c2', 'costly', 8)] : []));
+      const wrapper = mount(StageDice, { props: props(lastChanceSnap(rolls, { phase: 'draft_review' })) });
+      const cards = wrapper.findAll('.roll[data-last-chance]');
+      expect(cards.length).toBeGreaterThan(0);
+      for (const card of cards) {
+        expect(card.get('.roll-last').text()).toBe('Last chance');
+        expect(['pulls-through', 'dies']).toContain(card.attributes('data-last-chance'));
+      }
+      const dying = wrapper.get('.roll[data-last-chance="dies"]');
+      expect(dying.get('.roll-result').text()).toBe('Dies');
+      expect(dying.get('.roll-sum').text()).toBe('3 + 4');
+      expect(dying.get('.roll-sum').text()).not.toContain('Last chance:');
+      if (count === 5) {
+        const through = wrapper.get('.roll[data-last-chance="pulls-through"]');
+        expect(through.get('.roll-result').text()).toBe('Pulls through');
+        expect(wrapper.findAll('.roll').filter(card => !card.attributes('data-last-chance')).every(card => !card.find('.roll-last').exists())).toBe(true);
+      }
+    }
+  });
+
+  it('places roll-last between the name and the faces and never hides, shrinks or cuts it', () => {
+    const wrapper = mount(StageDice, { props: props(lastChanceSnap([lastRoll('rl', 'c1', 'costly', 8)])) });
+    const kids = Array.from(wrapper.get('.roll-head').element.children).map(child => child.className);
+    expect(kids).toEqual(['roll-who', 'roll-last', 'roll-sum']);
+    expect(wrapper.get('.roll[data-last-chance]').attributes('data-band')).toBe('costly');
+    expect(wrapper.get('.roll-result').text()).toBe('Pulls through');
+    const rule = cssRule(diceSource, '.roll-last');
+    expect(rule).toContain('flex: 0 0 auto');
+    expect(rule).not.toMatch(/ellipsis|display: none|visibility|font-size/);
+    for (const line of diceSource.split('\n').filter(l => l.includes('.roll-last'))) {
+      expect(line).not.toMatch(/display: none|visibility: hidden|overflow: hidden|text-overflow/);
+    }
+  });
+
+  it('keeps ordinary roll cards free of last-chance marks', () => {
+    const wrapper = mount(StageDice, { props: props(snapshot()) });
+    expect(wrapper.find('[data-last-chance]').exists()).toBe(false);
+    expect(wrapper.find('.roll-last').exists()).toBe(false);
+    expect(wrapper.get('.roll-result').text()).toBe('Success with a cost');
+  });
+
+  it('is held while only a last-chance card is up', () => {
+    const snap = lastChanceSnap([roll('r1', 'c2')], { lastChanceFor: ['c1'] });
+    expect(mount(StageDice, { props: props(snap) }).get('.dice').classes()).toContain('dice-held');
+    const none = lastChanceSnap([roll('r1', 'c2')], { lastChanceFor: [] });
+    expect(mount(StageDice, { props: props(none) }).get('.dice').classes()).not.toContain('dice-held');
+    const unapproved = lastChanceSnap([roll('r1', 'c2')], { lastChanceFor: ['c1'], stakesApproved: false });
+    expect(mount(StageDice, { props: props(unapproved) }).get('.dice').classes()).not.toContain('dice-held');
   });
 
   it('renders no control', () => {
@@ -156,6 +221,48 @@ describe('StageStakes piece', () => {
     const wrapper = mount(StageStakes, { props: props(snapshot({}, 'live', two), 'c1') });
     expect(vi.getTimerCount()).toBe(0);
     wrapper.unmount();
+  });
+
+  it('adds a last-chance card after the real stakes and counts it in the marker', async () => {
+    const snap = lastChanceSnap([], { phase: 'stakes_review', stakes: [two[0]], lastChanceFor: ['c2'] });
+    const wrapper = mount(StageStakes, { props: props(snap) });
+    expect(wrapper.get('.wager-marker').text()).toBe('1 of 2');
+    expect(wrapper.find('[data-card]').exists()).toBe(false);
+    vi.advanceTimersByTime(8000);
+    await nextTick();
+    expect(wrapper.get('.wager-marker').text()).toBe('2 of 2');
+    const card = wrapper.get('[data-card="last-chance"]');
+    expect(card.get('.wager-goal').text()).toBe('Tom Reed · Last chance');
+    expect(card.get('p.wager-last').text()).toBe('Tom Reed is down. If nobody saves Tom Reed this round, one roll decides: 7 or more and Tom Reed pulls through; 6 or less, or double 1s, and Tom Reed dies.');
+    expect(wrapper.findAll('.wager-outcomes p')).toHaveLength(0);
+  });
+
+  it('shows the last-chance card alone for a round with no real stakes, and says it was rolled after the dice', () => {
+    const before = mount(StageStakes, { props: props(lastChanceSnap([], { phase: 'collecting', lastChanceFor: ['c1'] })) });
+    expect(before.find('.wager-marker').exists()).toBe(false);
+    expect(before.get('.wager-last').text()).toContain('Mara Vale is down.');
+    const after = mount(StageStakes, { props: props(lastChanceSnap([], { phase: 'locked', lastChanceFor: ['c1'] })) });
+    expect(after.get('.wager-last').text()).toBe('Mara Vale is down. The dice are rolled. The story will tell what happens.');
+    expect(after.text()).not.toMatch(/pulls through|dies/i);
+  });
+
+  it('never names a result and draws no card without approval, without ids, for another character or on a slate', () => {
+    const rolled = mount(StageStakes, { props: props(lastChanceSnap([lastRoll('rl', 'c1', 'costly', 8)], { phase: 'draft_review', lastChanceFor: ['c1'] })) });
+    expect(rolled.text()).not.toMatch(/pulls through|dies/i);
+    expect(mount(StageStakes, { props: props(lastChanceSnap([], { lastChanceFor: ['c1'], stakesApproved: false })) }).find('.wager').exists()).toBe(false);
+    expect(mount(StageStakes, { props: props(lastChanceSnap([], { lastChanceFor: [] })) }).find('.wager').exists()).toBe(false);
+    expect(mount(StageStakes, { props: props(lastChanceSnap([], { lastChanceFor: ['c1'] }), 'c2') }).find('.wager').exists()).toBe(false);
+    expect(mount(StageStakes, { props: props(lastChanceSnap([], { lastChanceFor: ['c1'] }, { role: 'director' })) }).find('.wager').exists()).toBe(false);
+    expect(mount(StageStakes, { props: props(lastChanceSnap([], { lastChanceFor: ['c1'] }, { session: { ...snapshot().session, status: 'paused' } })) }).find('.wager').exists()).toBe(false);
+  });
+
+  it('draws the same card in the overlay and has no line clamp on it', () => {
+    const snap = lastChanceSnap([], { lastChanceFor: ['c1'] });
+    const alone = mount(StageStakes, { props: props(snap) });
+    const overlay = mount(StageOverlay, { props: { snapshot: snap, connected: true } });
+    expect(markup(alone.find('.wager').html())).toBe(markup(overlay.find('.wager').html()));
+    expect(cssRule(stakesSource, '.wager-last')).not.toMatch(/line-clamp/);
+    expect(cssRule(stakesSource, '.wager-last')).toContain('40px');
   });
 
   it('keeps the overlay place and size', () => {

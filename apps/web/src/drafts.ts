@@ -8,12 +8,14 @@ const isBlank = (draft: Draft) => ![draft.speech, draft.intent, draft.approach, 
 
 export function saveDraft(sessionId: string, characterId: string, draft: Draft) {
   if (isBlank(draft)) return;
-  try { sessionStorage.setItem(key(sessionId, characterId), JSON.stringify(draft)); } catch { /* storage can be blocked or full */ }
+  try { localStorage.setItem(key(sessionId, characterId), JSON.stringify(draft)); } catch { /* storage can be blocked or full */ }
 }
 
 export function loadDraft(sessionId: string, characterId: string): LoadedDraft | null {
   try {
-    const raw = sessionStorage.getItem(key(sessionId, characterId));
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(key(sessionId, characterId)); } catch { /* storage can be blocked */ }
+    if (!raw) { try { raw = sessionStorage.getItem(key(sessionId, characterId)); } catch { /* storage can be blocked */ } }
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<Draft> | null;
     if (!value || typeof value !== 'object') return null;
@@ -28,5 +30,6 @@ export function loadDraft(sessionId: string, characterId: string): LoadedDraft |
 }
 
 export function clearDraft(sessionId: string, characterId: string) {
+  try { localStorage.removeItem(key(sessionId, characterId)); } catch { /* storage can be blocked */ }
   try { sessionStorage.removeItem(key(sessionId, characterId)); } catch { /* storage can be blocked */ }
 }

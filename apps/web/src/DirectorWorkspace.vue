@@ -5,6 +5,8 @@ import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { STRAIN_MAX, type Command } from '@rpg/contracts';
 import Story from './Story.vue';
 import AudioPanel from './AudioPanel.vue';
+import NarrationLine, { type NarrationControl, type NarrationState } from './NarrationLine.vue';
+import { lineBlock } from './plan-coverage';
 import OperationsPanel from './OperationsPanel.vue';
 import LiveControls from './LiveControls.vue';
 import CorrectionControls from './CorrectionControls.vue';
@@ -13,9 +15,10 @@ import RestControls from './RestControls.vue';
 import StrainMeter from './StrainMeter.vue';
 import BeatSteering from './BeatSteering.vue';
 import BeatPanel from './BeatPanel.vue';
+import { createNarrationWait } from './narration-wait';
 import DirectorQueue from './DirectorQueue.vue';
 import DirectorStatusStrip from './DirectorStatusStrip.vue';
-import type { GalleryAction, PictureSettings } from '@rpg/contracts';
+import type { DirectorSnapshot, GalleryAction, PictureSettings } from '@rpg/contracts';
 import ScenePicturePanel from './ScenePicturePanel.vue';
 import PictureShelf from './PictureShelf.vue';
 import GalleryPanel from './GalleryPanel.vue';
@@ -74,7 +77,18 @@ const showAudio = ref<ShowAudio>('checking');
 const autoPlayBeatId = ref<string | null>(null);
 const playbackError = ref('');
 const audioPanel = ref<InstanceType<typeof AudioPanel> | null>(null);
-const onPublished = (beatId: string, voiced: boolean) => { playbackError.value = ''; if (voiced) autoPlayBeatId.value = beatId; };
+// A beat with dice starts its narration after the stream's dice moment; Play latest reviewed beat still starts at once.
+const narrationWait = createNarrationWait(beatId => { autoPlayBeatId.value = beatId; });
+onUnmounted(() => narrationWait.dispose());
+// A pause or the end of the show during the dice drops the waiting start, so narration never begins under a slate.
+watch(() => snapshot.value?.session.status, status => { if (status && status !== 'live') narrationWait.dispose(); });
+const onPublished = (beatId: string, voiced: boolean, waitMs = 0) => { playbackError.value = ''; narrationWait.published(beatId, voiced, waitMs); };
+const narration = ref<NarrationState | null>(null);
+const narrationBeatNumber = computed(() => {
+  const id = narration.value?.beatId;
+  return id ? snapshot.value?.history.find(item => item.id === id)?.beatNumber ?? null : null;
+});
+const controlNarration = (type: NarrationControl) => { void audioPanel.value?.control(type); };
 const startPlayback = async () => { playbackError.value = ''; await audioPanel.value?.startLatest(); };
 
 const confirmingEnd = ref(false);
@@ -115,26 +129,38 @@ const readUnticked = () => {
     return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
   } catch { return new Set<string>(); }
 };
+// Lines this page unticked because the character cannot use them; they tick again when the block lifts and are never stored as hand-unticked.
+const autoUnticked = new Set<string>();
 const writeUnticked = (waitingIds: string[]) => {
-  try { sessionStorage.setItem(untickedKey, JSON.stringify(waitingIds.filter(id => !selected.value.includes(id)))); } catch { /* storage unavailable */ }
+  try { sessionStorage.setItem(untickedKey, JSON.stringify(waitingIds.filter(id => !selected.value.includes(id) && !autoUnticked.has(id)))); } catch { /* storage unavailable */ }
 };
-const ingest = (next: { role: string; submissions: Array<{ id: string; kind: string; status: string }> }) => {
+const ingest = (next: DirectorSnapshot) => {
   if (next.role !== 'director' || stage) return;
   const waiting = next.submissions.filter(item => ['queued', 'selected'].includes(item.status));
   const kept = new Set(selected.value);
   const fresh = new Set<string>();
   storedUnticked ??= readUnticked();
+  const blocked = new Set<string>();
   for (const item of waiting) {
-    if (item.kind === 'ooc' || seen.has(item.id)) continue;
+    if (item.kind === 'ooc') continue;
+    const wasSeen = seen.has(item.id);
     seen.add(item.id);
-    if (!storedUnticked.has(item.id)) fresh.add(item.id);
+    if (lineBlock(next, item)) {
+      blocked.add(item.id);
+      if (kept.has(item.id) || (!wasSeen && !storedUnticked.has(item.id))) autoUnticked.add(item.id);
+      continue;
+    }
+    if (autoUnticked.delete(item.id)) fresh.add(item.id);
+    else if (!wasSeen && !storedUnticked.has(item.id)) fresh.add(item.id);
   }
-  selected.value = waiting.filter(item => kept.has(item.id) || fresh.has(item.id)).map(item => item.id);
+  const waitingIds = new Set(waiting.map(item => item.id));
+  for (const id of autoUnticked) if (!waitingIds.has(id)) autoUnticked.delete(id);
+  selected.value = waiting.filter(item => !blocked.has(item.id) && (kept.has(item.id) || fresh.has(item.id))).map(item => item.id);
   writeUnticked(waiting.filter(item => item.kind !== 'ooc').map(item => item.id));
 };
 watch(selected, () => { if (!stage) writeUnticked(pending.value.filter(item => item.kind !== 'ooc').map(item => item.id)); });
-if (snapshot.value) ingest(snapshot.value as never);
-const stopListening = onSnapshot(next => ingest(next as never));
+if (snapshot.value) ingest(snapshot.value as DirectorSnapshot);
+const stopListening = onSnapshot(next => ingest(next as DirectorSnapshot));
 onUnmounted(stopListening);
 </script>
 
@@ -178,7 +204,8 @@ onUnmounted(stopListening);
           <section class="stack">
             <div class="scene-heading"><h2 data-testid="scene-title">{{ snapshot.session.scene.title }}</h2><details v-if="snapshot.session.scene.description" class="scene-description"><summary>Scene description</summary><p>{{ snapshot.session.scene.description }}</p></details></div>
             <BeatPanel v-if="!ended" :selected="selected" :show-audio="showAudio" :playback-error="playbackError" @published="onPublished" @start-playback="startPlayback" />
-            <section class="panel"><div class="panel-heading"><h2>On the stage</h2><small>Published only</small></div><p class="stage-first-line" data-testid="stage-first-line">{{ firstLine }}</p><details class="stage-show-all" data-testid="stage-show-all"><summary>Show all</summary><Story :history="latestHistory" :characters="snapshot.characters" :corrections="snapshot.corrections" /><AudioPanel ref="audioPanel" :session-id="sessionId" :beat-id="latestHistory[0]?.id" :director="true" :auto-play-beat-id="autoPlayBeatId" @playback-failed="message => playbackError = message" /></details></section>
+            <NarrationLine v-if="!ended" :state="narration" :beat-number="narrationBeatNumber" @control="controlNarration" />
+            <section class="panel"><div class="panel-heading"><h2>On the stage</h2><small>Published only</small></div><p class="stage-first-line" data-testid="stage-first-line">{{ firstLine }}</p><details class="stage-show-all" data-testid="stage-show-all"><summary>Show all</summary><Story :history="latestHistory" :characters="snapshot.characters" :corrections="snapshot.corrections" /><AudioPanel ref="audioPanel" :session-id="sessionId" :beat-id="latestHistory[0]?.id" :director="true" :auto-play-beat-id="autoPlayBeatId" @playback-failed="message => playbackError = message" @narration="state => narration = state" /></details></section>
             <details class="show-tools" data-testid="show-tools">
               <summary>Show tools</summary>
               <div class="stack">
@@ -192,7 +219,7 @@ onUnmounted(stopListening);
                 <section class="panel"><p class="eyebrow">Scenario notes (read-only)</p><p class="private-note">{{ director.directorNotes }}</p></section>
                 <section v-if="snapshot.facts.length" class="panel" data-testid="public-facts"><p class="eyebrow">Known to the party</p><p v-for="fact in snapshot.facts" :key="fact.id" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ fact.text }}</p></section>
                 <section v-if="snapshot.tracks.length" class="panel"><p class="eyebrow">Live state</p><div v-for="track in snapshot.tracks" :key="track.id" class="track" :class="track.kind"><div class="track-label"><span>{{ track.label }}</span><span>{{ track.current }}/{{ track.max }}{{ !track.enabled ? ' · inactive' : '' }}</span></div><div class="track-pips"><span v-for="pip in track.max" :key="pip" :class="{ filled: pip <= track.current }"></span></div></div></section>
-                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong> <span v-if="character.condition" class="condition-badge" :data-testid="`cast-condition-${character.id}`">{{ character.condition === 'dead' ? 'Dead' : 'Down' }}</span><StrainMeter :value="character.strain" :max="STRAIN_MAX" /></div></div></section>
+                <section class="panel"><p class="eyebrow">The cast</p><div v-for="character in snapshot.characters" :key="character.id" class="cast-person"><PictureAvatar :name="character.displayName" :src="portraitOf(character.id)" /><div><strong>{{ character.displayName }}</strong> <span v-if="character.condition" class="condition-badge" :data-testid="`workspace-cast-condition-${character.id}`">{{ character.condition === 'dead' ? 'Dead' : 'Down' }}</span><StrainMeter :value="character.strain" :max="STRAIN_MAX" /></div></div></section>
               </div>
             </details>
           </section>

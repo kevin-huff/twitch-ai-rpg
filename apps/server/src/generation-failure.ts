@@ -8,7 +8,6 @@ export class RequestBudgetError extends Error {
 }
 
 const CUT_OFF_DETAIL = 'reply cut off at the length limit';
-const REASSURANCE = ' Your accepted inputs and dice are safe. Retry or write a manual script.';
 
 function reason(error: unknown, elapsedMs: number): string {
   if (error instanceof RequestBudgetError || (error instanceof ProviderError && error.code === 'timeout')) {
@@ -19,10 +18,20 @@ function reason(error: unknown, elapsedMs: number): string {
     if (error.code === 'network_error') return 'The app could not reach ClewdR at home.';
     if (error.code === 'invalid_response') return error.detail === CUT_OFF_DETAIL ? "The AI's reply was cut off at the length limit." : "The AI's reply failed the app's checks.";
   }
-  return 'Generation failed.';
+  return 'The AI request failed.';
+}
+
+export interface FailureRound { task: 'plan' | 'render'; lines: boolean; dice: boolean }
+
+// Says only what exists at the step that failed: a plan has no dice and no script.
+export function reassurance(round: FailureRound): string {
+  if (round.task === 'plan') return ' Your lines are safe. Plan again, or write the stakes yourself.';
+  if (round.lines && round.dice) return ' Your lines and dice are safe. Try again, or write the script yourself.';
+  if (round.lines) return ' Your lines are safe. Try again, or write the script yourself.';
+  return ' Try again, or write the script yourself.';
 }
 
 // Fixed sentences only: provider text can carry story content or account details, so it is never copied here.
-export function failureSentence(error: unknown, elapsedMs: number): string {
-  return `${reason(error, elapsedMs)}${REASSURANCE}`;
+export function failureSentence(error: unknown, elapsedMs: number, round: FailureRound): string {
+  return `${reason(error, elapsedMs)}${reassurance(round)}`;
 }

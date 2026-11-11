@@ -1337,3 +1337,213 @@ describe('StageScene', () => {
     expect(story.text()).not.toContain('[whispers]');
   });
 });
+
+describe('StageScene stage words, last chance and party', () => {
+  const sceneSource = () => readFileSync(resolve(process.cwd(), 'apps/web/src/StageScene.vue'), 'utf8');
+  const sceneCss = () => { const source = sceneSource(); return source.slice(source.indexOf('<style')); };
+  const open = (extra: Record<string, unknown>) => ({ id: 'b2', kind: 'action', phase: 'collecting', revision: 1, locked: false, stakes: [], ...extra });
+  const stake = (actor: string, n: number) => ({
+    id: `k${n}`, version: 1, actorCharacterId: actor, helperCharacterIds: [], intent: `Goal for ${actor}`, approach: 'Quietly',
+    ruling: 'check', trait: 'wits', edge: 0, edgeReason: '', risk: 'high',
+    outcomes: { clean: `Clean ${actor}`, costly: `Costly ${actor}`, setback: `Setback ${actor}` },
+  });
+  const cast = (count: number, extra: Record<string, unknown>[] = []) => Array.from({ length: count }, (_, i) => ({
+    ...characters[0]!, id: `c${i + 1}`, displayName: ['Skooty Vale', 'Ren Ortega', 'Mira Cole', 'Jun Park', 'Ash Bell', 'Kit Moss'][i] ?? `Hero ${i}`, strain: 0, ...(extra[i] ?? {}),
+  }));
+  const lastChanceRoll = (n: number, actor: string, band: string, total: number) => ({
+    id: `b1-r${n}`, contractId: `k${n}`, contractVersion: 1, actorCharacterId: actor, faces: [3, 4], trait: 'wits', traitModifier: 0, edge: 0, total, band, lastChance: true,
+  });
+  const plainRoll = (n: number, actor: string) => ({
+    id: `b1-r${n}`, contractId: `k${n}`, contractVersion: 1, actorCharacterId: actor, faces: [3, 4], trait: 'wits', traitModifier: 0, edge: 0, total: 7, band: 'costly',
+  });
+
+  describe('chip', () => {
+    const chipOf = (activeBeat: Record<string, unknown> | null, status = 'live', connected = true) => mountScene(snapshot({ activeBeat }, status), { connected }).get('.chip');
+    it('says the stage of the round in words', () => {
+      expect(chipOf(null).text()).toBe('Live');
+      expect(chipOf(open({ phase: 'collecting' })).text()).toBe('Taking lines');
+      expect(chipOf(open({ phase: 'collecting', planning: true })).text()).toBe('Setting stakes');
+      expect(chipOf(open({ phase: 'stakes_review', stakesApproved: false })).text()).toBe('Setting stakes');
+      expect(chipOf(open({ phase: 'stakes_review', stakesApproved: true })).text()).toBe('Stakes are set');
+      expect(chipOf(open({ phase: 'locked' })).text()).toBe('Writing the story');
+      expect(chipOf(open({ phase: 'draft_review' })).text()).toBe('Story coming up');
+    });
+
+    it('keeps the status words when the show is not live or the connection dropped', () => {
+      expect(chipOf(open({ phase: 'locked' }), 'paused').text()).toBe('Paused');
+      expect(chipOf(open({ phase: 'locked' }), 'lobby').text()).toBe('Starting soon');
+      expect(chipOf(open({ phase: 'locked' }), 'ended').text()).toBe('Ended');
+      expect(chipOf(open({ phase: 'locked' }), 'live', false).text()).toBe('Reconnecting');
+    });
+
+    it('uses the warning frame only when the show is not simply live', () => {
+      for (const beat of [null, open({ phase: 'collecting' }), open({ phase: 'locked' }), open({ phase: 'stakes_review', stakesApproved: true })]) {
+        expect(chipOf(beat).classes()).not.toContain('warn');
+      }
+      expect(chipOf(open({ phase: 'locked' }), 'paused').classes()).toContain('warn');
+      expect(chipOf(null, 'live', false).classes()).toContain('warn');
+    });
+
+    it('shows the small pulse only while a stage is waiting', () => {
+      for (const beat of [open({ phase: 'collecting' }), open({ phase: 'collecting', planning: true }), open({ phase: 'locked' }), open({ phase: 'draft_review' }), open({ phase: 'stakes_review', stakesApproved: false })]) {
+        const pulse = chipOf(beat).find('.chip-pulse');
+        expect(pulse.exists()).toBe(true);
+        expect(pulse.attributes('aria-hidden')).toBe('true');
+        expect(pulse.findAll('i')).toHaveLength(2);
+      }
+      for (const beat of [null, open({ phase: 'stakes_review', stakesApproved: true })]) expect(chipOf(beat).find('.chip-pulse').exists()).toBe(false);
+      expect(chipOf(open({ phase: 'locked' }), 'paused').find('.chip-pulse').exists()).toBe(false);
+    });
+
+    it('moves the pulse only under no-preference and only in steps', () => {
+      const css = sceneCss();
+      const outside = css.replace(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g, '');
+      expect(outside).not.toMatch(/animation:/);
+      expect(css).toMatch(/@media \(prefers-reduced-motion: no-preference\) \{[^@]*\.chip-pulse i \{ animation: chip-pulse 1s steps\(1, end\) infinite; \}/);
+      expect(css).toMatch(/\.chip-pulse i:nth-child\(2\) \{ animation-delay: 0\.5s; \}/);
+      expect(/\.chip-pulse i \{[^}]*\}/.exec(css)![0]).toMatch(/width: 8px; height: 8px/);
+    });
+  });
+
+  describe('party with six characters', () => {
+    const six = (extra: Record<string, unknown>[]) => cast(6, extra);
+    it('shows Down and Dead in words for a character with a condition and nothing for the others', () => {
+      const party = mountScene(snapshot({ characters: six([{ condition: 'down', strain: 8 }, { condition: 'dead', strain: 8 }, { strain: 8 }]) })).get('[aria-label="The party"]');
+      const flags = party.findAll('.needs-help').map(flag => flag.text());
+      expect(flags).toEqual(['Down', 'Dead']);
+      expect(party.text()).not.toContain('Needs help');
+      expect(party.find('.pips').exists()).toBe(false);
+      const cards = party.findAll('.party-card');
+      expect(cards[0]!.text()).toContain('Down');
+      expect(cards[1]!.text()).toContain('Dead');
+      expect(cards[2]!.find('.needs-help').exists()).toBe(false);
+    });
+
+    it('still shows Down and Dead with five characters, with the pips', () => {
+      const party = mountScene(snapshot({ characters: cast(5, [{ condition: 'down' }, { condition: 'dead' }]) })).get('[aria-label="The party"]');
+      expect(party.findAll('.needs-help').map(flag => flag.text())).toEqual(['Down', 'Dead']);
+      expect(party.findAll('.pips')).toHaveLength(5);
+    });
+  });
+
+  describe('last-chance dice', () => {
+    const withRolls = (rolls: unknown[], count = 3) => mountScene(snapshot({ characters: cast(count), history: [beat('b1', 1, { rolls })] }));
+    for (const total of [1, 5, 12]) {
+      it(`reads as a last chance with ${total} roll${total === 1 ? '' : 's'}`, () => {
+        const rolls = Array.from({ length: total }, (_, i) => (i === 0 ? lastChanceRoll(i + 1, 'c1', 'setback', 5) : i === 1 ? lastChanceRoll(i + 1, 'c2', 'costly', 8) : plainRoll(i + 1, 'c3')));
+        const wrapper = withRolls(rolls);
+        const cards = wrapper.findAll('.roll');
+        expect(cards).toHaveLength(total);
+        const dies = wrapper.get('.roll[data-last-chance="dies"]');
+        expect(dies.get('.roll-last').text()).toBe('Last chance');
+        expect(dies.get('.roll-result').text()).toBe('Dies');
+        expect(dies.get('.roll-breakdown').text()).toBe('3 + 4');
+        if (total > 1) {
+          const through = wrapper.get('.roll[data-last-chance="pulls-through"]');
+          expect(through.get('.roll-last').text()).toBe('Last chance');
+          expect(through.get('.roll-result').text()).toBe('Pulls through');
+          expect(through.get('.roll-head').element.children[1]!.className).toContain('roll-last');
+        }
+        if (total > 2) expect(wrapper.findAll('.roll[data-last-chance]')).toHaveLength(2);
+        expect(wrapper.findAll('.roll-last')).toHaveLength(Math.min(total, 2));
+      });
+    }
+
+    it('marks a critical failure last chance as dying', () => {
+      const wrapper = withRolls([lastChanceRoll(1, 'c1', 'critical', 2)]);
+      expect(wrapper.get('.roll').attributes('data-last-chance')).toBe('dies');
+      expect(wrapper.get('.roll-result').text()).toBe('Dies');
+    });
+
+    it('leaves an ordinary roll without the last-chance mark', () => {
+      const wrapper = withRolls([plainRoll(1, 'c1')]);
+      expect(wrapper.get('.roll').attributes('data-last-chance')).toBeUndefined();
+      expect(wrapper.find('.roll-last').exists()).toBe(false);
+      expect(wrapper.get('.roll-result').text()).toBe('Success with a cost');
+    });
+
+    it('never hides, shrinks or cuts the last-chance words at any density', () => {
+      const css = sceneCss();
+      const rules = [...css.matchAll(/\n([^{}\n]*roll-last[^{}]*)\{([^}]*)\}/g)];
+      expect(rules.length).toBeGreaterThan(0);
+      for (const [, selector, body] of rules) {
+        expect(body, selector).not.toMatch(/display:\s*none|ellipsis|overflow:\s*hidden|visibility|opacity/);
+        for (const [, size] of body!.matchAll(/font-size:\s*([\d.]+)px/g)) expect(Number(size), selector).toBeGreaterThanOrEqual(24);
+      }
+      const base = /\n\.roll-last \{([^}]*)\}/.exec(css)![1]!;
+      expect(base).toMatch(/flex:\s*none/);
+      expect(base).toMatch(/white-space:\s*nowrap/);
+      expect(css).toMatch(/\.dice-dense \.roll-last/);
+    });
+  });
+
+  describe('last-chance cards', () => {
+    const lcSnapshot = (beatExtra: Record<string, unknown>, characterCount = 3, history: unknown[] | undefined = undefined) =>
+      snapshot({ characters: cast(characterCount, [{ condition: 'down', strain: 8 }]), activeBeat: open({ phase: 'stakes_review', stakesApproved: true, ...beatExtra }), ...(history ? { history } : {}) });
+    const marks = (wrapper: ReturnType<typeof mountScene>) => wrapper.findAll('.wager-card[data-card="last-chance"]');
+
+    it('adds one card after the real stakes with the exact sentence', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const wrapper = mountScene(lcSnapshot({ stakes: [stake('c2', 1)], lastChanceFor: ['c1'] }));
+        expect(wrapper.get('.wager-marker').text()).toBe('1 of 2');
+        expect(wrapper.findAll('.wager-row-item')).toHaveLength(2);
+        expect(wrapper.findAll('.wager-row-name').map(name => name.text())).toEqual(['Ren Ortega', 'Skooty Vale']);
+        expect(marks(wrapper)).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(8000);
+        expect(wrapper.get('.wager-marker').text()).toBe('2 of 2');
+        const card = marks(wrapper)[0]!;
+        expect(card.get('.wager-name').text()).toBe('Skooty Vale · Last chance');
+        expect(card.get('.wager-last').text()).toBe('Skooty Vale is down. If nobody saves Skooty Vale this round, one roll decides: 7 or more and Skooty Vale pulls through; 6 or less, or double 1s, and Skooty Vale dies.');
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('shows the card alone when the round has no real stakes', () => {
+      const wrapper = mountScene(lcSnapshot({ phase: 'locked', stakes: [], lastChanceFor: ['c1'] }));
+      expect(wrapper.find('[aria-label="What is at stake"]').exists()).toBe(true);
+      expect(wrapper.find('.wager-marker').exists()).toBe(false);
+      expect(marks(wrapper)).toHaveLength(1);
+      expect(wrapper.get('.wager-last').text()).toBe('Skooty Vale is down. The dice are rolled. The story will tell what happens.');
+    });
+
+    it('changes after the dice are rolled and never names a result', () => {
+      for (const phase of ['locked', 'draft_review']) {
+        const wrapper = mountScene(lcSnapshot({ phase, stakes: [], lastChanceFor: ['c1'] }));
+        const text = wrapper.get('.wager-last').text();
+        expect(text).toBe('Skooty Vale is down. The dice are rolled. The story will tell what happens.');
+        expect(text).not.toMatch(/pulls through|dies/);
+      }
+    });
+
+    it('shows nothing for an empty list, an unapproved round or a published-only history', () => {
+      expect(mountScene(lcSnapshot({ stakes: [], lastChanceFor: [] })).find('[aria-label="What is at stake"]').exists()).toBe(false);
+      expect(mountScene(lcSnapshot({ stakes: [], stakesApproved: false, lastChanceFor: ['c1'] })).find('.wager-card').exists()).toBe(false);
+      expect(mountScene(lcSnapshot({ stakes: [], stakesApproved: undefined, lastChanceFor: ['c1'] })).find('.wager-card').exists()).toBe(false);
+    });
+
+    it('makes one card for each downed character in cast order, after the real stakes', () => {
+      const wrapper = mountScene(lcSnapshot({ stakes: [stake('c3', 1)], lastChanceFor: ['c2', 'c1'] }));
+      expect(wrapper.findAll('.wager-row-name').map(name => name.text())).toEqual(['Mira Cole', 'Skooty Vale', 'Ren Ortega']);
+      expect(wrapper.get('.wager-marker').text()).toBe('1 of 3');
+    });
+
+    it('holds last round dice while a card shows and lets them back when none shows', async () => {
+      const wrapper = mountScene(lcSnapshot({ phase: 'locked', stakes: [], lastChanceFor: ['c1'] }));
+      expect(wrapper.get('.dice').classes()).toContain('dice-held');
+      await wrapper.setProps({ snapshot: lcSnapshot({ stakes: [], lastChanceFor: [] }) });
+      expect(wrapper.get('.dice').classes()).not.toContain('dice-held');
+    });
+
+    it('does not clamp the last-chance sentence', () => {
+      const css = sceneCss();
+      const rule = /\n\.wager-last \{([^}]*)\}/.exec(css)![1]!;
+      expect(rule).not.toMatch(/line-clamp|ellipsis|nowrap|overflow:\s*hidden/);
+      expect(rule).toMatch(/font-size:\s*24px/);
+    });
+
+    it('keeps the existing slate rule: no cards on a lobby slate', () => {
+      const wrapper = mountScene(snapshot({ characters: cast(3, [{ condition: 'down' }]), activeBeat: open({ phase: 'stakes_review', stakesApproved: true, stakes: [], lastChanceFor: ['c1'] }) }, 'paused'));
+      expect(wrapper.find('.wager-card').exists()).toBe(false);
+    });
+  });
+});

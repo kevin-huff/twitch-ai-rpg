@@ -3,7 +3,7 @@ import { randomInt } from 'node:crypto';
 import { buildApp } from '../../apps/server/src/app';
 import { FakeAiProvider } from '../../apps/server/src/fake-provider';
 import { FakeImageProvider } from '../../apps/server/src/fake-images';
-import type { ProviderContext } from '@rpg/contracts';
+import type { AiCallOptions, ProviderContext } from '@rpg/contracts';
 
 // Inject deterministic media only in the isolated browser harness.
 const databaseUrl = process.env.DATABASE_URL!;
@@ -14,16 +14,27 @@ const marker = 'Operations rehearsal:';
 const ONES = 'Double ones:';
 let forceOnes = false;
 const delayed = (context: ProviderContext) => context.submissions.some(submission => submission.text.startsWith(marker));
+// A line starting with 'Hold the AI:' makes plan and render wait until the call is aborted or 20 seconds pass.
+const HOLD = 'Hold the AI:';
+const held = (context: ProviderContext) => context.submissions.some(submission => submission.text.startsWith(HOLD) || submission.intent.startsWith(HOLD));
+const hold = (signal?: AbortSignal) => new Promise<void>((done, fail) => {
+  if (signal?.aborted) { fail(signal.reason); return; }
+  const onAbort = () => { clearTimeout(timer); fail(signal!.reason); };
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); done(); }, 20000);
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
 const pause = () => new Promise<void>(done => setTimeout(done, 3500));
 class BrowserAiProvider extends FakeAiProvider {
-  async plan(context: ProviderContext) {
+  async plan(context: ProviderContext, options?: AiCallOptions) {
+    if (held(context)) await hold(options?.signal);
     forceOnes = context.submissions.some(submission => submission.text.startsWith(ONES) || submission.intent.startsWith(ONES));
     if (delayed(context)) await pause();
-    return super.plan(context);
+    return super.plan(context, options);
   }
-  async render(context: ProviderContext) {
+  async render(context: ProviderContext, options?: AiCallOptions) {
+    if (held(context)) await hold(options?.signal);
     if (delayed(context)) await pause();
-    const draft = await super.render(context);
+    const draft = await super.render(context, options);
     if (delayed(context)) for (const segment of draft.segments) segment.text = `${marker} ${segment.text}`;
     return draft;
   }

@@ -18,6 +18,8 @@ import StageSlate from './StageSlate.vue';
 import StageStakes from './StageStakes.vue';
 import StageTracks from './StageTracks.vue';
 import { parseStreamLocation, pieceInfo } from './stream';
+import { heldStage, useDiceMoment } from './use-dice-moment';
+import { createDiceSounds, diceSoundEvents, momentVolume } from './dice-sounds';
 
 const PIECE_COMPONENTS = {
   captions: StageCaptions,
@@ -76,6 +78,22 @@ const audioOn = computed(() => identityReady.value && !offline.value && access.v
 const audioMounted = computed(() => audioOn.value && !!access.value && !offline.value);
 watch(audioMounted, on => {
   if (!on) activeSegmentId.value = null;
+});
+
+// The dice moment: one memory for the whole page, so a slate or a layout change never replays a round.
+const { moment: diceMoment, elapsed: diceElapsed } = useDiceMoment(snapshot);
+// Until the dice land, every part of the stage shows what it showed before the publish; only the dice see the new rolls.
+const heldSnapshot = computed(() => (diceMoment.value && snapshot.value ? heldStage(snapshot.value, diceMoment.value.before) : null));
+const stageSnapshot = computed(() => (heldSnapshot.value && diceMoment.value && diceElapsed.value < diceMoment.value.schedule.revealAt ? heldSnapshot.value : snapshot.value));
+// Only the Dice piece plays the moment among the pieces.
+const pieceMoment = computed(() => (requested.view === 'dice' ? { moment: diceMoment.value, elapsed: diceElapsed.value } : {}));
+// Dice sounds play only where this page is playing the narration right now, so OBS never doubles them.
+const audioStatus = ref({ presenting: false, listening: false });
+const diceSoundOn = computed(() => audioMounted.value && (audioStatus.value.presenting || audioStatus.value.listening));
+const diceSounds = createDiceSounds();
+watch([diceMoment, diceSoundOn], ([moment, on]) => {
+  if (!moment || !on) { diceSounds.stop(); return; }
+  diceSounds.play(diceSoundEvents(moment.schedule), Date.now() - moment.startedAt, momentVolume(moment.schedule.rolls.length));
 });
 
 let disposed = false;
@@ -231,6 +249,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  diceSounds.dispose();
   clearTimeout(retryTimer);
   clearTimeout(renewTimer);
   clearSocketTimer();
@@ -245,24 +264,25 @@ onBeforeUnmount(() => {
     <StageFrame v-if="requested.view" :layout="info ? 'piece' : 'blank'" :checker="requested.checker" :box="info?.box">
       <component
         :is="pieceComponent"
-        v-if="pieceComponent && showPicture && snapshot"
-        :snapshot="snapshot"
+        v-if="pieceComponent && showPicture && stageSnapshot"
+        :snapshot="stageSnapshot"
         :connected="connected"
         :active-segment-id="activeSegmentId"
         :character-id="requested.who"
+        v-bind="pieceMoment"
       />
     </StageFrame>
     <StageFrame v-else-if="layout === 'audio'" layout="blank" :checker="requested.checker" />
     <StageFrame v-else :layout="layout" :checker="requested.checker">
-      <template v-if="showPicture && snapshot">
-        <StageOverlay v-if="layout === 'overlay'" :snapshot="snapshot" :connected="connected" :active-segment-id="activeSegmentId" />
-        <StageScene v-else :snapshot="snapshot" :connected="connected" :active-segment-id="activeSegmentId" />
+      <template v-if="showPicture && stageSnapshot">
+        <StageOverlay v-if="layout === 'overlay'" :snapshot="stageSnapshot" :connected="connected" :active-segment-id="activeSegmentId" :dice-moment="diceMoment" :dice-elapsed="diceElapsed" />
+        <StageScene v-else :snapshot="stageSnapshot" :connected="connected" :active-segment-id="activeSegmentId" :dice-moment="diceMoment" :dice-elapsed="diceElapsed" />
       </template>
       <div v-else class="offline" :class="layout">
         <StageSlate kind="offline" :show-title="showTitle" :compact="layout === 'overlay'" />
       </div>
     </StageFrame>
-    <BroadcastAudio v-if="audioOn && access" :session-id="access.sessionId" :beat-id="beatId" :mode="audio" @segment="activeSegmentId = $event" />
+    <BroadcastAudio v-if="audioOn && access" :session-id="access.sessionId" :beat-id="beatId" :mode="audio" @segment="activeSegmentId = $event" @status="audioStatus = $event" />
   </div>
 </template>
 

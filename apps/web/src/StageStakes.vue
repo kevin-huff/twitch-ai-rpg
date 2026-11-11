@@ -1,23 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch, ref } from 'vue';
-import type { PublicActionContract, SessionSnapshot } from '@rpg/contracts';
-import { helperCredit, slateKind, traitName, wagerOutcomes } from './stage-format';
+import type { SessionSnapshot } from '@rpg/contracts';
+import { helperCredit, lastChanceCardText, slateKind, stageCards, traitName, wagerOutcomes } from './stage-format';
+import type { StageCard } from './stage-format';
 
 const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null; characterId?: string | null }>();
 
-const stakes = computed<PublicActionContract[]>(() => {
-  if (props.snapshot.role === 'director' || slateKind(props.snapshot)) return [];
-  const found = (props.snapshot.activeBeat as { stakes?: PublicActionContract[] } | null)?.stakes;
-  if (!Array.isArray(found)) return [];
-  const rank = (id: string) => {
-    const index = props.snapshot.characters.findIndex(character => character.id === id);
-    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-  };
-  const sorted = [...found].sort((a, b) => rank(a.actorCharacterId) - rank(b.actorCharacterId));
-  if (!props.characterId) return sorted;
-  if (!props.snapshot.characters.some(character => character.id === props.characterId)) return [];
-  return sorted.filter(stake => stake.actorCharacterId === props.characterId);
-});
+const cards = computed<StageCard[]>(() => (slateKind(props.snapshot) ? [] : stageCards(props.snapshot, props.characterId)));
 
 function nameOf(characterId: string): string {
   return props.snapshot.characters.find(character => character.id === characterId)?.displayName ?? 'Someone';
@@ -25,25 +14,26 @@ function nameOf(characterId: string): string {
 
 const SPOTLIGHT_MS = 8000;
 const spotlight = ref(0);
-const stakeKey = computed(() => stakes.value.map(stake => stake.id).join('|'));
-const spot = computed(() => stakes.value[spotlight.value] ?? stakes.value[0] ?? null);
+const cardKey = computed(() => cards.value.map(card => card.id).join('|'));
+const spot = computed(() => cards.value[spotlight.value] ?? cards.value[0] ?? null);
+const spotStake = computed(() => (spot.value?.kind === 'stake' ? spot.value.stake : null));
 let spotlightTimer: ReturnType<typeof setInterval> | null = null;
 function stopSpotlight() {
   if (spotlightTimer !== null) clearInterval(spotlightTimer);
   spotlightTimer = null;
 }
-watch(stakeKey, () => {
+watch(cardKey, () => {
   spotlight.value = 0;
   stopSpotlight();
-  if (stakes.value.length < 2) return;
+  if (cards.value.length < 2) return;
   spotlightTimer = setInterval(() => {
-    spotlight.value = (spotlight.value + 1) % Math.max(1, stakes.value.length);
+    spotlight.value = (spotlight.value + 1) % Math.max(1, cards.value.length);
   }, SPOTLIGHT_MS);
 }, { immediate: true });
 onBeforeUnmount(stopSpotlight);
 
 const stakeDetail = computed(() => {
-  const stake = spot.value;
+  const stake = spotStake.value;
   if (!stake) return '';
   const modifier = props.snapshot.characters.find(character => character.id === stake.actorCharacterId)?.traits[stake.trait] ?? 0;
   const parts = stake.ruling === 'check' ? [`${traitName(stake.trait)} +${modifier}`, `${stake.risk} risk`] : [];
@@ -54,14 +44,18 @@ const stakeDetail = computed(() => {
 
 <template>
   <div v-if="spot" class="wager" aria-label="What is at stake">
-    <div :key="spot.id" class="wager-body">
-      <p class="wager-goal"><strong>{{ nameOf(spot.actorCharacterId) }}</strong> · {{ spot.intent }}</p>
+    <div v-if="spot.kind === 'last-chance'" :key="spot.id" class="wager-body" data-card="last-chance">
+      <p class="wager-goal"><strong>{{ nameOf(spot.characterId) }}</strong> · Last chance</p>
+      <p class="wager-last">{{ lastChanceCardText(nameOf(spot.characterId), spot.rolled) }}</p>
+    </div>
+    <div v-else-if="spotStake" :key="spot.id" class="wager-body">
+      <p class="wager-goal"><strong>{{ nameOf(spotStake.actorCharacterId) }}</strong> · {{ spotStake.intent }}</p>
       <p v-if="stakeDetail" class="wager-detail">{{ stakeDetail }}</p>
       <div class="wager-outcomes">
-        <p v-for="outcome in wagerOutcomes(spot)" :key="outcome.label"><span>{{ outcome.label }}</span><em>{{ outcome.text }}</em></p>
+        <p v-for="outcome in wagerOutcomes(spotStake)" :key="outcome.label"><span>{{ outcome.label }}</span><em>{{ outcome.text }}</em></p>
       </div>
     </div>
-    <span v-if="stakes.length > 1" class="wager-marker">{{ spotlight + 1 }} of {{ stakes.length }}</span>
+    <span v-if="cards.length > 1" class="wager-marker">{{ spotlight + 1 }} of {{ cards.length }}</span>
   </div>
 </template>
 
@@ -78,6 +72,7 @@ const stakeDetail = computed(() => {
 .wager-goal::before { content: ''; float: right; width: 152px; height: 40px; }
 .wager-goal strong { font-family: var(--font-body); font-size: 40px; font-weight: 400; line-height: 40px; color: var(--candle); }
 .wager-detail { font-family: var(--font-body); font-size: 40px; font-weight: 400; line-height: 40px; color: var(--dust); overflow-wrap: anywhere; }
+.wager-last { font-family: var(--font-body); font-size: 40px; font-weight: 400; line-height: 40px; color: var(--bone); overflow-wrap: anywhere; }
 .wager-outcomes { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; margin-top: 4px; }
 .wager-outcomes p { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .wager-outcomes span {

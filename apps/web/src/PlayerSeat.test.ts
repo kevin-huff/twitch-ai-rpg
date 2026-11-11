@@ -8,7 +8,7 @@ import { saveDraft } from './drafts';
 import { createTable, PAUSE_REQUEST_TEXT, provideTable, type Table } from './table';
 
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn() }));
-vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
+vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(), api: transport, subscribeToSession: transport.subscribe }));
 
 const AudioPanelStub = { name: 'AudioPanel', props: ['sessionId', 'beatId', 'director', 'stage', 'compact'], template: '<div data-testid="audio-panel-stub" />' };
 
@@ -65,6 +65,7 @@ const lastCommand = () => transport.command.mock.calls.at(-1)?.[1];
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  localStorage.clear();
   transport.subscribe.mockReturnValue(() => {});
   transport.command.mockResolvedValue({});
   window.history.replaceState({}, '', '/sessions/show/play');
@@ -74,6 +75,7 @@ afterEach(() => {
   wrapper = undefined;
   document.body.innerHTML = '';
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 describe('player seat', () => {
@@ -299,6 +301,121 @@ describe('player seat', () => {
     expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
   });
 
+  it('says the line waits for the next turn when a plan is already running', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
+  });
+
+  it('says the line waits for the next turn when the plan starts as the line is sent', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action') }));
+    await click(w, 'Say something');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) })); return {}; });
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
+  });
+
+  it('says both lines wait for the next turn when a plan is running', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Both lines wait for the next turn.');
+  });
+
+  it('keeps the director has your line receipt when no plan is running', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: false }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('drops a line receipt once the director picks that line, so it never contradicts the banner', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    const waiting = line({ kind: 'say', text: 'One more thing', status: 'queued' });
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }), submissions: [waiting] })); return {}; });
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
+    await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }), submissions: [waiting] }));
+    expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
+    await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true, selectedSubmissionIds: [waiting.id] }), submissions: [{ ...waiting, status: 'selected' }] }));
+    expect(w.find('[role="status"]').exists()).toBe(false);
+  });
+
+  it('says the director has the line when changing a picked line throws the plan away', async () => {
+    const picked = line({ kind: 'say', text: 'Who sent you?', status: 'selected' });
+    const planned = beat('beat-a', 'action', { planning: true, selectedSubmissionIds: ['s1'] });
+    const w = await mountSeat(snapshot({ activeBeat: planned, submissions: [picked] }));
+    await changeLine(w);
+    await w.get('[data-testid="speech-input"]').setValue('Who really sent you?');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { planning: false, revision: 2, selectedSubmissionIds: ['s1'] }), submissions: [line({ kind: 'say', text: 'Who really sent you?', status: 'selected', revision: 2 })] })); return {}; });
+    await submit(w);
+    expect(lastCommand()).toEqual(expect.objectContaining({ submissionId: 's1', text: 'Who really sent you?' }));
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('says the director has the line when the plan ends as the line is sent', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { planning: false }) })); return {}; });
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('says the director has both lines when the plan ends as they are sent', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { planning: false }) })); return {}; });
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has both lines.');
+  });
+
+  it('says the director has the line when a picked line is changed during stakes review', async () => {
+    const picked = line({ kind: 'say', text: 'Who sent you?', status: 'selected' });
+    const reviewing = beat('beat-a', 'action', { phase: 'stakes_review', stakes: [], planning: false, selectedSubmissionIds: ['s1'] });
+    const w = await mountSeat(snapshot({ activeBeat: reviewing, submissions: [picked] }));
+    await changeLine(w);
+    await w.get('[data-testid="speech-input"]').setValue('Who really sent you?');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'collecting', planning: false, revision: 2 }), submissions: [line({ kind: 'say', text: 'Who really sent you?' })] })); return {}; });
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+  });
+
+  it('says the line waits for the next turn when a plan finishes into stakes review during the send', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { planning: true }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('One more thing');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'stakes_review', stakes: [], planning: false }) })); return {}; });
+    await submit(w);
+    expect(w.get('[role="status"]').text()).toBe('Saved. Your line waits for the next turn.');
+  });
+
+  it('says the director has both lines when the round is back at taking lines after the send', async () => {
+    const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'stakes_review', stakes: [], planning: false }) }));
+    await click(w, 'Say something');
+    await w.get('[data-testid="speech-input"]').setValue('Hello Mara');
+    await click(w, 'Do something');
+    await w.get('[data-testid="action-input"]').setValue('Climb the fire escape');
+    transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'collecting', planning: false }) })); return {}; });
+    await submit(w);
+    expect(transport.command).toHaveBeenCalledTimes(2);
+    expect(w.get('[role="status"]').text()).toBe('Saved. The director has both lines.');
+  });
+
   it('gives the open round to the line list', async () => {
     const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
     expect(w.findComponent(SubmissionList).props('beat')).toEqual(expect.objectContaining({ id: 'beat-a' }));
@@ -345,6 +462,7 @@ describe('player seat', () => {
     wrapper = undefined;
     transport.command.mockClear();
     sessionStorage.clear();
+    localStorage.clear();
 
     const npcs = [{ id: 'mara', displayName: 'Mara', role: 'Bartender', status: 'present' }];
     const say = line({ kind: 'say', text: 'Who sent you?', recipientNpcIds: ['mara'], stageDirection: 'Taps the bar' });
@@ -401,6 +519,7 @@ describe('player seat', () => {
       w.unmount();
       wrapper = undefined;
       sessionStorage.clear();
+      localStorage.clear();
     }
   });
 
@@ -634,6 +753,7 @@ describe('player seat', () => {
       expect(group.get('[data-testid="talking-to"]').text()).toBe('Talking to your group');
       group.unmount(); wrapper = undefined;
       sessionStorage.clear();
+      localStorage.clear();
       const two = await mountSeat(snapshot({ npcs: [mara, jo] }));
       expect(two.find('[data-testid="talking-to"]').exists()).toBe(false);
       expect(two.findAll('select option').map(option => option.text())).toEqual(['Your group', 'Mara · Bartender', 'Jo · Cook']);
@@ -792,8 +912,8 @@ describe('the story on the seat', () => {
     const w = await mountSeat(snapshot());
     await click(w, 'Do something');
     const help = w.findAll('.field-help').map(node => node.text()).join(' ');
-    expect(help).toContain('Viewers see these words on stream as you write them, and hear them read aloud');
-    expect(help).toContain('Describe it in plain words.');
+    expect(help).toContain('Describe it in plain words. Viewers see and hear your exact words once the director puts them in the story. Sometimes dice decide how it goes.');
+    expect(help).not.toContain('as you write them');
   });
   describe('voice and line help', () => {
     const LineAssistStub = defineComponent({ name: 'LineAssist', props: ['sessionId', 'idea', 'recipientNpcIds', 'canSend'], emits: ['use'], template: '<button type="button" data-testid="assist-stub" @click="$emit(\'use\', \'[warmly] Hello friend.\')">Help me say it</button>' });
@@ -1055,7 +1175,7 @@ describe('sending a Say line and a Do line together', () => {
   });
 
   describe('a downed or dead character', () => {
-    const downNote = 'Skooty is down. You can say a few words, up to 8. Someone can still save Skooty until the end of the next round.';
+    const downNote = 'Skooty is down. You can say a few words, up to 8. Someone can still save Skooty in this round. If nobody does, one last-chance roll decides when the dice are rolled: 7 or more on two dice and Skooty pulls through; 6 or less, or double 1s, and Skooty dies.';
     it('tells a downed player so, offers only short Say lines and no Do box', async () => {
       const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action') }, { condition: 'down', possessions: ['Lockpick'] }));
       expect(w.get('[data-testid="seat-condition"]').text()).toBe('Down');
@@ -1079,7 +1199,12 @@ describe('sending a Say line and a Do line together', () => {
       await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine');
       expect(w.get('[data-testid="seat-word-count"]').text()).toBe('9 of 8 words');
       expect(w.get('button.send').attributes('disabled')).toBeDefined();
-      expect(w.get('[data-testid="send-refused"]').text()).toBe('Skooty is down, so they can say only a few words, up to 8. This line has 9.');
+      expect(w.get('[data-testid="send-refused"]').text()).toBe('Skooty is down, so they can say only a few words, up to 8.');
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine ten eleven');
+      expect(w.get('[data-testid="send-refused"]').text()).toBe('Skooty is down, so they can say only a few words, up to 8.');
+      expect(w.get('[data-testid="seat-word-count"]').text()).toBe('11 of 8 words');
+      expect(w.get('button.send').attributes('disabled')).toBeDefined();
+      await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine');
       await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight');
       expect(w.get('button.send').attributes('disabled')).toBeUndefined();
       expect(w.find('[data-testid="send-refused"]').exists()).toBe(false);
@@ -1116,6 +1241,44 @@ describe('sending a Say line and a Do line together', () => {
       expect(lastCommand()).toEqual(expect.objectContaining({ kind: 'ooc', text: PAUSE_REQUEST_TEXT }));
     });
 
+    it('does not show a dead player an old line receipt', async () => {
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'conversation') }));
+      await click(w, 'Say something');
+      const waiting = line({ kind: 'say', text: 'Wait for me', status: 'queued' });
+      transport.command.mockImplementationOnce(async () => { transport.snapshot.mockResolvedValue(snapshot({ activeBeat: beat('beat-a', 'conversation'), submissions: [waiting] })); return {}; });
+      await w.get('[data-testid="speech-input"]').setValue('Wait for me');
+      await submit(w);
+      expect(w.get('[role="status"]').text()).toBe('Saved. The director has your line.');
+      await refreshTo(snapshot({ submissions: [waiting] }, { condition: 'dead' }));
+      expect(w.find('[data-testid="pause-receipt"]').exists()).toBe(false);
+      expect(w.text()).not.toContain('Saved.');
+    });
+
+    it('shows a dead player the pause confirmation', async () => {
+      const w = await mountSeat(snapshot({}, { condition: 'dead' }));
+      expect(w.find('[data-testid="pause-receipt"]').exists()).toBe(false);
+      await click(w, 'Ask for a pause');
+      const receipt = w.get('[data-testid="pause-receipt"]');
+      expect(receipt.text()).toBe('Pause requested. Say so on the voice call too.');
+      expect(receipt.attributes('role')).toBe('status');
+      expect(receipt.classes()).toContain('notice');
+    });
+
+    it('words the down note from the real round state', async () => {
+      const ladder = '7 or more on two dice and Skooty pulls through; 6 or less, or double 1s, and Skooty dies.';
+      const down = { condition: 'down' };
+      const w = await mountSeat(snapshot({}, down));
+      expect(w.get('[data-testid="seat-down-note"]').text()).toContain(`Someone can still save Skooty in the next round. If nobody does, one last-chance roll decides: ${ladder}`);
+      await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action', { stakes: [], lastChanceFor: [] }) }, down));
+      expect(w.get('[data-testid="seat-down-note"]').text()).toContain(`in this round. If nobody does, one last-chance roll decides when the dice are rolled: ${ladder}`);
+      await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'locked', stakes: [], lastChanceFor: ['pc-1'] }) }, down));
+      expect(w.get('[data-testid="seat-down-note"]').text()).toContain('The dice are rolled. The story will tell what happens to Skooty.');
+      expect(w.get('[data-testid="seat-down-note"]').text()).not.toMatch(/Nobody saved|has been rolled/);
+      await refreshTo(snapshot({ activeBeat: beat('beat-a', 'action', { phase: 'locked', stakes: [], lastChanceFor: [] }) }, down));
+      expect(w.get('[data-testid="seat-down-note"]').text()).toContain(`This part of the story has no dice, so someone can still save Skooty in the next round. If nobody does, one last-chance roll decides: ${ladder}`);
+      expect(w.get('[data-testid="seat-down-note"]').text()).not.toContain('until the end of the next round');
+    });
+
     it('leaves an up seat as it was', async () => {
       const w = await mountSeat(snapshot());
       expect(w.find('[data-testid="seat-condition"]').exists()).toBe(false);
@@ -1126,6 +1289,174 @@ describe('sending a Say line and a Do line together', () => {
       expect(buttonNamed(w, 'Ask the director privately')).toBeDefined();
       await w.get('[data-testid="speech-input"]').setValue('one two three four five six seven eight nine ten');
       expect(w.get('button.send').attributes('disabled')).toBeUndefined();
+    });
+  });
+});
+
+describe('stakes, changes and storage on the seat', () => {
+  const rook = (over: Record<string, unknown> = {}) => ({ id: 'pc-1', displayName: 'Skooty', strain: 0, ...over });
+  const stakeFor = (actor: string, over: Record<string, unknown> = {}) => ({
+    id: `st-${actor}`, version: 1, actorCharacterId: actor, helperCharacterIds: [], intent: 'Slip past the guard', approach: 'Quietly', ruling: 'check',
+    trait: 'finesse', edge: 0, edgeReason: null, risk: 'normal', outcomes: { clean: 'You slip past.', costly: 'You slip past, but noisily.', setback: 'The guard sees you.' }, ...over,
+  });
+  const approved = (over: Record<string, unknown> = {}) => beat('beat-a', 'action', { phase: 'stakes_review', stakes: [stakeFor('pc-1'), stakeFor('pc-2', { id: 'st-other', intent: 'Pick the lock' })], stakesApproved: true, lastChanceFor: [], ...over });
+  const withCast = (extra: Record<string, unknown> = {}) => ({ characters: [{ id: 'pc-1', displayName: 'Skooty' }, { id: 'pc-2', displayName: 'Mara' }], ...extra });
+
+  describe('What is at stake for you', () => {
+    it('shows the player their own stakes between approval and publish, never a roll', async () => {
+      const w = await mountSeat(snapshot(withCast({ activeBeat: approved() })));
+      const block = w.get('[data-testid="seat-stakes"]');
+      expect(block.text()).toContain('What is at stake for you');
+      expect(block.text()).toContain('Slip past the guard');
+      expect(block.text()).not.toContain('Pick the lock');
+      expect(block.attributes('role')).toBeUndefined();
+      await refreshTo(snapshot(withCast({ activeBeat: approved({ phase: 'locked' }) })));
+      expect(w.find('[data-testid="seat-stakes"]').exists()).toBe(true);
+      await refreshTo(snapshot(withCast({ activeBeat: approved({ stakesApproved: false }) })));
+      expect(w.find('[data-testid="seat-stakes"]').exists()).toBe(false);
+      await refreshTo(snapshot(withCast({ activeBeat: null, history: [published(1, 'It is over.')] })));
+      expect(w.find('[data-testid="seat-stakes"]').exists()).toBe(false);
+    });
+
+    it('never shows it to a dead character', async () => {
+      const w = await mountSeat(snapshot(withCast({ activeBeat: approved() }), { condition: 'dead' }));
+      expect(w.find('[data-testid="seat-stakes"]').exists()).toBe(false);
+    });
+  });
+
+  describe('What changed for you', () => {
+    const own = (over: Record<string, unknown>) => ({ ...rook(), ...over });
+    const history = (n: number) => Array.from({ length: n }, (_, index) => published(index + 1, `Part ${index + 1}.`));
+    const after = async (w: VueWrapper, before: Record<string, unknown>, next: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+      await refreshTo(snapshot({ history: history(2), ...extra }, next));
+      return w.find('[data-testid="seat-changed"]');
+    };
+
+    it('shows nothing on first load, and nothing when nothing changed', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 2 })));
+      expect(w.find('[data-testid="seat-changed"]').exists()).toBe(false);
+      expect((await after(w, {}, own({ strain: 2 }))).exists()).toBe(false);
+    });
+
+    it('says what a strain change did, in the story panel above the story box', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 2 })));
+      const line = await after(w, {}, own({ strain: 5 }));
+      expect(line.text()).toContain('What changed for you');
+      expect(line.text()).toContain("Skooty's strain went from 2 to 5 of 8:");
+      expect(line.attributes('role')).toBeUndefined();
+      expect(w.get('[data-testid="seat-story"]').element.contains(line.element)).toBe(true);
+      expect(w.get('[data-testid="seat-story-scroll"]').element.contains(line.element)).toBe(false);
+    });
+
+    it('says when the character went down, was saved, pulled through or died', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 6 })));
+      expect((await after(w, {}, own({ strain: 8, condition: 'down' }))).text()).toContain('Skooty went down.');
+      await refreshTo(snapshot({ history: history(3) }, own({ strain: 6 })));
+      expect(w.get('[data-testid="seat-changed"]').text()).toContain('Skooty was saved and is back up at 6 of 8.');
+      await refreshTo(snapshot({ history: history(3) }, own({ strain: 8, condition: 'down' })));
+      const lastChance = { id: 'r1', actorCharacterId: 'pc-1', total: 8, band: 'clean', lastChance: true };
+      await refreshTo(snapshot({ history: [...history(3), { ...published(4, 'Part 4.'), rolls: [lastChance] }] }, own({ strain: 7 })));
+      expect(w.get('[data-testid="seat-changed"]').text()).toContain('Skooty pulled through the last chance and is back up at 7 of 8.');
+      await refreshTo(snapshot({ history: [...history(4), published(5, 'Part 5.')] }, own({ strain: 8, condition: 'dead' })));
+      expect(w.get('[data-testid="seat-changed"]').text()).toContain('Skooty died.');
+    });
+
+    it('replaces the line at the next publish and drops it when nothing changed then', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 0 })));
+      await after(w, {}, own({ strain: 3 }));
+      await refreshTo(snapshot({ history: history(3) }, own({ strain: 3 })));
+      expect(w.find('[data-testid="seat-changed"]').exists()).toBe(false);
+    });
+
+    it('still shows a dead seat that the character died', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 8 })));
+      const line = await after(w, {}, own({ strain: 8, condition: 'dead' }));
+      expect(line.text()).toContain('Skooty died.');
+      expect(w.find('[data-testid="seat-dead-note"]').exists()).toBe(true);
+    });
+
+    it('keeps nothing across a reload', async () => {
+      const w = await mountSeat(snapshot({ history: history(1) }, own({ strain: 0 })));
+      await after(w, {}, own({ strain: 3 }));
+      w.unmount();
+      wrapper = undefined;
+      const again = await mountSeat(snapshot({ history: history(2) }, own({ strain: 3 })));
+      expect(again.find('[data-testid="seat-changed"]').exists()).toBe(false);
+    });
+  });
+
+  describe('The story moved on', () => {
+    it('leads the banner after a publish until the player types, voiced or text only', async () => {
+      const w = await mountSeat(snapshot({ history: [published(1, 'Part 1.')] }));
+      expect(w.get('.player-status').text()).toContain('Waiting for the next turn');
+      await refreshTo(snapshot({ history: [published(1, 'Part 1.'), published(2, 'Part 2.')] }));
+      expect(w.get('.player-status').text()).toContain('The story moved on');
+      expect(w.get('.player-status').text()).toContain('Read the new part under The story. You can write your next line now.');
+      await w.get('[data-testid="speech-input"]').setValue('Hello');
+      expect(w.get('.player-status').text()).toContain('Waiting for the next turn');
+    });
+
+    it('offers Play when the new part is voiced, and ends when a round opens', async () => {
+      const w = await mountSeat(snapshot({ history: [published(1, 'Part 1.')] }));
+      await refreshTo(snapshot({ history: [published(1, 'Part 1.'), { ...published(2, 'Part 2.'), textOnly: false, audioManifestKey: 'a'.repeat(64) }] }));
+      expect(w.get('.player-status').text()).toContain('or press Play there to hear it');
+      await refreshTo(snapshot({ history: [published(1, 'Part 1.'), published(2, 'Part 2.')], activeBeat: beat('beat-n', 'conversation') }));
+      expect(w.get('.player-status').text()).not.toContain('The story moved on');
+    });
+
+    it('does not announce anything on first load', async () => {
+      const w = await mountSeat(snapshot({ history: [published(1, 'Part 1.')] }));
+      expect(w.get('.player-status').text()).not.toContain('The story moved on');
+    });
+  });
+
+  describe('a downed character\'s waiting Do line', () => {
+    it('shows no Change button, and says why', async () => {
+      const act = line({ id: 'a1', kind: 'act', intent: 'Climb out', approach: 'Climb out', status: 'queued', contextBeatId: 'beat-a' });
+      const w = await mountSeat(snapshot({ activeBeat: beat('beat-a', 'action'), submissions: [act] }, { condition: 'down' }));
+      const item = w.get('.sub-item');
+      expect(item.findAll('button').map(button => button.text())).not.toContain('Change');
+      expect(item.get('[data-testid="sub-blocked"]').text()).toBe("Skooty is down, so this Do line can't be used or changed. You can take it back.");
+    });
+  });
+
+  describe('when the show ends', () => {
+    it('removes the stored words and stops saving', async () => {
+      const w = await mountSeat(snapshot());
+      await w.get('[data-testid="speech-input"]').setValue('Hold this for me');
+      await flushPromises();
+      expect(localStorage.getItem('rpg-draft:show:pc-1')).toContain('Hold this for me');
+      await refreshTo(snapshot({}, {}, { status: 'ended' }));
+      expect(localStorage.getItem('rpg-draft:show:pc-1')).toBeNull();
+      await w.get('[data-testid="speech-input"]').setValue('More words');
+      await flushPromises();
+      expect(localStorage.getItem('rpg-draft:show:pc-1')).toBeNull();
+    });
+  });
+
+  describe('a Send that never reached the server', () => {
+    const unreachable = () => Object.assign(new Error('Could not reach the show. Check your connection and try again.'), { status: 0 });
+    it('says so, says the words are still in the box, and keeps them', async () => {
+      const w = await mountSeat(snapshot());
+      await w.get('[data-testid="speech-input"]').setValue('Hello there');
+      transport.command.mockRejectedValueOnce(unreachable());
+      await submit(w);
+      expect(w.get('[data-testid="send-refused"]').text()).toBe('Could not reach the show. Check your connection and try again. Your words are still in the box.');
+      expect(value(w, 'speech-input')).toBe('Hello there');
+      expect(localStorage.getItem('rpg-draft:show:pc-1')).toContain('Hello there');
+    });
+
+    it('does the same for Send both, keeping both boxes', async () => {
+      const w = await mountSeat(snapshot());
+      await w.get('[data-testid="speech-input"]').setValue('Hello there');
+      await click(w, 'Do something');
+      await w.get('[data-testid="action-input"]').setValue('Wave');
+      transport.command.mockRejectedValue(unreachable());
+      await submit(w);
+      expect(w.get('[data-testid="send-refused"]').text()).toContain('Your words are still in the box.');
+      expect(value(w, 'action-input')).toBe('Wave');
+      await click(w, 'Say something');
+      expect(value(w, 'speech-input')).toBe('Hello there');
     });
   });
 });

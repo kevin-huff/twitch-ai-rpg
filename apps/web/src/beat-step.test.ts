@@ -29,7 +29,9 @@ describe('beatStep', () => {
   });
   it('checks the planning-failed case first', () => {
     expect(run(beatOf({ lastError: 'boom', selectedSubmissionIds: ['x'] })))
-      .toMatchObject({ step: 'stakes', next: "Planning failed. Set what's at risk by hand, or plan again." });
+      .toMatchObject({ step: 'plan', next: 'The plan could not be made. Plan again, or write the stakes yourself.' });
+    expect(run(beatOf({ lastError: 'boom', selectedSubmissionIds: ['x'] }), { handStakes: true }))
+      .toMatchObject({ step: 'stakes', next: "Write what's at risk for each line, then approve and roll." });
     expect(run(beatOf({ lastError: 'boom' })).step).toBe('select');
   });
   it('gives the stakes-changed reason only after approved stakes were edited', () => {
@@ -115,12 +117,19 @@ describe('goldAction', () => {
     expect(g('review')).toBe('publish');
     expect(g('publish')).toBe('publish');
   });
+  it('makes Plan again the gold action after a failed plan', () => {
+    const failed = beatOf({ lastError: 'boom', selectedSubmissionIds: ['x'] });
+    expect(g('plan', { beat: failed })).toBe('plan-again');
+    expect(g('select', { beat: failed })).toBe('plan-again');
+    expect(g('stakes', { beat: failed })).toBe('approve-and-roll');
+    expect(g('plan', { beat: beatOf({ lastError: 'boom' }) })).toBe('plan');
+  });
   it('resumes when paused, at every step', () => {
     for (const step of STEP_ORDER) expect(g(step, { paused: true })).toBe('resume');
   });
   it('has a label and test id for every action', () => {
-    expect(Object.values(GOLD_LABELS)).toEqual(['Answer these lines', 'Plan', 'Lock and draft', 'Approve and roll', 'Draft the scene', 'Try again', 'Publish', 'Resume show']);
-    expect(Object.values(GOLD_TEST_IDS)).toEqual(['answer-lines', 'plan', 'lock-and-draft', 'approve-and-roll', 'render', 'render', 'publish', 'resume-show']);
+    expect(Object.values(GOLD_LABELS)).toEqual(['Answer these lines', 'Plan', 'Plan again', 'Lock and draft', 'Approve and roll', 'Draft the scene', 'Try again', 'Publish', 'Resume show']);
+    expect(Object.values(GOLD_TEST_IDS)).toEqual(['answer-lines', 'plan', 'plan', 'lock-and-draft', 'approve-and-roll', 'render', 'render', 'publish', 'resume-show']);
   });
 });
 

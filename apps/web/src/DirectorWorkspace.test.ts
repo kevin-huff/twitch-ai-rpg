@@ -8,10 +8,11 @@ import { createTable, provideTable, type Table } from './table';
 const transport = vi.hoisted(() => ({ snapshot: vi.fn(), command: vi.fn(), subscribe: vi.fn(), login: vi.fn(), redeem: vi.fn(), create: vi.fn(), testSeat: vi.fn(), sessions: vi.fn(), library: vi.fn(), galleryAction: vi.fn(), hideScenePicture: vi.fn(), showScenePicture: vi.fn() }));
 vi.mock('./api', () => ({ api: transport, subscribeToSession: transport.subscribe }));
 
+const audioControl = vi.hoisted(() => vi.fn());
 const stub = (name: string, extra: Record<string, unknown> = {}) => ({ name, template: `<div data-testid="${name}-stub" />`, ...extra });
 const stubs = {
   BeatPanel: { name: 'BeatPanel', props: ['selected', 'showAudio', 'playbackError'], emits: ['published', 'start-playback'], template: '<div data-testid="beat-panel-stub" />' },
-  AudioPanel: { name: 'AudioPanel', props: ['sessionId', 'beatId', 'director', 'autoPlayBeatId'], emits: ['playback-failed'], template: '<div data-testid="audio-panel-stub" />' },
+  AudioPanel: { name: 'AudioPanel', props: ['sessionId', 'beatId', 'director', 'autoPlayBeatId'], emits: ['playback-failed', 'narration'], setup: (_: unknown, { expose }: { expose: (v: Record<string, unknown>) => void }) => { expose({ control: audioControl, startLatest: vi.fn() }); }, template: '<div data-testid="audio-panel-stub" />' },
   DirectorStatusStrip: { name: 'DirectorStatusStrip', props: ['snapshot', 'sessionId'], emits: ['audio'], template: '<div data-testid="status-strip-stub" />' },
   DirectorQueue: stub('DirectorQueue', { props: ['modelValue', 'snapshot'] }),
   GalleryPanel: { name: 'GalleryPanel', props: ['status', 'busy'], emits: ['action'], template: '<div data-testid="gallery-stub" />' },
@@ -241,6 +242,42 @@ describe('wiring to the beat panel and the audio panel', () => {
     await flushPromises();
     expect(audio.props('autoPlayBeatId')).toBe('beat-3');
     wrapper.unmount();
+  });
+
+  it('drops the waiting narration start when the show is paused or ended during the dice', async () => {
+    for (const status of ['paused', 'ended']) {
+      const wrapper = await mountWorkspace(snapshot());
+      const audio = wrapper.getComponent({ name: 'AudioPanel' });
+      vi.useFakeTimers();
+      try {
+        wrapper.getComponent({ name: 'BeatPanel' }).vm.$emit('published', 'beat-3', true, 4000);
+        transport.snapshot.mockResolvedValue(snapshot(status));
+        const refreshing = table.refresh();
+        await vi.advanceTimersByTimeAsync(0);
+        await refreshing;
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(audio.props('autoPlayBeatId'), status).toBeNull();
+      } finally {
+        vi.useRealTimers();
+        wrapper.unmount();
+      }
+    }
+  });
+
+  it('waits for the dice moment before the automatic narration start', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    const audio = wrapper.getComponent({ name: 'AudioPanel' });
+    vi.useFakeTimers();
+    try {
+      wrapper.getComponent({ name: 'BeatPanel' }).vm.$emit('published', 'beat-3', true, 4000);
+      await vi.advanceTimersByTimeAsync(3999);
+      expect(audio.props('autoPlayBeatId')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(audio.props('autoPlayBeatId')).toBe('beat-3');
+    } finally {
+      vi.useRealTimers();
+      wrapper.unmount();
+    }
   });
 });
 
@@ -810,6 +847,109 @@ describe('who is here, rest and the cast panel', () => {
   it('shows strain out of the shared maximum', async () => {
     const wrapper = await mountWorkspace(snapshot('live', [], { characters: [{ id: 'pc-1', displayName: 'Skooty', strain: 3 }] }));
     expect(wrapper.text()).toContain('Strain 3 of 8');
+    wrapper.unmount();
+  });
+});
+
+describe('lines a downed or dead character cannot use', () => {
+  const selectedIds = (wrapper: VueWrapper) => wrapper.getComponent({ name: 'BeatPanel' }).props('selected') as string[];
+  const pushSnapshot = async (state: ReturnType<typeof snapshot>) => { transport.snapshot.mockResolvedValue(state); await table.refresh(); await flushPromises(); };
+  const withCondition = (condition: string | undefined, submissions: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) => snapshot('live', submissions.map(item => ({ intent: 'Climb', approach: 'Carefully', ...item })), {
+    characters: [{ id: 'pc-1', displayName: 'Rook', condition }], characterDetails: [{ id: 'pc-1', displayName: 'Rook', condition }], ...extra,
+  });
+
+  it('unticks a Do line from a downed character and a line from a dead one, and ticks other lines', async () => {
+    const down = await mountWorkspace(withCondition('down', [submission('a', 'act'), submission('b', 'say')]));
+    expect(selectedIds(down)).toEqual(['b']);
+    down.unmount();
+    const dead = await mountWorkspace(withCondition('dead', [submission('a', 'act'), submission('b', 'say')]));
+    expect(selectedIds(dead)).toEqual([]);
+    dead.unmount();
+  });
+
+  it('ticks the lines again once a correction brings the character back, and leaves hand-unticked lines alone', async () => {
+    const wrapper = await mountWorkspace(withCondition('down', [submission('a', 'act'), submission('b', 'say'), submission('c', 'say')]));
+    wrapper.getComponent({ name: 'DirectorQueue' }).vm.$emit('update:modelValue', ['b']);
+    await flushPromises();
+    expect(selectedIds(wrapper)).toEqual(['b']);
+    await pushSnapshot(withCondition(undefined, [submission('a', 'act'), submission('b', 'say'), submission('c', 'say')]));
+    expect(selectedIds(wrapper)).toEqual(['a', 'b']);
+    wrapper.unmount();
+  });
+
+  it('keeps a blocked line out of the stored unticked list, so it ticks after a reload once brought back', async () => {
+    const first = await mountWorkspace(withCondition('down', [submission('a', 'act'), submission('b', 'say')]));
+    expect(JSON.parse(sessionStorage.getItem('story-table-unticked:show')!)).toEqual([]);
+    first.unmount();
+    const second = await mountWorkspace(withCondition('down', [submission('a', 'act'), submission('b', 'say')]));
+    await pushSnapshot(withCondition(undefined, [submission('a', 'act'), submission('b', 'say')]));
+    expect(selectedIds(second)).toEqual(['a', 'b']);
+    second.unmount();
+  });
+
+  it('changes nothing for a snapshot that only raises the beat revision and adds a running job', async () => {
+    const wrapper = await mountWorkspace(withCondition('down', [submission('a', 'act'), submission('b', 'say'), submission('c', 'say')]));
+    wrapper.getComponent({ name: 'DirectorQueue' }).vm.$emit('update:modelValue', ['b']);
+    await flushPromises();
+    const stored = sessionStorage.getItem('story-table-unticked:show');
+    await pushSnapshot(withCondition('down', [submission('a', 'act'), submission('b', 'say'), submission('c', 'say')], { jobs: [{ id: 'j1', beatId: 'beat-1', task: 'plan', status: 'running', generation: 1 }] }));
+    expect(selectedIds(wrapper)).toEqual(['b']);
+    expect(sessionStorage.getItem('story-table-unticked:show')).toBe(stored);
+    wrapper.unmount();
+  });
+});
+
+describe('the cast panel badge', () => {
+  it('uses its own test id', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { characters: [{ id: 'pc-1', displayName: 'Skooty', condition: 'down' }] }));
+    expect(testid(wrapper, 'workspace-cast-condition-pc-1').text()).toBe('Down');
+    expect(testid(wrapper, 'cast-condition-pc-1').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe('the narration line', () => {
+  const state = (status: string, extra: Record<string, unknown> = {}) => ({ status, beatId: 'beat-1', audioHere: true, pending: false, ...extra });
+  const emitNarration = async (wrapper: VueWrapper, value: unknown) => { wrapper.getComponent({ name: 'AudioPanel' }).vm.$emit('narration', value); await flushPromises(); };
+
+  it('shows nothing until the audio panel reports, then the state with the beat number from history', async () => {
+    const wrapper = await mountWorkspace(snapshot('live', [], { history: [{ id: 'beat-1', beatNumber: 3, segments: [] }] }));
+    expect(testid(wrapper, 'narration-line').exists()).toBe(false);
+    await emitNarration(wrapper, state('playing'));
+    expect(testid(wrapper, 'narration-line-text').text()).toBe('Narration playing: beat 3.');
+    await emitNarration(wrapper, state('paused'));
+    expect(testid(wrapper, 'narration-line-text').text()).toBe('Narration paused: beat 3.');
+    await emitNarration(wrapper, null);
+    expect(testid(wrapper, 'narration-line').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('sits directly under the beat panel, outside the Show all fold', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    await emitNarration(wrapper, state('playing'));
+    expect(testid(wrapper, 'narration-line').element.closest('details')).toBeNull();
+    expect(testid(wrapper, 'beat-panel-stub').element.nextElementSibling).toBe(testid(wrapper, 'narration-line').element);
+    expect(testid(wrapper, 'stage-show-all').find('[data-testid="audio-panel-stub"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('forwards Pause, Resume and Stop to the audio panel', async () => {
+    const wrapper = await mountWorkspace(snapshot());
+    await emitNarration(wrapper, state('playing'));
+    await testid(wrapper, 'narration-pause').trigger('click');
+    expect(audioControl).toHaveBeenLastCalledWith('pause');
+    await emitNarration(wrapper, state('paused'));
+    await testid(wrapper, 'narration-resume').trigger('click');
+    expect(audioControl).toHaveBeenLastCalledWith('resume');
+    await testid(wrapper, 'narration-stop').trigger('click');
+    expect(audioControl).toHaveBeenLastCalledWith('stop');
+    wrapper.unmount();
+  });
+
+  it('is absent once the show has ended', async () => {
+    const wrapper = await mountWorkspace(snapshot('ended'));
+    await emitNarration(wrapper, state('playing'));
+    expect(testid(wrapper, 'narration-line').exists()).toBe(false);
     wrapper.unmount();
   });
 });

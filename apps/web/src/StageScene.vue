@@ -4,37 +4,32 @@ import { STRAIN_MAX } from '@rpg/contracts';
 
 import type { SessionSnapshot } from '@rpg/contracts';
 import StageSlate from './StageSlate.vue';
+import DiceMoment from './DiceMoment.vue';
+import type { ActiveMoment } from './use-dice-moment';
 import { portraitAlt, pictureUrl, displayedPicture, portraitIdFor, shownScenePicture } from './pictures';
-import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
+import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, lastChanceCardText, lastChanceResult, rollBreakdown, slateKind, sortRolls, speakerName, speakerRole, stageCards, stageChip, traitName, wagerOutcomes } from './stage-format';
+import type { StageCard } from './stage-format';
 
-const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null }>();
+const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null; diceMoment?: ActiveMoment | null; diceElapsed?: number }>();
 
 const session = computed(() => props.snapshot.session);
 const characters = computed(() => props.snapshot.characters ?? []);
 const slate = computed(() => slateKind(props.snapshot));
-const chip = computed(() => statusLabel(session.value.status, props.connected));
-const chipWarn = computed(() => chip.value !== 'Live');
+const chip = computed(() => stageChip(props.snapshot, props.connected));
 
 const latest = computed(() => props.snapshot.history?.at(-1) ?? null);
 const segments = computed(() => latest.value?.segments ?? []);
 const rolls = computed(() => sortRolls(latest.value?.rolls ?? [], characters.value));
+// The dice moment covers the story panel; the dice cards wait under it until the totals land in them.
+const moment = computed(() => (props.diceMoment && latest.value && props.diceMoment.beatId === latest.value.id ? props.diceMoment : null));
+const diceWaiting = computed(() => !!moment.value && (props.diceElapsed ?? 0) < moment.value.schedule.revealAt);
 const hasActive = computed(() => !!props.activeSegmentId && segments.value.some(segment => segment.id === props.activeSegmentId));
 
-const stakes = computed(() => {
-  const snapshot = props.snapshot;
-  if (snapshot.role === 'director' || !snapshot.activeBeat) return [];
-  const list = snapshot.activeBeat.stakes ?? [];
-  const rank = (id: string) => {
-    const index = characters.value.findIndex(character => character.id === id);
-    return index === -1 ? characters.value.length : index;
-  };
-  return list.map((stake, index) => ({ stake, index }))
-    .sort((a, b) => rank(a.stake.actorCharacterId) - rank(b.stake.actorCharacterId) || a.index - b.index)
-    .map(entry => entry.stake);
-});
+const stakes = computed(() => stageCards(props.snapshot));
+const cardActor = (card: StageCard) => (card.kind === 'stake' ? card.stake.actorCharacterId : card.characterId);
 const SPOTLIGHT_MS = 8000;
 const rotating = computed(() => stakes.value.length >= 2);
-const stakeKey = computed(() => stakes.value.map(stake => stake.id).join(','));
+const stakeKey = computed(() => stakes.value.map(card => card.id).join(','));
 const spotlight = ref(0);
 const spotlightIndex = computed(() => Math.min(spotlight.value, Math.max(0, stakes.value.length - 1)));
 const cards = computed(() => (rotating.value ? stakes.value.slice(spotlightIndex.value, spotlightIndex.value + 1) : stakes.value));
@@ -338,7 +333,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
         <p class="head-scene">{{ session.scene.title }}</p>
       </div>
       <div class="head-badges">
-        <span class="chip" :class="{ warn: chipWarn }">{{ chip }}</span>
+        <span class="chip" :class="{ warn: chip.warn }">{{ chip.label }}<span v-if="chip.waiting" class="chip-pulse" aria-hidden="true"><i></i><i></i></span></span>
         <span class="ai-badge">{{ AI_BADGE }}</span>
       </div>
     </header>
@@ -352,36 +347,47 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
             <p v-if="rotating" class="wager-marker">{{ spotlightIndex + 1 }} of {{ stakes.length }}</p>
           </div>
           <div v-if="rotating" class="wager-row">
-            <div v-for="(stake, index) in stakes" :key="stake.id" class="wager-row-item" :class="{ current: index === spotlightIndex }">
-              <p class="wager-row-name">{{ nameOf(stake.actorCharacterId) }}</p>
+            <div v-for="(card, index) in stakes" :key="card.id" class="wager-row-item" :class="{ current: index === spotlightIndex }">
+              <p class="wager-row-name">{{ nameOf(cardActor(card)) }}</p>
             </div>
           </div>
           <div :class="rotating ? 'wager-focus' : 'wager-list'" :data-count="rotating ? undefined : stakes.length">
-            <div v-for="stake in cards" :key="stake.id" class="wager-card" :class="{ spotlight: rotating }">
-              <div class="wager-main">
-                <p class="wager-name">{{ nameOf(stake.actorCharacterId) }}</p>
-                <p class="wager-goal">{{ stake.intent }}</p>
-                <p v-if="stake.ruling === 'check'" class="wager-trait">{{ traitName(stake.trait) }} +{{ modifierOf(stake.actorCharacterId, stake.trait) }} · {{ stake.risk }} risk</p>
-                <p v-if="stake.helperCharacterIds.length" class="wager-trait wager-helpers">{{ helperCredit(stake, stake.helperCharacterIds.map(nameOf)) }}</p>
+            <template v-for="card in cards" :key="card.id">
+              <div v-if="card.kind === 'stake'" class="wager-card" :class="{ spotlight: rotating }">
+                <div class="wager-main">
+                  <p class="wager-name">{{ nameOf(card.stake.actorCharacterId) }}</p>
+                  <p class="wager-goal">{{ card.stake.intent }}</p>
+                  <p v-if="card.stake.ruling === 'check'" class="wager-trait">{{ traitName(card.stake.trait) }} +{{ modifierOf(card.stake.actorCharacterId, card.stake.trait) }} · {{ card.stake.risk }} risk</p>
+                  <p v-if="card.stake.helperCharacterIds.length" class="wager-trait wager-helpers">{{ helperCredit(card.stake, card.stake.helperCharacterIds.map(nameOf)) }}</p>
+                </div>
+                <div class="wager-results">
+                  <p v-for="outcome in wagerOutcomes(card.stake)" :key="outcome.label" class="wager-outcome"><b>{{ outcome.label }}</b> <span class="wager-outcome-text">{{ outcome.text }}</span></p>
+                </div>
               </div>
-              <div class="wager-results">
-                <p v-for="outcome in wagerOutcomes(stake)" :key="outcome.label" class="wager-outcome"><b>{{ outcome.label }}</b> <span class="wager-outcome-text">{{ outcome.text }}</span></p>
+              <div v-else class="wager-card" :class="{ spotlight: rotating }" data-card="last-chance">
+                <div class="wager-main">
+                  <p class="wager-name">{{ nameOf(card.characterId) }} · Last chance</p>
+                </div>
+                <div class="wager-results">
+                  <p class="wager-last">{{ lastChanceCardText(nameOf(card.characterId), card.rolled) }}</p>
+                </div>
               </div>
-            </div>
+            </template>
           </div>
         </div>
-        <div v-if="rolls.length" class="dice" :class="{ 'dice-dense': rolls.length > DENSE_ROLLS, 'dice-many': rolls.length > 9, 'dice-held': stakes.length > 0 }">
+        <div v-if="rolls.length" class="dice" :class="{ 'dice-dense': rolls.length > DENSE_ROLLS, 'dice-many': rolls.length > 9, 'dice-held': stakes.length > 0, 'dice-waiting': diceWaiting }">
           <div
             v-for="(roll, index) in rolls"
             :key="roll.id"
             class="roll"
             :class="{ 'roll-wide': rolls.length <= DENSE_ROLLS && rolls.length % 2 === 1 && index === rolls.length - 1 }"
             :data-band="roll.band"
+            :data-last-chance="roll.lastChance ? lastChanceResult(roll.band).toLowerCase().replace(' ', '-') : undefined"
           >
-            <span class="roll-total">{{ roll.total }}</span>
+            <span class="roll-total" :data-dice-target="moment ? roll.id : undefined">{{ roll.total }}</span>
             <span class="roll-detail">
-              <span class="roll-head"><span class="roll-name">{{ nameOf(roll.actorCharacterId) }}</span><span class="roll-breakdown">{{ rollBreakdown(roll) }}</span></span>
-              <span class="roll-band"><span class="roll-symbol" aria-hidden="true">{{ bandSymbol(roll.band) }}</span><span class="roll-result">{{ bandLabel(roll.band) }}</span></span>
+              <span class="roll-head"><span class="roll-name">{{ nameOf(roll.actorCharacterId) }}</span><span v-if="roll.lastChance" class="roll-last">Last chance</span><span class="roll-breakdown">{{ rollBreakdown(roll) }}</span></span>
+              <span class="roll-band"><span class="roll-symbol" aria-hidden="true">{{ bandSymbol(roll.band) }}</span><span class="roll-result">{{ roll.lastChance ? lastChanceResult(roll.band) : bandLabel(roll.band) }}</span></span>
             </span>
           </div>
         </div>
@@ -444,8 +450,8 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
         <span v-else class="initials" aria-hidden="true">{{ initials(character.displayName) }}</span>
         <span class="party-text">
           <span class="party-name">{{ character.displayName }}</span>
-          <span v-if="!crowded" class="party-strain">
-            <span class="pips" role="img" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`">
+          <span v-if="!crowded || character.condition" class="party-strain">
+            <span v-if="!crowded" class="pips" role="img" :aria-label="`Strain ${character.strain} of ${STRAIN_MAX}`">
               <span v-for="pip in STRAIN_MAX" :key="pip" class="pip" :class="{ filled: pip <= character.strain }"></span>
             </span>
             <span v-if="partyFlag(character)" class="needs-help">{{ partyFlag(character) }}</span>
@@ -466,6 +472,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
       <p class="reveal-show">{{ session.title }}</p>
       <p class="reveal-scene">{{ session.scene.title }}</p>
     </div>
+    <DiceMoment v-if="moment && !slate" :moment="moment" :elapsed="diceElapsed ?? 0" :snapshot="snapshot" layout="scene" />
   </div>
 </template>
 
@@ -487,6 +494,13 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
   padding: 12px 20px; background: var(--night-raised); box-shadow: inset 0 0 0 4px var(--void), inset 0 0 0 8px var(--herb); clip-path: var(--cut-1);
 }
 .chip.warn { box-shadow: inset 0 0 0 4px var(--void), inset 0 0 0 8px var(--candle); }
+.chip-pulse { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.chip-pulse i { display: block; width: 8px; height: 8px; background: var(--bone); }
+@media (prefers-reduced-motion: no-preference) {
+  .chip-pulse i { animation: chip-pulse 1s steps(1, end) infinite; }
+  .chip-pulse i:nth-child(2) { animation-delay: 0.5s; }
+}
+@keyframes chip-pulse { 0% { background: var(--bone); } 50% { background: var(--night); } }
 .ai-badge { font-family: var(--font-label); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--dust); white-space: nowrap; }
 
 .stage-story {
@@ -512,6 +526,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
 .wager-results { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .wager-name { font-family: var(--font-body); font-size: 40px; line-height: 48px; font-weight: 400; color: var(--candle); overflow-wrap: anywhere; }
 .wager-goal { font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--bone); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.wager-last { font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--bone); overflow-wrap: anywhere; }
 .wager-trait { font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--dust); overflow-wrap: anywhere; }
 .wager-outcome { font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--bone); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .wager-outcome b { font-family: var(--font-label); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--candle); }
@@ -526,6 +541,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
 
 .dice { flex: 0 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
 .dice-held { display: none; }
+.dice-waiting { visibility: hidden; }
 .dice-dense { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dice-many { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dice-dense .roll-total { min-width: 64px; padding: 4px 12px 8px; font-size: 40px; line-height: 40px; }
@@ -533,6 +549,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
 .dice-dense .roll-head { gap: 8px; }
 .dice-dense .roll-name { font-size: 24px; line-height: 28px; }
 .dice-dense .roll-breakdown { line-height: 28px; }
+.dice-dense .roll-last, .dice-many .roll-last { font-size: 24px; line-height: 28px; }
 .dice-dense .roll-band { font-size: 24px; line-height: 28px; }
 .dice-dense .roll-symbol { width: 28px; height: 28px; margin-right: 8px; line-height: 28px; }
 .dice-dense .roll[data-band='setback'] .roll-result { color: var(--bone); }
@@ -556,6 +573,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
 .roll-wide { grid-column: 1 / -1; }
 .roll-head { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .roll-name { flex: 0 1 auto; min-width: 0; font-family: var(--font-body); font-size: 40px; line-height: 40px; font-weight: 400; color: var(--candle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roll-last { flex: none; font-family: var(--font-body); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--bone); white-space: nowrap; }
 .roll-breakdown { flex: 0 100000 auto; min-width: 0; font-family: var(--font-label); font-size: 24px; line-height: 28px; font-weight: 400; color: var(--dust); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .roll-band { display: flex; align-items: center; min-width: 0; font-family: var(--font-body); font-size: 40px; line-height: 40px; font-weight: 400; white-space: nowrap; }
 .roll-result { flex: none; color: var(--band, var(--bone)); }
@@ -565,7 +583,7 @@ function partyFlag(character: { strain: number; condition?: 'down' | 'dead' }): 
 }
 .roll[data-band='critical'] { --band: var(--heart); }
 .roll[data-band='critical'] .roll-detail { background: var(--heart); }
-.roll[data-band='critical'] .roll-name, .roll[data-band='critical'] .roll-breakdown, .roll[data-band='critical'] .roll-result { color: var(--void); }
+.roll[data-band='critical'] .roll-name, .roll[data-band='critical'] .roll-last, .roll[data-band='critical'] .roll-breakdown, .roll[data-band='critical'] .roll-result { color: var(--void); }
 .roll[data-band='critical'] .roll-symbol { color: var(--void); background: var(--heart); box-shadow: inset 0 0 0 4px var(--void); }
 
 .lines {

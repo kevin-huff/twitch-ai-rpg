@@ -459,6 +459,7 @@ export type Beat = z.infer<typeof BeatSchema>;
 export const PublicBeatSchema = z.strictObject({
   id: IdSchema, kind: z.enum(['conversation', 'action']), phase: BeatPhaseSchema, revision: RevisionSchema,
   stakes: z.array(PublicActionContractSchema), locked: z.boolean(), stakesApproved: z.boolean().optional(),
+  planning: z.boolean().optional(), lastChanceFor: z.array(IdSchema).optional(),
 });
 export type PublicBeat = z.infer<typeof PublicBeatSchema>;
 export const PublishedBeatSchema = z.strictObject({
@@ -522,6 +523,8 @@ export function conditionLineRefusal(character: { displayName: string; condition
   if (words > DOWNED_SAY_WORDS) return `${name} is down, so they can say only a few words, up to ${DOWNED_SAY_WORDS}. This line has ${words}.`;
   return null;
 }
+export const PlanThrownAwaySchema = z.strictObject({ characterId: IdSchema, change: z.enum(['changed', 'took_back']) });
+export type PlanThrownAway = z.infer<typeof PlanThrownAwaySchema>;
 export const DirectorSnapshotSchema = z.strictObject({
   ...snapshotBase, role: z.literal('director'), activeBeat: BeatSchema.nullable(),
   submissions: z.array(SubmissionSchema), npcDetails: z.array(NpcSchema), characterDetails: z.array(CharacterSchema),
@@ -530,6 +533,7 @@ export const DirectorSnapshotSchema = z.strictObject({
   scenePictureStatus: ScenePictureStatusSchema.nullable().default(null), actionPicture: ActionPictureStatusSchema.nullable().default(null), portraitJobs: z.array(PortraitJobSchema).max(50).default([]),
   pictureSettings: PictureSettingsSchema.nullable().default(null), lastSceneBeatId: IdSchema.nullable().default(null),
   gallery: GalleryStatusSchema.nullable().default(null), guidance: GuidanceSchema.optional(),
+  planThrownAway: PlanThrownAwaySchema.optional(),
 });
 export type DirectorSnapshot = z.infer<typeof DirectorSnapshotSchema>;
 export const PlayerSnapshotSchema = z.strictObject({
@@ -594,6 +598,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
     owes: z.array(z.string().trim().min(1).max(CARD_ENTRY_MAX)).max(OWES_MAX).optional(),
     feelings: z.array(z.string().trim().min(1).max(CARD_ENTRY_MAX)).max(FEELINGS_MAX).optional(),
     looksChanged: z.string().trim().max(LOOKS_CHANGED_MAX).optional() }),
+  z.strictObject({ type: z.literal('stop_ai'), ...commandBase, beatId: IdSchema }),
   z.strictObject({ type: z.literal('set_voice'), ...commandBase, voiceProfileId: VoiceRefSchema.nullable() }),
   z.strictObject({ type: z.literal('set_status'), ...commandBase, status: z.enum(['live', 'paused', 'ended']), expectedStateRevision: RevisionSchema }),
 ]);

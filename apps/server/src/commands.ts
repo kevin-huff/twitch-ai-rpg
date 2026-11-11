@@ -11,9 +11,9 @@ import { attachPreparedAudio } from './draft-audio';
 import { makeScript } from './script';
 import { finishUsageAttempt, startUsageAttempt } from './operations';
 import { draftNarration, sceneLocationTitle } from './picture-prompts';
-import { RequestBudgetError, failureSentence } from './generation-failure';
+import { RequestBudgetError, failureSentence, reassurance, type FailureRound } from './generation-failure';
 import { RELEASED } from './picture-views';
-import { AppError, authorize, conflict, corrections, currentBeat, history, project, readGuidance, readState, saveBeat, saveGuidance, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
+import { AppError, authorize, conflict, corrections, currentBeat, history, planThrownAwayFor, project, readGuidance, readState, saveBeat, saveGuidance, saveState, saveSubmission, submissions, type Actor, type GalleryStatusSource } from './repository';
 
 const staleStakes = "These stakes no longer match the characters' cards. Something they carry or wear, a promise or debt, how people feel, or who is down or has died changed after the plan, for example through Edit look and items. Press Plan again for new stakes, or fix the outcomes under Edit typed effects and approve again.";
 function itemErrorOrConflict<T>(run: () => T): T {
@@ -29,7 +29,7 @@ function setCardList(character: Character, list: 'wearing' | 'owes' | 'feelings'
 }
 const cardSnapshot = (character: Character) => ({ possessions: [...character.possessions], wearing: [...(character.wearing ?? [])], owes: [...(character.owes ?? [])], feelings: [...(character.feelings ?? [])], looksChanged: character.looksChanged ?? '' });
 export const digest = (data: unknown) => createHash('sha256').update(JSON.stringify(data)).digest('hex');
-const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character', 'set_cast', 'rest']);
+const liveCommands = new Set(['change_scene', 'save_npc', 'reveal_npc', 'record_correction', 'set_beat_steering', 'set_guidance', 'save_live_character', 'set_cast', 'rest', 'stop_ai']);
 function dropBlankCritical<T extends { outcomes: { critical?: { publicText: string; effects: readonly unknown[] } } }>(contract: T): T {
   const critical = contract.outcomes?.critical;
   if (critical && !critical.publicText.trim() && !critical.effects?.length) delete contract.outcomes.critical;
@@ -78,7 +78,7 @@ async function finish(client: PoolClient, sessionId: string, actor: Actor, comma
 
 function checkBeat(beat: Beat | null, command: Command): asserts beat is Beat {
   if (!beat || !('beatId' in command) || command.beatId !== beat.id) throw new AppError(409, 'conflict', 'This beat is no longer active. Refresh before continuing.');
-  if (command.expectedBeatRevision !== beat.revision) conflict('The beat changed. Review the latest version.');
+  if (!('expectedBeatRevision' in command) || command.expectedBeatRevision !== beat.revision) conflict('The beat changed. Review the latest version.');
 }
 async function keepWaitingLines(client: PoolClient, all: Submission[]) {
   const kept: string[] = [];
@@ -97,6 +97,36 @@ async function resetOpenRound(client: PoolClient, beat: Beat, stateRevision: num
   const cancelled = await client.query<{ id: string }>("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND status IN ('queued','running') RETURNING id", [beat.id]);
   return { resetBeatId: beat.id, cancelledJobIds: cancelled.rows.map((row) => row.id) };
 }
+// A player changed or took back a line that was in the plan: the plan is thrown away and its waiting AI call stops at once.
+// The note names the player for the director until the director plans again; it is written only when there was a plan or call to throw away, or the notice is already showing.
+async function throwAwayPlannedLine(client: PoolClient, sessionId: string, beat: Beat, characterId: string, reset: () => void) {
+  const hadPlan = beat.phase === 'stakes_review';
+  const showing = Boolean(await planThrownAwayFor(client, sessionId, beat));
+  reset();
+  await saveBeat(client, beat);
+  const cancelled = await client.query<{ id: string }>("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND status IN ('queued','running') RETURNING id", [beat.id]);
+  const note = hadPlan || cancelled.rows.length > 0 || showing ? { planThrownAway: { beatId: beat.id, beatRevision: beat.revision, characterId } } : {};
+  return { cancelledJobIds: cancelled.rows.map((row) => row.id), note };
+}
+// A second plan that did not finish (stopped, failed or thrown away) leaves the round as it was before that plan: the stakes on the
+// table keep the lines they cover, and any line that plan added goes back to waiting, so no line can be rolled into the story without
+// stakes. If that plan had dropped a line the stakes cover, the stakes no longer fit the director's picks and the round goes back to
+// planning. An ordinary conversation has no stakes to fit, so it is left alone. Returns true when it changed the beat.
+async function keepEarlierPlan(client: PoolClient, beat: Beat, all: Submission[]) {
+  if (beat.phase !== 'stakes_review' || !beat.contracts.length) return false;
+  const covered = new Set(beat.contracts.flatMap((contract) => contract.submissionIds));
+  const added = beat.selectedSubmissionIds.filter((id) => !covered.has(id));
+  const dropped = [...covered].some((id) => !beat.selectedSubmissionIds.includes(id));
+  if (!added.length && !dropped) return false;
+  if (dropped) {
+    beat.phase = 'collecting'; beat.classification = null; beat.contracts = []; beat.stakesApproved = false; beat.inputSnapshotHash = null;
+    return true;
+  }
+  beat.selectedSubmissionIds = beat.selectedSubmissionIds.filter((id) => covered.has(id));
+  for (const submission of all.filter((item) => added.includes(item.id) && item.status === 'selected')) { submission.status = 'queued'; await saveSubmission(client, submission); }
+  return true;
+}
+const roundShape = (task: 'plan' | 'render', lines: number, beat: Beat): FailureRound => ({ task, lines: lines > 0, dice: task === 'render' && (beat.resolution?.rolls.length ?? 0) > 0 });
 const isOpenRound = (beat: Beat | null): beat is Beat => Boolean(beat && ['collecting', 'stakes_review'].includes(beat.phase));
 const isRolled = (beat: Beat | null) => Boolean(beat && ['locked', 'draft_review'].includes(beat.phase));
 // Waiting AI calls stop as soon as a live change cancels their job. A cancel can land before its call has registered, so those ids are held briefly.
@@ -483,8 +513,12 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       await saveSubmission(client, submission);
       eventData = { submissionId: submission.id };
       if (beat?.selectedSubmissionIds.includes(submission.id)) {
-        beat.phase = 'collecting'; beat.classification = null; beat.stakesApproved = false; beat.contracts = []; beat.inputSnapshotHash = null; beat.draft = null; beat.generation++; beat.revision++;
-        await saveBeat(client, beat);
+        const planned = beat;
+        const thrown = await throwAwayPlannedLine(client, sessionId, planned, actor.character_id!, () => {
+          planned.phase = 'collecting'; planned.classification = null; planned.stakesApproved = false; planned.contracts = []; planned.inputSnapshotHash = null; planned.draft = null; planned.generation++; planned.revision++;
+        });
+        cancelledJobIds = thrown.cancelledJobIds;
+        eventData = { ...eventData, ...thrown.note };
       }
     } else if (command.type === 'cancel_submission') {
       const submission = all.find((item) => item.id === command.submissionId && item.characterId === actor.character_id);
@@ -492,7 +526,15 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       if (submission.revision !== command.expectedSubmissionRevision || !['queued', 'selected'].includes(submission.status)) conflict('Submission can no longer be cancelled.');
       submission.status = 'cancelled'; submission.revision++;
       await saveSubmission(client, submission);
-      if (beat?.selectedSubmissionIds.includes(submission.id)) { beat.selectedSubmissionIds = beat.selectedSubmissionIds.filter((id) => id !== submission.id); beat.phase = 'collecting'; beat.classification = null; beat.stakesApproved = false; beat.contracts = []; beat.generation++; beat.revision++; await saveBeat(client, beat); }
+      eventData = { submissionId: submission.id };
+      if (beat?.selectedSubmissionIds.includes(submission.id)) {
+        const planned = beat;
+        const thrown = await throwAwayPlannedLine(client, sessionId, planned, actor.character_id!, () => {
+          planned.selectedSubmissionIds = planned.selectedSubmissionIds.filter((id) => id !== submission.id); planned.phase = 'collecting'; planned.classification = null; planned.stakesApproved = false; planned.contracts = []; planned.generation++; planned.revision++;
+        });
+        cancelledJobIds = thrown.cancelledJobIds;
+        eventData = { ...eventData, ...thrown.note };
+      }
     } else if (command.type === 'set_voice') {
       const character = state.characters.find((item) => item.id === actor.character_id);
       if (!character) throw new AppError(404, 'not_found', 'That character is not assigned to this session.');
@@ -594,6 +636,15 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       }
       if (beat && command.status !== 'ended') { beat.sourceStateRevision = state.session.stateRevision; await saveBeat(client, beat); }
       await saveState(client, state);
+    } else if (command.type === 'stop_ai') {
+      if (!beat || command.beatId !== beat.id) conflict('This beat is no longer active. Refresh before continuing.');
+      // The director's own stop: the round's waiting AI work is cancelled and its call ends after commit. The beat is left as it is,
+      // except that a stopped second plan gives the earlier stakes back the lines they cover.
+      const stopped = await client.query<{ id: string; task: string }>("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND status IN ('queued','running') RETURNING id,task", [command.beatId]);
+      if (!stopped.rows.length) conflict('The AI had already finished, so there was nothing to stop.');
+      if (beat && stopped.rows.some((row) => row.task === 'plan') && await keepEarlierPlan(client, beat, all)) { beat.revision++; await saveBeat(client, beat); }
+      cancelledJobIds = stopped.rows.map((row) => row.id);
+      eventData = { beatId: command.beatId, stopped: stopped.rows.map((row) => ({ id: row.id, task: row.task })) };
     } else {
       checkBeat(beat, command);
       if (command.type === 'plan_beat' || command.type === 'render_beat') {
@@ -632,6 +683,8 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
         const jobId = randomUUID();
         await saveBeat(client, beat);
         await client.query('INSERT INTO generation_jobs(id,session_id,beat_id,snapshot_hash,generation,status,input,task,command_id,actor_id,request_hash) VALUES($1,$2,$3,$4,$5,\'running\',$6,$7,$8,$9,$10) ON CONFLICT(actor_id,command_id) DO UPDATE SET id=excluded.id,snapshot_hash=excluded.snapshot_hash,generation=excluded.generation,status=\'running\',input=excluded.input,error=NULL,created_at=clock_timestamp(),finished_at=NULL', [jobId, sessionId, beat.id, snapshotHash, beat.generation, context, task, command.commandId, actor.actor_id, requestHash]);
+        // Recorded as the work begins, so every page gets the usual refresh notice now instead of when the AI answers.
+        await recordEvent(client, sessionId, actor, command.commandId, 'job.started', state.session.stateRevision, { beatId: beat.id, jobId, task });
         return { generation: { task, context, jobId, snapshotHash, generation: beat.generation } };
       }
       if (command.type === 'set_beat_steering') {
@@ -665,6 +718,11 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
           if (referenced.length !== contract.submissionIds.length || referenced.some((submission) => !beat!.selectedSubmissionIds.includes(submission.id))) conflict('Contracts must reference selected submissions.');
           if (!referenced.some((submission) => submission.characterId === contract.actorCharacterId)) conflict('The actor must supply the action.');
           if (contract.helperCharacterIds.some((id) => !referenced.some((submission) => submission.characterId === id))) conflict('Each helper must consent through their own selected action.');
+        }
+        // Every line rolls: outside an ordinary conversation, each picked line leads a stake or is named by the one it helps.
+        if (command.classification === 'action') {
+          const cited = new Set(command.contracts.flatMap((contract) => contract.submissionIds));
+          if (selected.some((submission) => !cited.has(submission.id))) conflict('A picked line has no stakes yet, so it would go into the story with no roll. Press Plan again so every picked line gets its stakes.');
         }
         beat.contracts = command.contracts; beat.classification = command.classification; beat.stakesApproved = true; beat.phase = 'stakes_review'; beat.lastError = null; beat.generation++;
         await client.query("UPDATE generation_jobs SET status='cancelled',finished_at=now() WHERE beat_id=$1 AND task='plan' AND status='running'", [beat.id]);
@@ -807,7 +865,7 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     ]);
   } catch (error) {
     if (!cancelled) {
-      failure = failureSentence(error, Date.now() - started);
+      failure = failureSentence(error, Date.now() - started, roundShape(generation.task, generation.context.submissions.length, generation.context.beat));
       console.warn(`The ${generation.task} request for session ${sessionId} failed: ${error instanceof Error ? error.message : 'unknown error'}${error instanceof ProviderError && error.detail ? ` ${error.detail}` : ''}`);
     }
   }
@@ -821,9 +879,16 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
     const state = await readState(client, sessionId);
     if (cancelled || !beat || beat.id !== generation.context.beat.id || beat.generation !== generation.generation || beat.revision !== generation.context.beat.revision || beat.phase !== generation.context.beat.phase || state.session.stateRevision !== generation.context.state.session.stateRevision || job?.status !== 'running' || job.snapshot_hash !== generation.snapshotHash) {
       await client.query('UPDATE generation_jobs SET status=\'cancelled\',finished_at=now() WHERE id=$1', [generation.jobId]);
+      // Nothing newer has replaced this plan on its own round, so the round goes back to how it was before it.
+      const restored = Boolean(beat && generation.task === 'plan' && beat.id === generation.context.beat.id && beat.generation === generation.generation
+        && await keepEarlierPlan(client, beat, await submissions(client, sessionId)));
+      if (restored && beat) { beat.revision++; await saveBeat(client, beat); }
+      // A call that ran to its end and was then thrown away has no command of its own to tell the other pages, so it tells them here.
+      if (!cancelled || restored) await recordEvent(client, sessionId, actor, command.commandId, 'job.discarded', state.session.stateRevision, { beatId: generation.context.beat.id, jobId: generation.jobId, task: generation.task });
       return { superseded: true as const };
     }
     const draftBefore = beat.draft;
+    const stakesBefore = beat.contracts;
     try {
       if (!failure && generation.task === 'plan') {
         const plan = output as Awaited<ReturnType<AiProvider['plan']>>;
@@ -839,8 +904,10 @@ export async function executeCommand(deps: CommandDependencies, sessionId: strin
       }
     } catch (error) {
       console.warn(`The ${generation.task} reply for session ${sessionId} failed validation: ${error instanceof Error ? error.message : 'unknown error'}`);
-      failure = 'The generated response failed validation. Retry or provide a manual script.';
+      failure = `The AI's reply failed the app's checks.${reassurance(roundShape(generation.task, generation.context.submissions.length, beat))}`;
     }
+    // Only while the earlier stakes are still on the table: a reply that failed the checks after it was taken in stays, with the director's picks, for fixing by hand.
+    if (failure && generation.task === 'plan' && beat.contracts === stakesBefore) await keepEarlierPlan(client, beat, await submissions(client, sessionId));
     beat.lastError = failure; beat.revision++;
     await saveBeat(client, beat);
     await client.query('UPDATE generation_jobs SET status=$2,error=$3,finished_at=now() WHERE id=$1', [generation.jobId, failure ? 'failed' : 'succeeded', failure]);

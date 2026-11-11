@@ -116,14 +116,14 @@ export const topics: HelpTopic[] = [
       {
         heading: 'One beat from start to finish',
         paragraphs: [
-          'A beat is one round of play: the players send lines, you choose what goes in, and the AI writes the scene. The director page has one bar of actions with a single gold button, and the gold button is always the next thing to do. Above it the page says Step 1 of 5, and Step 1 of 3 only for an ordinary round, which is a plain conversation with no dice except a last chance for anyone who is down. A sentence says what comes next. A status line shows the work in progress, for example Planning… or Writing the script…. Everything else you might need sits in the closed More fold.',
+          'A beat is one round of play: the players send lines, you choose what goes in, and the AI writes the scene. The director page has one bar of actions with a single gold button, and the gold button is always the next thing to do. Above it the page says Step 1 of 5, and Step 1 of 3 only for an ordinary round, which is a plain conversation with no dice except a last chance for anyone who is down. A sentence says what comes next. A status line shows the work in progress, for example Planning… or Writing the script…. While the AI works, a quiet Stop the AI button sits beside it. Everything else you might need sits in the closed More fold.',
         ],
         steps: [
           'Before the first round, press Narrate the opening. The AI writes narration that sets the opening scene from your scenario, so the cast knows where they are. Read it, then press Publish: it plays in the narrator\'s voice on stream and shows on every seat. After a scene change, More has Narrate the scene.',
-          'Lines from players arrive already ticked. Untick any line you want to leave out of this beat. Lines that arrive while the AI is planning are also ticked, but they are left out of the current plan: the queue tags them Not in this plan, and the bar counts them and shows a Plan again button so you can plan again with them included.',
+          'Lines from players arrive already ticked. Untick any line you want to leave out of this beat. A line from a character who is down or dead, and cannot use it, arrives unticked and switched off, with the reason under it. See Lines from a character who is down or dead. Lines that arrive while the AI is planning are also ticked, but they are left out of the current plan: the queue tags them Not in this plan, and the bar counts them and shows a Plan again button so you can plan again with them included.',
           'For a conversation, press Answer these lines. It opens the conversation, plans it and stops at What\'s at risk so you can look first. The gold button then reads Approve and roll.',
           'For something risky, press Open action round instead, then Plan. Plan plans the ticked lines in any round. The AI proposes what each line means for the story.',
-          'Read the What\'s at risk cards. Each card shows the goal, the roll in words and four results: 10 or more is a clean success, 7 to 9 is a success with a cost, 6 or less is a setback, and a double 1 is a Critical failure whatever the total. Press Edit on a card to change it, then Done. The stage fits about 90 characters of a goal and 110 of each result. The character counts appear only inside a card\'s Edit, and only when a line runs over, so shorten anything over before you approve.',
+          'Read the What\'s at risk cards. Each card shows the goal, the roll in words and four results: 10 or more is a clean success, 7 to 9 is a success with a cost, 6 or less is a setback, and a double 1 is a Critical failure whatever the total. Press Edit on a card to change it, then Done. In Edit, each change the AI proposed, such as a strain hit or a going-down, has its own Remove button. Remove strikes only that change, keeps the words of the result, and marks the stakes as changed, so you approve them again. The box under Edit typed effects, helpers & dependencies stays for everything else. The stage fits about 90 characters of a goal and 110 of each result. The character counts appear only inside a card\'s Edit, and only when a line runs over, so shorten anything over before you approve.',
           'Press Approve and roll. It approves the stakes, locks the lines and writes the script. The server rolls the dice once, at the lock, and the result never changes after that, however many times you retry.',
           'Read the script. You can edit a line, remove it, or pick Add a line to add narration or a non-player character line. When you have edited it, open More and press Save edits.',
           'Press Publish. The audience sees the beat once you do.',
@@ -138,7 +138,7 @@ export const topics: HelpTopic[] = [
           'You can still waive a roll. Set a card to No check, so the action simply works, or to Blocked, so it cannot happen yet. You can also untick a line to leave it out of the round. A ticked line that arrived after the AI began planning is not in the plan yet, so press Plan again to bring it in.',
           'Lock and draft appears only when you set a round to Ordinary conversation, which means no dice and nothing changes, with one exception: anyone who is down still gets their last-chance roll when you press Lock and draft, and the result applies when you publish. The stakes cards name them. Every other round goes through Approve and roll.',
           'Only action rounds tick countdowns. A conversation round rolls its dice without ticking them.',
-          'The What\'s at risk cards show strain before and after, for example Scrot strain 5 to 7 of 8. Each line is counted from the character\'s strain right now, not added to the other lines. A character below 8 stops at 8 when a hit would pass it, and the line adds how far, for example 2 past full, which becomes a story cost. A hit on a character who is already at 8 puts them down instead, and the line says goes down. When you review the script, Changes on publication adds the strain lines up for each character, because they all apply together, so it shows one running total per character and flags a combined overflow or a coming down. The cards keep counting from the strain right now, because each card\'s results are alternatives.',
+          'The What\'s at risk cards show strain before and after, for example Scrot strain 5 to 7 of 8. Each line is counted from the character\'s strain right now, not added to the other lines. A character below 8 stops at 8 when a hit would pass it, and the line adds how far, for example 2 past full, which becomes a story cost. A hit on a character who is already at 8 puts them down instead, and the line says goes down, highlighted the same way as the past-full line. When you review the script, Changes on publication adds the strain lines up for each character, because they all apply together, so it shows one running total per character and flags a combined overflow or a coming down. The cards keep counting from the strain right now, because each card\'s results are alternatives.',
           'Strain is drawn as a bar, with a notch for each point. It reads Strain 5 of 8, and at 8 it adds Spent. On a player\'s seat the same bar reads Fresh, Worn or Spent, with Fresh in the lower half, Worn from the middle up to just below full, and Spent at 8.',
         ],
       },
@@ -156,7 +156,7 @@ export const topics: HelpTopic[] = [
         heading: 'Character voices',
         paragraphs: [
           'Each non-player character can have its own voice. In the live controls and the story editor, open Voice on a character and pick one, or leave it on Narrator. Press Play sample to hear a voice first. When the AI creates a story, it picks fitting voices for the cast, and you can change any of them.',
-          'In the script review, a Read as line shows the exact words a voice will speak. In a manual script, the Delivery choice (Neutral, Quiet, Urgent or Amused) sets the tone of a line. The storyteller adds its own audio tags to the voice copy of each line, and the words never change.',
+          'In the script review, a Read as line shows the exact words a voice will speak. In a script you write yourself, the Delivery choice (Neutral, Quiet, Urgent or Amused) sets the tone of a line. The storyteller adds its own audio tags to the voice copy of each line, and the words never change.',
         ],
       },
       {
@@ -167,6 +167,8 @@ export const topics: HelpTopic[] = [
           'Narration prepares by itself as soon as the script is ready. While it works the gold button reads Preparing voice…, and when it is done the page says Voice ready. If you press Publish while the voice is still preparing, the page says it is waiting for the voice and publishes the moment it is ready. You do not have to press anything twice.',
           'If you edit the script, save the edits under More before you publish. Until you do, Publish is off, because a publish would drop your edits.',
           'Narration plays on stream when you publish, and it waits for the previous narration to finish first. It plays in one browser source, called the presenter, which is the main show link, or its sound link, loaded in OBS. When no presenter is open, the page shows No show audio: the main show link isn\'t open in OBS. That line only warns you, and it blocks nothing.',
+          'When the round has rolls, the stream plays the dice first, and the narration starts by itself when the dice finish, 3 to 5 seconds after you publish. The Stage and OBS topic explains the dice on stream.',
+          'A narration line sits just under the beat controls, always in view, so you never have to open a fold while the narration plays. It says what is happening: Narration playing: beat 3. or Narration paused: beat 3. or Narration finished: beat 3. or Narration stopped: beat 3. or No narration is playing. When no page is playing the show audio, it starts with No page is playing the show audio. While narration plays, its buttons are Pause narration and Stop narration. While it is paused they are Resume narration and Stop narration, and Resume narration is off when no page has the show audio. The line reads the same state as the full audio panel and uses its controls. The full panel, with Pause shared audio, Resume shared audio, Skip segment and Stop shared audio, stays under Show all.',
           'If the show audio drops while narration is playing, for example because the page was closed or lost its connection, the narration pauses. When a page takes the show audio again, the narration picks up from where it stopped by itself, and the status strip on the director page says which page resumed it and when, for example Narration resumed by itself on the main show link (OBS) at 7:42 PM. A pause you pressed yourself, or one you ended with Stop that one, never resumes by itself. Press Resume shared audio for those. While narration is paused because the audio dropped and no page has it, Pause shared audio keeps it paused. If you publish the next beat in that time, the new beat wins: its narration starts when a page takes the audio, and the older one does not come back. A page you stopped with Stop that one says it was stopped from the director page and has to be reloaded to play the show audio again.',
           'Press Preview narration to hear the narration yourself before you publish, and Stop preview to stop it. If preparing the voice fails, the beat bar says: The voice could not be prepared. Press Prepare voice again, or Publish without voice. A short network blip does not count as a failure, and the page keeps checking. Prepare voice again tries once more. Publish without voice shows the beat as text only. Viewers read it on the stage.',
           'If the script proposes facts the story must keep true, they are listed under Facts to remember above the bar, and publishing keeps them. Tick Don\'t keep these to publish without them.',
@@ -175,19 +177,37 @@ export const topics: HelpTopic[] = [
       {
         heading: 'When drafting fails',
         paragraphs: [
-          'The dice and the locked lines stay the same however many times you retry. The bar shows the error, and the gold button reads Try again. Pick whichever of these fits.',
+          'When the AI cannot finish, the bar shows what went wrong in a fixed sentence that never copies the AI\'s own words. Your lines and your ticks stay as they are however many times you retry, and a rolled die never changes. A failed plan and a failed script read differently, because a plan has no dice and no script yet.',
         ],
         steps: [
-          'Press Try again to ask the AI again.',
+          'After a failed plan, the bar says: The plan could not be made. Plan again, or write the stakes yourself. The error line names the reason, for example The AI request failed. or The AI\'s reply failed the app\'s checks., then says: Your lines are safe. Plan again, or write the stakes yourself. The gold button reads Plan again, and one press plans the ticked lines once more.',
+          'Press Write the stakes myself, beside the gold button, to write the stakes by hand. The stakes cards come up blank with the note: The AI did not make a plan. Write what could happen for each line below, then approve and roll. Fill them in, then press Approve and roll.',
+          'After a failed script, the gold button reads Try again, and the error ends: Your lines and dice are safe. Try again, or write the script yourself. A round with no dice says Your lines are safe. instead. Press Try again to ask the AI again.',
           'Press Write it myself and write the lines yourself. Pick Add a line to add narration or a non-player character line. If you typed lines after Write it myself, Try again first asks Replace what you wrote? Press Yes, replace it, or Keep what I wrote.',
           'Open Abandon this beat under More if the beat cannot be saved. You give a reason, and published history stays as it was.',
+        ],
+      },
+      {
+        heading: 'Stop the AI',
+        paragraphs: [
+          'While the AI plans or writes the script, every beat control is off, but a quiet Stop the AI button beside the status line stays on. One press stops the AI\'s work, with no question first. It also ends the request to the AI, so nothing keeps running behind the page.',
+          'Stop the AI keeps every line, every tick and every die already rolled. The round goes back one step: after a plan you are back at Plan, and after a script you are back at Draft the scene, with Write it myself beside it. The bar says: You stopped the AI. Nothing from that try was used. It shows no error. The notice stays until you press something else in the bar or the beat changes. The button also works if you reload the page while the AI is working.',
+          'If stakes from an earlier plan are already on the page and you stop a second plan, those stakes stay with the lines they cover. A late line the second plan would have added goes back to waiting and still reads Not in this plan, so you can approve the earlier stakes without it or press Plan again. The same happens when a second plan fails. No line goes into the story without stakes: if a picked line has none, approving is refused and the page asks you to press Plan again.',
+          'Stopping is always your own choice. The app has no time limit and never stops the AI for being slow, so a plan can still take several minutes. If the AI finished just before you pressed, the page says: The AI had already finished, so there was nothing to stop.',
+        ],
+      },
+      {
+        heading: 'When a player changes a line in the plan',
+        paragraphs: [
+          'A player can change or take back a line that is in the plan. That throws the plan away and sends the round back to taking lines, and a plan the AI is still making stops at once. The bar names the player: Lark changed a line that was in the plan, so the plan was thrown away. Plan again. or Lark took back a line that was in the plan, so the plan was thrown away. Plan again. Press Plan again when you are ready.',
+          'The notice clears when you change anything in the round. It never shows for your own corrections, Who is here or Rest, which have their own notices. The player\'s seat warns them before they change a picked line.',
         ],
       },
       {
         heading: 'Pausing the show',
         paragraphs: [
           'Press Pause show at the top of the director page when the group needs a break. The stage shows a pause slate until you press Resume show. While the show is paused, every other button in the bar is off and the gold button reads Resume show. A player can also ask for a pause. You see the request on your page.',
-          'If the AI is planning or writing when you pause, the page asks first: The AI is still working on this round. Pausing now throws that work away. Press Pause anyway to pause and let the AI start again later, or Keep going to leave the show running. The question shows only while the AI plans or writes, and it closes when that work ends. Quick steps such as approving, locking or publishing never trigger it. After Pause anyway, the beat controls say: You paused, so the AI\'s work on this round was thrown away. Press Plan again when you resume. (After a script it says Press Draft the scene again.) This question also shows when you press Pause now on a player\'s pause request.',
+          'If the AI is planning or writing when you pause, the page asks first: The AI is still working on this round. Pausing now throws that work away. Press Pause anyway to pause and let the AI start again later, or Keep going to leave the show running. The question shows only while the AI plans or writes, and it closes when that work ends. Quick steps such as approving, locking or publishing never trigger it. After Pause anyway, the beat controls say: You paused, so the AI\'s work on this round was thrown away. Press Plan again when you resume. (After a script it says Press Draft the scene again.) This question also shows when you press Pause now on a player\'s pause request. Pausing does not stop a stalled AI call, because the call keeps running while the stage shows the pause slate. To get out of a stalled call, press Stop the AI instead.',
         ],
       },
       {
@@ -291,8 +311,15 @@ export const topics: HelpTopic[] = [
           'A downed character is Down. They send no Do lines and no What I have. They can still send a Say line of up to 8 words. Eight words is about three seconds of speech, enough to call for help, give a last clue or say goodbye, and short enough that a dying character cannot keep leading scenes. Help me say it is off for them.',
           'The rescue window runs until the next round whose dice are rolled. Conversation rounds and action rounds both count. A Narrate the scene beat has no dice, so it never uses the window up. Each downed character has their own window and their own last chance. The Show status strip on the director page has a chip for each downed character that says whether the round is open, when the window closes and that a last chance is coming.',
           'A rescue comes from another character who is up. Their line rolls like any line, and a rescue on a clean success or a success with a cost brings the downed character back up at 6 of 8 strain. A downed character cannot help or rescue anyone. A rescue that rolled a setback leaves the last chance to roll.',
-          'If nobody saved them when the dice are rolled, the character gets one last chance: two plain dice, with no trait and no Edge. A clean success or a success with a cost means they pull through at 7 of 8. A setback or double 1s means they die. That is about 58 in 100 to pull through. It shows with the other rolls, marked Last chance, and its result applies when you publish. The 12-roll limit for a round counts last chances. The script tells what happened, and the AI never invents a death of its own.',
+          'If nobody saved them when the dice are rolled, the character gets one last chance: two plain dice, with no trait and no Edge. A clean success or a success with a cost means they pull through at 7 of 8. A setback or double 1s means they die. That is about 58 in 100 to pull through. It shows with the other rolls, marked Last chance, and its result applies when you publish. The 12-roll limit for a round counts last chances. The script tells what happened, and the AI never invents a death of its own. The stream tells viewers first: see A last chance on stream in Stage and OBS.',
           'Rest sets everyone’s strain to 0, the downed and the dead included, and never changes a condition. Only a rescue, a last chance or your own correction does that. Abandoning a rolled round throws its last chance away with its other dice.',
+        ],
+      },
+      {
+        heading: 'Lines from a character who is down or dead',
+        paragraphs: [
+          'A line a character queued before going down can no longer be used if it is a Do line, or a Say line of more than 8 words. A dead character\'s lines cannot be used at all, and neither can a line that speaks to a non-player character who has died. Plan would refuse such a line, so the queue says so up front.',
+          'These lines arrive unticked, their box is switched off, and a note under each says why, for example Scrot is down, so this Do line can\'t be used. or Scrot has died, so this line can\'t be used. For a long Say line it adds the count: Scrot is down, so this Say line can\'t be used: it has 12 words and the limit is 8. After you use Bring back, the box switches on. During a round, the lines the page unticked are ticked again, and a line you unticked yourself stays as you left it. Between rounds a correction leaves every waiting line unticked, as it always does, so tick the ones you want.',
         ],
       },
       {
@@ -497,7 +524,7 @@ export const topics: HelpTopic[] = [
           'You can play without knowing anything about tabletop games. You write what your character says or does, and the director and an AI storyteller handle the rest. Before the show you need three things: press Join, make sure your character has a name, and wait for the director to start.',
         ],
         steps: [
-          'Open the invitation link you were sent, on the device you\'ll play on. Each link works once. The page says "You\'ve been invited to play" and names the show. If it says "This invitation has already been used or has expired. Ask your host for a new link.", ask the host for a new link.',
+          'Open the invitation link you were sent, on the device you\'ll play on. Each link works once, but if you close the tab you can tap the same link again in the same browser to get back to your seat. The page says "You\'ve been invited to play" and names the show. If it says "This invitation has already been used or has expired. Ask your host for a new link.", the link was used somewhere else or ran out, so ask the host for a new link.',
           'Press Join to take your seat.',
           'You land on one page that stays your page until the show ends. It shows the show title, the premise and the cast. A seat with no card yet reads like Seat 2 · waiting, and your own seat is marked (you), for example Seat 2 (you) · waiting.',
           'Under Your character, check the card. If your host made it, the page says "Your host picked this character for you." You can play it as it is, or press Change my card to open the short card form.',
@@ -535,8 +562,9 @@ export const topics: HelpTopic[] = [
         steps: [
           'The scene your character is in, with a small picture of it once one is made, and who you\'re playing (press Who is (your character)? to see your card and portrait again). The card now also shows Changed by the story, Wearing, Promises and debts and How people feel, each one only when it has something in it, and folded until you open it. They show what the story has done to your character, and the director can change them. You cannot.',
           'Your strain, a small bar under your character\'s name. It reads Fresh, Worn or Spent. Fresh is the low half, Worn is from the middle up to just below full, and Spent is full, which is 8. More strain while you are Spent puts your character down. It goes back to 0 when the director rests everyone. When you are Spent it also says: Your Do lines will help someone else for now. What you say still rolls.',
-          'A banner that says what\'s happening right now.',
-          'The story, right under the banner. It shows the latest beat.',
+          'A banner that says what stage the round is at right now. See The banner at every stage.',
+          'What is at stake for you, under the banner, only while the approved stakes are waiting for the story. See What is at stake for you.',
+          'The story, right under the banner. It shows the latest beat, and above it a line says What changed for you when the result changed your character.',
           'How this works, a three-step reminder. It starts closed. Press it to open it.',
           'The form: Say something, Do something, a box to write in, and Send. Above it, a closed What I have list holds your items.',
           'What you sent, with the progress of each line.',
@@ -545,11 +573,43 @@ export const topics: HelpTopic[] = [
         ],
       },
       {
+        heading: 'The banner at every stage',
+        paragraphs: [
+          'The banner on your seat says what stage the round is at, and it stays true at every step. It changes by itself, so you never need to reload.',
+        ],
+        steps: [
+          'The story moved on: the director just published a beat. It tells you to read the new part under The story, or to press Play there to hear it, and that you can write your next line now. It stays until you start a line or a round opens.',
+          'Waiting for the next turn: no round is open. You can write now, and your line waits for the next turn.',
+          'What does Scrot say? or What does Scrot do?: the round is taking lines. Write your line and press Send.',
+          'The director has your line: your line is waiting while the director picks lines. You can still change it or take it back.',
+          'Your line is in this round: your line is part of the plan. While the AI plans it says the AI is working out what could happen, which can take a minute. While the director checks the plan it says that if you change your line now, the director has to plan again.',
+          'This round is being planned or The director is setting the stakes: your line is not in this round. A line you send now waits for the next turn.',
+          'The stakes are set: the director approved what is at stake and the dice roll next. If dice are needed, What is at stake for you shows below. A round with no dice reads The lines are picked and says the story is written next.',
+          'Dice rolled. The story is being written or Lines locked in. The story is being written: the result will appear under The story. New lines wait for the next turn.',
+          'The story is written: the director is checking it and getting the voices ready. It will appear under The story.',
+          'The show is paused and The show is over: nothing can be sent.',
+        ],
+      },
+      {
+        heading: 'What is at stake for you',
+        paragraphs: [
+          'Once the director approves the stakes, and until the beat is published, your seat shows What is at stake for you under the banner. It lists the stakes where your character is the one acting, each with its goal and what each result would mean. If your character only helps on someone else\'s roll, one line says so, for example You are helping Mara with this: followed by the goal.',
+          'When a roll is coming, a short note explains it: How the dice work: two dice plus your trait. 10 or more is a clean success, 7 to 9 a success with a cost, 6 or less a setback, and double 1s a critical failure. This block never shows a roll or a result before the director publishes the beat.',
+        ],
+      },
+      {
+        heading: 'What changed for you',
+        paragraphs: [
+          'After the director publishes a beat, one short line at the top of The story, labelled What changed for you, says what the result did to your character. For example: Scrot\'s strain went from 5 to 7 of 8: Worn. Or Scrot went down. Or Scrot was saved and is back up at 6 of 8. Or Scrot pulled through the last chance and is back up at 7 of 8. Or Scrot died.',
+          'Nothing shows when nothing changed. The line goes away when the next beat is published or when you reload the page.',
+        ],
+      },
+      {
         heading: 'When your character is down or dead',
         paragraphs: [
-          'Down: your character took a hit they could not take, or an outcome the director approved put them down. Your seat shows a Down label and says you can say a few words, up to 8, and that someone can still save your character until the end of the next round. The Say box counts your words, for example 3 of 8 words. Do something, What I have and Help me say it are off while you are down.',
+          'Down: your character took a hit they could not take, or an outcome the director approved put them down. Your seat shows a Down label and a note. It says you can say a few words, up to 8, and that someone can still save your character: in the next round when none is open, or in this round while one takes lines or reviews its stakes. If nobody does, one last-chance roll decides when the dice are rolled: 7 or more on two dice and your character pulls through, 6 or less, or double 1s, and your character dies. Once the dice are rolled, the note says only that they are rolled and that the story will tell what happens, so it never gives away a rescue or a last chance before the story does. In a part of the story with no dice it says someone can still save your character in the next round. The Say box counts your words, for example 3 of 8 words. If a Say line runs over, the box says Scrot is down, so they can say only a few words, up to 8. Do something, What I have and Help me say it are off while you are down. A Do line you queued before going down stays on your list with no Change button and the note Scrot is down, so this Do line can\'t be used or changed. You can take it back. Take it back still works.',
           'If another character’s line saves yours, you come back up at 6 of 8 strain. If nobody does, your character gets one last chance when the next dice are rolled. It is two plain dice, marked Last chance. Clean or a cost means you pull through at 7 of 8. A setback or double 1s means your character dies.',
-          'Dead: your seat shows a Dead label and says your character has died. You can keep watching the story here for the rest of the night. The line boxes, including the private note, go away, and Ask for a pause stays. The director can bring your character back with a correction.',
+          'Dead: your seat shows a Dead label and says your character has died. You can keep watching the story here for the rest of the night. The line boxes, including the private note, go away, and Ask for a pause stays and still confirms with Pause requested. Say so on the voice call too. The director can bring your character back with a correction.',
         ],
       },
       {
@@ -564,15 +624,16 @@ export const topics: HelpTopic[] = [
         steps: [
           'Press Say something or Do something. The page picks the one that fits the moment, so you can often skip this step.',
           'Write in the box.',
-          'Press Send. The page shows "Saved. The director has your line." If the story is no longer taking lines for this round, it shows "Saved. Your line waits for the next turn." instead.',
+          'Press Send. The page shows "Saved. The director has your line." If the story is no longer taking lines for this round, or the round is being planned, it shows "Saved. Your line waits for the next turn." instead, because a line sent then is left out of the plan.',
+          'If the page says Could not reach the show. Check your connection and try again., your line did not go. Your words are still in the box. Check your connection and press Send again.',
         ],
       },
       {
         heading: 'Say something or Do something',
         paragraphs: [
           'Say something is for the exact words your character says out loud. For example: Who sent you, and what do they want? Viewers see your words, without any audio tags, and hear them in your voice (or the narrator\'s if you picked none), once the director puts them in the story. Your words can be rolled too, so the dice may decide how they land.',
-          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see these words on stream too, tagged Action, and the narrator reads them aloud. The storyteller then tells what happens, and the dice decide how it goes.',
-          'If you wrote in both the Say something and the Do something boxes, the button reads Send both. One press sends two separate lines, the Say line first, and each counts as one of your lines and rolls on its own. The page shows "Saved. The director has both lines." or, if the story is no longer taking lines, "Saved. Both lines wait for the next turn." If the story changed while you were writing, the button reads Send both anyway. If one line is refused, the other still goes, and the refused box keeps your words with the reason.',
+          'Do something is for what your character tries, in plain words. For example: I climb the fire escape and look in the window. Viewers see and hear these words once the director puts them in the story, tagged Action, and the narrator reads them aloud. The storyteller then tells what happens, and the dice decide how it goes.',
+          'If you wrote in both the Say something and the Do something boxes, the button reads Send both. One press sends two separate lines, the Say line first, and each counts as one of your lines and rolls on its own. The page shows "Saved. The director has both lines." or, if the story is no longer taking lines or the round is being planned, "Saved. Both lines wait for the next turn." If the story changed while you were writing, the button reads Send both anyway. If one line is refused, the other still goes, and the refused box keeps your words with the reason.',
           'When other characters are in the scene, Say something also shows who you are talking to, such as Talking to Mara or Talking to your group. Press Change to pick someone else. Your group means the other players\' characters.',
           'Every line you send can be rolled, whether you say it or do it. Most rolls end well or with a cost. A double 1 is a critical failure, whatever the total, and the story shows it as Critical failure.',
           'You can write at any time. If the story isn\'t taking new lines yet, yours waits for the next turn.',
@@ -590,13 +651,15 @@ export const topics: HelpTopic[] = [
         heading: 'After you send',
         paragraphs: [
           'Your lines appear under What you sent, each with a note on where it has got to. The list keeps every line still in play, plus your newest finished line and your newest private note.',
-          'Each player can send two lines in a round. After your first, the page says "You can send one more line."',
+          'Each player can send two lines in a round. After your first, the page says "You can send one more line." It does not say that while the round is being planned.',
         ],
         steps: [
           '"Sent. Waiting for the director to pick lines." Change it or take it back.',
-          '"Not in this round. It waits for the next turn." Your line missed this round and stays queued for the next one. Nothing to do.',
+          '"Not in this round. It waits for the next turn." Your line missed this round, or you sent it while the round was being planned, and it stays queued for the next one. Nothing to do.',
           '"Picked by the director. You can still change it." Change it or take it back.',
-          '"Locked in. Watch the stream to see what happens." Nothing now. It\'s part of this turn.',
+          '"Picked for this round. If you change it or take it back, the director has to plan again." This shows while the round is being planned or its stakes are checked. Changing it makes the director plan again.',
+          '"Scrot is down, so this Do line can\'t be used or changed. You can take it back." Your Do line has no Change button while your character is down. Take it back still works.',
+          '"Locked in. The result will appear under The story." Nothing now. It\'s part of this turn.',
           '"This is in the story now." Nothing. It\'s done.',
           '"Taken back. Send it again if you still want it." You took it back. Write it again if it still fits.',
           '"Sent. Only the director sees it." This is a private note. Change it or take it back.',
@@ -607,7 +670,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'To change a line, press Change, edit it, then press Save changes. Pressing Change clears the old "Saved" note, so the page shows only the line you are editing.',
           'To take a line back, press Take it back once. There is no second question. Your words return to the box as unsent text, so you can fix them and send them again.',
-          'The director picks which lines go into the story, so some lines don\'t get used. That\'s normal.',
+          'The director picks which lines go into the story, so some lines don\'t get used. That\'s normal. If your line is picked and the director has already planned with it, changing it or taking it back makes the director plan again, and the line says so first. The director\'s page names you. A Do line from a character who is down has no Change button, only Take it back, with the reason on the line.',
         ],
       },
       {
@@ -683,13 +746,13 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Can I change my mind after I send?',
         paragraphs: [
-          'Yes, until your line says Locked in. Press Change or Take it back.',
+          'Yes, until your line says Locked in. Press Change or Take it back. If the director has already planned with your line, the director has to plan again, and your line says so before you decide.',
         ],
       },
       {
         heading: 'What if the page reloads while I\'m typing?',
         paragraphs: [
-          'Your unsent words come back with the note "Your unsent words are back." Read them again before you send, because the story may have moved on.',
+          'Your unsent words come back with the note "Your unsent words are back." Read them again before you send, because the story may have moved on. They also survive closing the tab. This browser keeps them until you send them, clear them or the show ends.',
         ],
       },
       {
@@ -707,13 +770,13 @@ export const topics: HelpTopic[] = [
       {
         heading: 'The page says Reconnecting. What do I do?',
         paragraphs: [
-          'Wait a moment. The page reconnects by itself. Your unsent words stay in your browser, and nothing gets sent without you.',
+          'Wait a moment. The page reconnects by itself. Your unsent words stay in your browser, and nothing gets sent without you. A page that is still making its first connection says Connecting, which is normal. The Reconnecting chip and the connection notice only show after a connection that was working drops.',
         ],
       },
       {
         heading: 'What if my seat stops working?',
         paragraphs: [
-          'Your seat stays signed in until the show ends, so it should keep working. If you are ever signed out, or your invitation says "This invitation has already been used or has expired. Ask your host for a new link.", ask the host for a new link. After the show ends, the page says The show is over and accepts nothing.',
+          'Your seat stays signed in until the show ends, so it should keep working. If you closed the tab, tap your invitation link again in the same browser and you land back on your seat. On another browser or device, or after clearing your browser\'s data, the link says "This invitation has already been used or has expired. Ask your host for a new link." Then ask the host for a new link. After the show ends, the page says The show is over and accepts nothing.',
         ],
       },
       {
@@ -752,7 +815,7 @@ export const topics: HelpTopic[] = [
         heading: 'Pick a layout',
         paragraphs: [
           'Full scene (1920×1080) is a solid picture: story text, dice, facts and the cast. Use it when the stage is the whole screen.',
-          'Transparent overlay has no background. It adds captions, dice, the wager and the cast as small panels over your cameras, and keeps the middle of the screen clear except for the wager panel while stakes are up. Use it when you place the stage on top of a camera or game scene.',
+          'Transparent overlay has no background. It adds captions, dice, the wager and the cast as small panels over your cameras, and keeps the middle of the screen clear except for the wager panel while stakes are up and the dice for a few seconds after you publish a round with rolls. Use it when you place the stage on top of a camera or game scene.',
           'Pieces for your own scenes is a third way. It cuts the stage into separate parts, such as the captions, the dice and the picture, each on a link of its own with a see-through background. Use pieces when you want to place and size each part yourself. The Pieces for your own scenes section below lists them.',
           'You choose the layout for each link, so one show can have all three.',
         ],
@@ -772,7 +835,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Choose the audio',
         paragraphs: [
-          'The sound is set for you. The main show link carries the show audio, the narration and character voices. Its sound link carries the same show audio, and is the way to carry it when you build scenes from pieces. A cast member\'s link plays the narration only where it is opened, and it cannot take over the show audio. Pieces never play sound.',
+          'The sound is set for you. The main show link carries the show audio, the narration and character voices. Its sound link carries the same show audio, and is the way to carry it when you build scenes from pieces. A cast member\'s link plays the narration only where it is opened, and it cannot take over the show audio. Pieces never play sound. The dice sounds go wherever the narration plays.',
           'Only one OBS source should carry the show audio. If two do, viewers hear every line twice. Use either a full layout of the Main show link or its sound link in OBS, not both. Open Sound options under Full layouts on a card to pick Show audio (main show link only), Listen only or Off. If this computer also plays the story, turn this link\'s sound off or you\'ll hear it twice.',
           'Preview (silent) plays no sound on purpose, so it never takes the audio from OBS.',
         ],
@@ -804,20 +867,56 @@ export const topics: HelpTopic[] = [
         heading: 'The pieces',
         paragraphs: [
           'Captions, 1440 × 184: the latest beat\'s lines, with the one being spoken marked. The other lines dim while one is spoken.',
-          'Dice, 1440 × 144: the latest rolls. Past six rolls they take two rows. It can show one person\'s rolls.',
-          'Stakes, 960 × 612: what is at stake before a roll, one person at a time. It can show one person\'s stakes.',
+          'Dice, 1440 × 144: the latest rolls. Past six rolls they take two rows. A last-chance roll is marked Last chance and reads Pulls through or Dies. New rolls tumble onto their cards when a round is published. It can show one person\'s rolls.',
+          'Stakes, 960 × 612: what is at stake before a roll, one person at a time. After the real stakes it adds a card for each downed character\'s last chance. It can show one person\'s stakes.',
           'Party, 1344 × 76: each character\'s name, portrait and strain. It can show one person.',
           'Tracks, 352 × 304: the first two public tracks.',
           'Picture, 336 × 192: the scene picture, or the picture the director pinned.',
-          'AI badge, 336 × 164: says the narration and voices are made by AI, and whether the show is live.',
+          'AI badge, 336 × 164: says the narration and voices are made by AI, and whether the show is live and what stage the round is at.',
           'Facts, 464 × 345: what the party knows, newest first.',
           'Corrections, 1728 × 88: the newest correction the director published.',
         ],
       },
       {
+        heading: 'The dice on stream',
+        paragraphs: [
+          'When you publish a round with rolls, the stream plays the dice for 3 to 5 seconds. On the overlay and the full scene a window opens where the stakes were. Each roll gets two pixel dice that tumble in and land on their real faces. The total counts up as the trait and any Edge are added, then the result stamps in: Clean success, Success with a cost, Setback or Critical failure, or Pulls through or Dies for a last chance. Then each total drops into its card in the dice strip and the window closes. Until the dice land, the rest of the stream keeps showing what it showed before you published, so the story text, strain and pictures change when the dice finish.',
+          'The Dice piece plays the same rolls on its own cards. Up to six rolls, the dice drop into the clear band above the cards. With more, they tumble inside the cards.',
+          'The dice play once, on pages that were open when you published. A page opened or reloaded after you publish shows the dice strip as usual, and so does a page that asks for less motion.',
+          'Retro sounds go with them: a rattle, a clack for each die, a blip as the total counts and a short tune for each result. They play only where the narration plays, which is the main show link or its sound link and a cast member\'s own link. Pieces stay silent. The OBS source\'s volume sets the narration and the dice together.',
+        ],
+      },
+      {
+        heading: 'What the status chip says',
+        paragraphs: [
+          'The AI badge carries a status chip. It says Live while no round is open. While a round is open it says what stage the round is at, so viewers can tell the show is working even when no new words are on screen. The badge piece, the overlay and the full scene all use the same words.',
+        ],
+        steps: [
+          'Taking lines: players can send lines.',
+          'Setting stakes: the AI is planning, or you have not approved the stakes yet.',
+          'Stakes are set: you approved the stakes and the dice have not rolled.',
+          'Writing the story: the lines are locked and the AI is writing the script.',
+          'Story coming up: the script is written and is being checked and voiced.',
+        ],
+      },
+      {
+        heading: 'The chip\'s small pulse and other words',
+        paragraphs: [
+          'While the chip is waiting on something, which is Taking lines, Setting stakes, Writing the story or Story coming up, two small squares beside the words step on and off. They hold still for a viewer whose device asks for less motion.',
+          'When the show is not live, the chip says Starting soon, Paused or Ended. It says Reconnecting when the stage has lost touch with the show.',
+        ],
+      },
+      {
+        heading: 'A last chance on stream',
+        paragraphs: [
+          'A last-chance roll shows on the dice with the words Last chance, then the result in words: Pulls through when it was a clean result or a cost, or Dies when it was a setback or double 1s. It reads that way in the dice piece and in both full layouts, however many rolls show.',
+          'Before the dice, the stakes show one more card for each downed character, after the real stakes: Scrot is down. If nobody saves Scrot this round, one roll decides: 7 or more and Scrot pulls through; 6 or less, or double 1s, and Scrot dies. Once the dice are rolled, the card says Scrot is down. The dice are rolled. The story will tell what happens. It reads the same whether someone saved Scrot or the last chance was rolled, so nothing is given away before you publish. An ordinary conversation with no stakes cards still shows it once the round is locked. A Narrate the scene beat never shows one.',
+        ],
+      },
+      {
         heading: 'Down and Dead labels',
         paragraphs: [
-          'The Party piece, the full scene and the player seats show a text label beside a character who is Down or Dead. The label is always words, never only a colour. A character at 8 of 8 who is not down shows Needs help. If a character is both at 8 and down or dead, the stage shows Dead, then Down, instead of Needs help. The Party piece keeps its size, 1344 × 76.',
+          'The Party piece, the full scene and the player seats show a text label beside a character who is Down or Dead. The label is always words, never only a colour. A character at 8 of 8 who is not down shows Needs help. If a character is both at 8 and down or dead, the stage shows Dead, then Down, instead of Needs help. The full scene keeps the words Down and Dead even with six players, where it drops the strain bars to make room. The Party piece keeps its size, 1344 × 76.',
         ],
       },
       {
@@ -1060,8 +1159,8 @@ export const topics: HelpTopic[] = [
         heading: 'You see "This invitation has already been used or has expired."',
         paragraphs: [
           'The invitation page shows "This invitation has already been used or has expired. Ask your host for a new link." before anyone presses Join. If someone opens the link in two places and presses Join in the second after the first, the server answers "This invitation is expired, already redeemed, or invalid." Both mean the same thing.',
-          'An invitation works once and lasts 7 days. If the player already opened it, or the 7 days passed, or part of the address was cut off when it was copied, it will not work.',
-          'Ask the host for a new link. The host makes one with Reissue link under Seats & invitation links on the Cast & lobby page. Send it as plain text and check that the whole address came through.',
+          'An invitation works once and lasts 7 days. If the player already opened it, or the 7 days passed, or part of the address was cut off when it was copied, it will not work. The one exception is the browser that joined. It remembers which seat the link opened, so tapping the link again there goes straight back to the seat, until the sign-in is cleared. Another browser or device sees the message.',
+          'For another browser or device, ask the host for a new link. The host makes one with Reissue link under Seats & invitation links on the Cast & lobby page. Send it as plain text and check that the whole address came through.',
         ],
       },
       {
@@ -1125,7 +1224,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'The AI is taking a long time',
         paragraphs: [
-          'The app has no time limit on the AI. A plan or a script can take several minutes, and the beat panel shows the AI working until it finishes. To stop it, press Pause, then Pause anyway. That throws the work away, and you can plan or draft again after you resume.',
+          'The app has no time limit on the AI. A plan or a script can take several minutes, and the beat panel shows the AI working until it finishes. While it works, seats and the stream say what stage the round is at. Players read This round is being planned or Your line is in this round, and the stream chip reads Setting stakes or Writing the story, with its small pulse. The chip The AI is taking longer than usual on the Show status strip is information only. It changes nothing. To stop the AI yourself, press Stop the AI beside the status line. It keeps your lines, ticks and dice and puts the round back one step. Pause is for a break. It does not stop a stalled call, because the call keeps running.',
           'If one request runs past five minutes, the page says: The connection to the server closed while the AI was still working. It keeps going, and the result appears here when it finishes. Nothing is lost. Wait, and the plan or script appears by itself.',
           'One AI call that runs past 10 minutes is ended by the home server that passes requests to ClewdR. The beat panel then says ClewdR answered with an error (HTTP 504). Press Plan again or Try again, whichever the panel offers.',
         ],
@@ -1133,7 +1232,7 @@ export const topics: HelpTopic[] = [
       {
         heading: 'Drafting failed',
         paragraphs: [
-          'The AI could not finish the script. Your locked lines and the dice are not affected. Press Try again on the director page. You can also press Write it myself and write the lines yourself. If the beat cannot be saved, open Abandon this beat under More.',
+          'The AI could not finish. Your lines and ticks are not affected, and neither are the dice if they were rolled. After a plan, the bar says Your lines are safe. Plan again, or write the stakes yourself. The gold button is Plan again, with Write the stakes myself beside it. After a script, it says Your lines and dice are safe. Try again, or write the script yourself. The gold button is Try again, and you can press Write it myself to write the lines yourself. If the beat cannot be saved, open Abandon this beat under More.',
           'If the server restarts while the AI is writing, that script is lost. When the page shows Connected again, press Try again once, or Draft the scene if that is what the gold button says.',
         ],
       },
@@ -1154,7 +1253,7 @@ export const topics: HelpTopic[] = [
         paragraphs: [
           'A player needs only two things before they can send: the show has started, and their seat has a card. There is no ready step and no rules to accept. If a player cannot send, check these in order.',
           'Before the show starts, the player sees their seat page with "The show will start soon." and cannot send yet. Start the show from Cast & lobby with Start show. If the button is off, a seat still has no card. Open Cast & lobby, find the seat that says Waiting for this player\'s card, and press Write this card for them, or ask the player to type a name under Your character and press Save my card. If the page says "Give your character a name. Nothing has been saved.", no name was typed yet.',
-          'The banner at the top of the seat says what is happening. \'The show is paused\' shows when the show is paused. \'Waiting for the next turn\' shows between beats. \'Getting the dice ready\' shows while the director reviews the stakes, and \'The director is checking the lines\' shows only when the approved stakes need no roll. In both, the player can still change their line. \'Lines locked in. The story is being written\' shows once a beat is locked with no roll. \'Dice rolled. The story is being written\' shows once a locked round has a roll.',
+          'The banner at the top of the seat says what stage the round is at. The show is paused shows when the show is paused, Waiting for the next turn shows between rounds and The story moved on shows right after a publish. While the AI plans, a player with a line in the plan sees Your line is in this round, and everyone else sees This round is being planned. A line sent then waits for the next turn, and its receipt says so. The banner then moves through The director is setting the stakes, The stakes are set, The lines are picked, Dice rolled. The story is being written (or Lines locked in. The story is being written) and The story is written. The Players topic lists each one. If Send answers Could not reach the show. Check your connection and try again., the line never left the device. The words are still in the box, so check the connection and press Send again.',
           'After the director ends the show, the seat says The show is over and sends nothing. If the page still looks wrong, ask the player to reload it.',
         ],
       },
@@ -1174,11 +1273,11 @@ export const glossary: Array<{ term: string; definition: string }> = [
   { term: 'Edge', definition: 'A bonus of 1 that a character gets when a teammate helps with the action.' },
   { term: 'Outcome bands', definition: 'The four result groups. A total of 10 or more is a clean success. A total of 7 to 9 is a success with a cost. A total of 6 or less is a setback. A double 1 is a Critical failure, whatever the total.' },
   { term: 'Critical failure', definition: 'The result of a double 1, whatever the total. The AI writes its own outcome for each roll, a clear step worse than the setback, and the stage shows it as Critical failure. A card without one treats a double 1 as a setback.' },
-  { term: 'Strain', definition: 'How much pressure a character is under, from 0 to 8. At 8, called full strain, the stage shows Needs help next to the character, and a Do line from them cannot take a risk. More strain on someone at 8 puts them down; below 8 it stops at 8 and the rest becomes a story cost. Rest sets it back to 0.' },
+  { term: 'Strain', definition: 'How much pressure a character is under, from 0 to 8. At 8, called full strain, the stage shows Needs help next to a character who is up, and a Do line from them cannot take a risk. A character who is down or dead shows Down or Dead instead. More strain on someone at 8 puts them down; below 8 it stops at 8 and the rest becomes a story cost. Rest sets it back to 0.' },
   { term: 'Down', definition: 'A character who took more strain at 8 of 8, or whom an approved setback or Critical failure put down. They can say up to 8 words, and another character can still rescue them until the next dice are rolled.' },
   { term: 'Dead', definition: 'A character who died. A dead player watches the story with no line boxes, and a dead non-player character cannot be on stage or speak. A correction can bring either back.' },
   { term: 'Rescue', definition: 'A line from another character that rolls a clean success or a success with a cost and brings a downed character back up at 6 of 8.' },
-  { term: 'Last chance', definition: 'One roll of two plain dice for a downed character nobody rescued. Clean or a cost: they pull through at 7 of 8. A setback or double 1s: they die.' },
+  { term: 'Last chance', definition: 'One roll of two plain dice for a downed character nobody rescued. Clean or a cost: they pull through at 7 of 8. A setback or double 1s: they die. On stream it shows as Last chance, then Pulls through or Dies once you publish.' },
   { term: 'Track', definition: 'A meter for something that moves over time, such as progress, danger or a countdown. The scene layout shows up to three and the overlay layout shows up to two.' },
   { term: 'Facts to remember', definition: 'The facts the story must keep true, such as who is hurt or where an item is. They are listed above the bar when a script proposes them, and publishing keeps them unless you tick Don\'t keep these.' },
   { term: 'Note for the AI', definition: 'A private instruction the AI follows for one beat, under Show tools. Players never see it.' },

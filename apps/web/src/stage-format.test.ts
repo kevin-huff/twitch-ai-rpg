@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Roll, SessionSnapshot } from '@rpg/contracts';
-import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, rollBreakdown, rollSentence, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
+import { AI_BADGE, bandLabel, bandSymbol, helperCredit, initials, lastChanceCardText, lastChanceResult, rollBreakdown, rollSentence, stageCards, stageChip, slateKind, sortRolls, speakerName, speakerRole, statusLabel, traitName, wagerOutcomes } from './stage-format';
 
 const roll = (id: string, actor: string, extra: Partial<Roll> = {}) =>
   ({ id, actorCharacterId: actor, faces: [4, 5], trait: 'wits', traitModifier: 1, edge: 1, ...extra }) as Roll;
@@ -84,9 +84,51 @@ describe('stage-format', () => {
     expect(helperCredit({ ruling: 'no_check', edge: 1 }, ['Ren'])).toBe('With Ren');
   });
   it('words last-chance rolls', () => {
-    expect(rollBreakdown(roll('r', 'a', { lastChance: true, faces: [3, 6] }))).toBe('Last chance: 3 + 6');
+    expect(rollBreakdown(roll('r', 'a', { lastChance: true, faces: [3, 6] }))).toBe('3 + 6');
     expect(rollBreakdown(roll('r', 'a'))).toBe('4 + 5 + Wits 1 + Edge 1');
     expect(rollSentence({ total: 9, band: 'clean' }, 'Mara')).toBe('Mara rolled 9: Clean success');
-    expect(rollSentence({ total: 2, band: 'critical', lastChance: true }, 'Mara')).toBe("Mara's last chance rolled 2: Critical failure");
+    expect(rollSentence({ total: 2, band: 'critical', lastChance: true }, 'Mara')).toBe("Mara's last chance rolled 2: dies");
+    expect(rollSentence({ total: 8, band: 'costly', lastChance: true }, 'Mara')).toBe("Mara's last chance rolled 8: pulls through");
+  });
+});
+
+describe('stage chip and cards', () => {
+  const view = (status: string, beat: unknown, role = 'stage') => ({ role, session: { status }, activeBeat: beat, characters: [{ id: 'a' }, { id: 'b' }] }) as unknown as SessionSnapshot;
+  it('words every stage', () => {
+    const chip = (beat: unknown, status = 'live', connected = true) => stageChip(view(status, beat), connected);
+    expect(chip(null)).toEqual({ label: 'Live', warn: false, waiting: false });
+    expect(chip({ phase: 'published' }).label).toBe('Live');
+    expect(chip({ phase: 'collecting' })).toEqual({ label: 'Taking lines', warn: false, waiting: true });
+    expect(chip({ phase: 'collecting', planning: true }).label).toBe('Setting stakes');
+    expect(chip({ phase: 'stakes_review', stakesApproved: false }).label).toBe('Setting stakes');
+    expect(chip({ phase: 'stakes_review', stakesApproved: true, planning: true }).label).toBe('Setting stakes');
+    expect(chip({ phase: 'stakes_review', stakesApproved: true })).toEqual({ label: 'Stakes are set', warn: false, waiting: false });
+    expect(chip({ phase: 'locked' })).toEqual({ label: 'Writing the story', warn: false, waiting: true });
+    expect(chip({ phase: 'draft_review' })).toEqual({ label: 'Story coming up', warn: false, waiting: true });
+    expect(chip({ phase: 'locked' }, 'live', false)).toEqual({ label: 'Reconnecting', warn: true, waiting: false });
+    expect(chip({ phase: 'locked' }, 'paused')).toEqual({ label: 'Paused', warn: true, waiting: false });
+    expect(chip(null, 'lobby').label).toBe('Starting soon');
+    expect(chip(null, 'ended').label).toBe('Ended');
+  });
+  it('orders stakes then last-chance cards', () => {
+    const stake = (id: string, actor: string) => ({ id, actorCharacterId: actor });
+    const beat = { phase: 'stakes_review', stakesApproved: true, stakes: [stake('s2', 'b'), stake('s1', 'a')], lastChanceFor: ['b', 'a'] };
+    const cards = stageCards(view('live', beat), null);
+    expect(cards.map(card => card.id)).toEqual(['s1', 's2', 'last-chance:a', 'last-chance:b']);
+    expect(cards[2]).toMatchObject({ kind: 'last-chance', characterId: 'a', rolled: false });
+    expect(stageCards(view('live', { ...beat, phase: 'locked' }), 'b').map(card => card.id)).toEqual(['s2', 'last-chance:b']);
+    expect((stageCards(view('live', { ...beat, phase: 'draft_review' }), null)[2] as { rolled: boolean }).rolled).toBe(true);
+    expect(stageCards(view('live', { ...beat, stakesApproved: false }), null).map(card => card.id)).toEqual(['s1', 's2']);
+    expect(stageCards(view('live', beat, 'director'), null)).toEqual([]);
+    expect(stageCards(view('live', beat), 'zzz')).toEqual([]);
+    expect(stageCards(view('live', { phase: 'locked', stakesApproved: true, stakes: [], lastChanceFor: ['a'] }), null).map(card => card.id)).toEqual(['last-chance:a']);
+  });
+  it('words last chance cards and results', () => {
+    expect(lastChanceCardText('Rook', false)).toBe('Rook is down. If nobody saves Rook this round, one roll decides: 7 or more and Rook pulls through; 6 or less, or double 1s, and Rook dies.');
+    expect(lastChanceCardText('Rook', true)).toBe('Rook is down. The dice are rolled. The story will tell what happens.');
+    expect(lastChanceResult('clean')).toBe('Pulls through');
+    expect(lastChanceResult('costly')).toBe('Pulls through');
+    expect(lastChanceResult('setback')).toBe('Dies');
+    expect(lastChanceResult('critical')).toBe('Dies');
   });
 });

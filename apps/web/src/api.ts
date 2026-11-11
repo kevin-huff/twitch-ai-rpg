@@ -13,12 +13,18 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
+export const UNREACHABLE = 'Could not reach the show. Check your connection and try again.';
+
 async function request<T>(path: string, body?: unknown, selectedIdentity = true): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    credentials: 'same-origin',
-    headers: { ...(selectedIdentity ? identityHeaders() : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
-  });
+  const headers = { ...(selectedIdentity ? identityHeaders() : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) };
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      credentials: 'same-origin',
+      headers,
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
+    });
+  } catch { throw new ApiError(UNREACHABLE, 0); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new ApiError(data.message || data.error || `Request failed (${response.status}).`, response.status);
   return data as T;

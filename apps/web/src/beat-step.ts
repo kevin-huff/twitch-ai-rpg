@@ -11,6 +11,7 @@ export type BeatStepInput = {
   paused: boolean;
   continuityPending: number;
   quickLock?: boolean;
+  handStakes?: boolean;
 };
 
 export type BeatStepResult = { step: StepId; next: string; reason: string | null };
@@ -32,7 +33,9 @@ function decide(input: BeatStepInput): BeatStepResult {
   }
   if (beat.phase === 'collecting') {
     if (beat.lastError && beat.selectedSubmissionIds.length > 0) {
-      return { step: 'stakes', next: "Planning failed. Set what's at risk by hand, or plan again.", reason: null };
+      return input.handStakes
+        ? { step: 'stakes', next: "Write what's at risk for each line, then approve and roll.", reason: null }
+        : { step: 'plan', next: 'The plan could not be made. Plan again, or write the stakes yourself.', reason: null };
     }
     if (input.selectedCount === 0) {
       return { step: 'select', next: 'Tick the lines this beat should answer.', reason: 'Select at least one line to plan.' };
@@ -90,14 +93,14 @@ export function stepPosition(step: StepId, action: boolean): { stage: StageId; n
   return { stage, n: stages.indexOf(stage) + 1, m: stages.length };
 }
 
-export type GoldAction = 'answer' | 'plan' | 'lock-and-draft' | 'approve-and-roll' | 'draft' | 'try-again' | 'publish' | 'resume';
+export type GoldAction = 'answer' | 'plan' | 'plan-again' | 'lock-and-draft' | 'approve-and-roll' | 'draft' | 'try-again' | 'publish' | 'resume';
 
 export function goldAction(input: { step: StepId; beat: Beat | null; paused: boolean; ordinary: boolean }): GoldAction {
   if (input.paused) return 'resume';
   switch (input.step) {
     case 'open': return 'answer';
     case 'select':
-    case 'plan': return 'plan';
+    case 'plan': return input.beat?.phase === 'collecting' && input.beat.lastError && input.beat.selectedSubmissionIds.length > 0 ? 'plan-again' : 'plan';
     case 'stakes':
     case 'lock': return input.ordinary ? 'lock-and-draft' : 'approve-and-roll';
     case 'draft': return input.beat?.lastError ? 'try-again' : 'draft';
@@ -108,6 +111,7 @@ export function goldAction(input: { step: StepId; beat: Beat | null; paused: boo
 export const GOLD_LABELS: Record<GoldAction, string> = {
   answer: 'Answer these lines',
   plan: 'Plan',
+  'plan-again': 'Plan again',
   'lock-and-draft': 'Lock and draft',
   'approve-and-roll': 'Approve and roll',
   draft: 'Draft the scene',
@@ -119,6 +123,7 @@ export const GOLD_LABELS: Record<GoldAction, string> = {
 export const GOLD_TEST_IDS: Record<GoldAction, string> = {
   answer: 'answer-lines',
   plan: 'plan',
+  'plan-again': 'plan',
   'lock-and-draft': 'lock-and-draft',
   'approve-and-roll': 'approve-and-roll',
   draft: 'render',

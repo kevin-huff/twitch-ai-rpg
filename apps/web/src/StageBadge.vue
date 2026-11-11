@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { SessionSnapshot } from '@rpg/contracts';
-import { AI_BADGE, statusLabel } from './stage-format';
+import { AI_BADGE, stageChip } from './stage-format';
 
 const props = defineProps<{ snapshot: SessionSnapshot; connected: boolean; activeSegmentId?: string | null; characterId?: string | null }>();
 
-const status = computed(() => statusLabel(props.snapshot.session.status, props.connected));
+const chip = computed(() => stageChip(props.snapshot, props.connected));
 </script>
 
 <template>
   <div class="top-right">
     <span class="ai-badge">{{ AI_BADGE }}</span>
-    <span class="state-chip" :class="{ off: !connected || snapshot.session.status !== 'live' }">{{ status }}</span>
+    <span class="state-chip" :class="{ off: chip.warn }">{{ chip.label }}<span v-if="chip.waiting" class="chip-pulse" aria-hidden="true"><i></i><i></i></span></span>
   </div>
 </template>
 
@@ -28,4 +28,11 @@ const status = computed(() => statusLabel(props.snapshot.session.status, props.c
   background: var(--night-raised); box-shadow: inset 0 0 0 4px var(--void), inset 0 0 0 8px var(--herb); clip-path: var(--cut-1);
 }
 .state-chip.off { box-shadow: inset 0 0 0 4px var(--void), inset 0 0 0 8px var(--candle); }
+.chip-pulse { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.chip-pulse i { display: block; width: 8px; height: 8px; background: var(--bone); }
+@media (prefers-reduced-motion: no-preference) {
+  .chip-pulse i { animation: chip-pulse 1s steps(1, end) infinite; }
+  .chip-pulse i:nth-child(2) { animation-delay: 0.5s; }
+}
+@keyframes chip-pulse { 0% { background: var(--bone); } 50% { background: var(--night); } }
 </style>

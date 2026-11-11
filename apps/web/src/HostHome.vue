@@ -2,7 +2,8 @@
 import { nextTick, onMounted, ref, useId, watch } from 'vue';
 import type { InvitePreviewResponse, SessionListEntry, Viewer } from '@rpg/contracts';
 import { api, ApiError } from './api';
-import { identityPath } from './identity';
+import { identityPath, selectIdentity } from './identity';
+import { rememberSeat, seatForInvitation, USED_INVITATION } from './seat-memory';
 import { navigate } from './navigate';
 import { useTable } from './table';
 import ErrorNotice from './ErrorNotice.vue';
@@ -34,6 +35,7 @@ function tryItNow() { return work(async () => {
 }); }
 function join() { return work(async () => {
   const result = await api.redeem(inviteToken);
+  if (result.identityId && (result.role === 'player' || result.role === 'stage')) rememberSeat({ token: inviteToken, identityId: result.identityId, sessionId: result.sessionId, role: result.role });
   navigate(`/sessions/${encodeURIComponent(result.sessionId)}/${result.role === 'stage' ? 'stage' : 'play'}`, { replace: true });
 }); }
 async function loadPreview() {
@@ -67,6 +69,14 @@ async function copyGalleryLink(session: SessionListEntry) {
 
 onMounted(async () => {
   if (inviteToken) {
+    const seat = seatForInvitation(inviteToken);
+    if (seat) {
+      try {
+        selectIdentity(seat.identityId);
+        navigate(`/sessions/${encodeURIComponent(seat.sessionId)}/${seat.role === 'stage' ? 'stage' : 'play'}`, { replace: true });
+        return;
+      } catch { /* Fall through to the ordinary invitation check. */ }
+    }
     await loadPreview();
   } else {
     try { recentSessions.value = await api.sessions(); hostReady.value = true; } catch { /* A host signs in before accessing saved sessions. */ }
@@ -79,7 +89,7 @@ onMounted(async () => {
     <section class="panel">
       <ErrorNotice v-if="error" :message="error" @dismiss="error = ''" />
       <template v-if="inviteToken">
-        <template v-if="previewState === 'invalid'"><p class="muted" role="alert" data-testid="invite-error">This invitation has already been used or has expired. Ask your host for a new link.</p></template>
+        <template v-if="previewState === 'invalid'"><p class="muted" role="alert" data-testid="invite-error">{{ USED_INVITATION }}</p></template>
         <template v-else-if="previewState === 'loading'"><p class="muted">Checking your invitation…</p></template>
         <template v-else>
           <h2 v-if="preview">{{ preview.role === 'stage' ? `You've been invited to open the stage for ${preview.title}.` : `You've been invited to play ${preview.title}.` }}</h2>

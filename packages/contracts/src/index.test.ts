@@ -23,6 +23,8 @@ import {
   ActionContractSchema,
   PublicActionContractSchema,
   PublicBeatSchema,
+  PlanThrownAwaySchema,
+  DirectorSnapshotSchema,
   RollSchema,
   TraitsSchema,
   NpcSchema,
@@ -402,5 +404,28 @@ describe('death ladder contracts', () => {
     expect(canSpeakInScene({ ...present, condition: 'dead' }, 'hall')).toBe(false);
     expect(canSpeakInScene({ status: 'offstage', locationId: 'x', communicationChannel: 'radio', condition: 'dead' }, 'hall')).toBe(false);
     expect(canSpeakInScene({ status: 'offstage', locationId: 'x', communicationChannel: 'radio' }, 'hall')).toBe(true);
+  });
+});
+
+describe('planning stage contracts', () => {
+  const beat = { id: 'b1', kind: 'action', phase: 'collecting', revision: 1, stakes: [], locked: false };
+  it('public round takes planning and lastChanceFor as optional typed fields', () => {
+    expect(PublicBeatSchema.safeParse(beat).success).toBe(true);
+    expect(PublicBeatSchema.safeParse({ ...beat, planning: true, lastChanceFor: ['c1'] }).success).toBe(true);
+    expect(PublicBeatSchema.safeParse({ ...beat, planning: 'yes' }).success).toBe(false);
+    expect(PublicBeatSchema.safeParse({ ...beat, lastChanceFor: 'c1' }).success).toBe(false);
+    expect(PublicBeatSchema.safeParse({ ...beat, lastChanceFor: [1] }).success).toBe(false);
+  });
+  it('director snapshot carries an optional planThrownAway', () => {
+    const field = DirectorSnapshotSchema.shape.planThrownAway;
+    expect(field.safeParse(undefined).success).toBe(true);
+    expect(field.safeParse({ characterId: 'c1', change: 'changed' }).success).toBe(true);
+    expect(PlanThrownAwaySchema.safeParse({ characterId: 'c1', change: 'took_back' }).success).toBe(true);
+    expect(field.safeParse({ characterId: 'c1', change: 'edited' }).success).toBe(false);
+  });
+  it('stop_ai needs commandId and beatId only', () => {
+    expect(CommandSchema.safeParse({ type: 'stop_ai', commandId: 'k1', beatId: 'b1' }).success).toBe(true);
+    expect(CommandSchema.safeParse({ type: 'stop_ai', commandId: 'k1', beatId: 'b1', expectedBeatRevision: 1 }).success).toBe(false);
+    expect(CommandSchema.safeParse({ type: 'stop_ai', commandId: 'k1' }).success).toBe(false);
   });
 });

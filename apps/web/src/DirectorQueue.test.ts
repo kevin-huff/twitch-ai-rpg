@@ -113,4 +113,50 @@ describe('DirectorQueue', () => {
       expect(mountWith(beat(), [], []).text()).not.toContain('Not in this plan');
     });
   });
+
+  describe('lines that cannot be used', () => {
+    const snapWith = (submissions: unknown[], condition?: string, npcCondition?: string) => ({ role: 'director', characters: [{ id: 'c1', displayName: 'Rook', condition }], characterDetails: [{ id: 'c1', displayName: 'Rook', condition }], npcs: [{ id: 'n1', displayName: 'Old Tom' }], npcDetails: [{ id: 'n1', displayName: 'Old Tom', condition: npcCondition }], submissions, activeBeat: null } as unknown as DirectorSnapshot);
+    const mountWith = (submissions: unknown[], condition?: string, npcCondition?: string) => mount(DirectorQueue, { props: { snapshot: snapWith(submissions, condition, npcCondition), modelValue: [] } });
+    const nine = 'one two three four five six seven eight nine';
+    const eight = 'one two three four five six seven eight';
+
+    it('blocks a downed character\'s Do line', () => {
+      const wrapper = mountWith([sub('a', 'act')], 'down');
+      expect(wrapper.get('[data-testid="queue-block-a"]').text()).toBe("Rook is down, so this Do line can't be used.");
+      const box = wrapper.get('input[type="checkbox"]');
+      expect((box.element as HTMLInputElement).checked).toBe(false);
+      expect(box.attributes('disabled')).toBeDefined();
+    });
+
+    it('blocks a downed Say line over 8 words but not 8', () => {
+      const wrapper = mountWith([sub('a', 'say', { text: nine }), sub('b', 'say', { text: eight })], 'down');
+      expect(wrapper.get('[data-testid="queue-block-a"]').text()).toBe("Rook is down, so this Say line can't be used: it has 9 words and the limit is 8.");
+      expect(wrapper.find('[data-testid="queue-block-b"]').exists()).toBe(false);
+    });
+
+    it('blocks any line of a dead character', () => {
+      const wrapper = mountWith([sub('a', 'say'), sub('b', 'act')], 'dead');
+      expect(wrapper.get('[data-testid="queue-block-a"]').text()).toBe("Rook has died, so this line can't be used.");
+      expect(wrapper.get('[data-testid="queue-block-b"]').text()).toBe("Rook has died, so this line can't be used.");
+    });
+
+    it('blocks a line to a dead non-player character', () => {
+      const wrapper = mountWith([sub('a', 'say', { recipientNpcIds: ['n1'] })], undefined, 'dead');
+      expect(wrapper.get('[data-testid="queue-block-a"]').text()).toBe("This line speaks to Old Tom, who has died, so it can't be used.");
+    });
+
+    it('never blocks a question and Select all skips blocked lines', async () => {
+      const wrapper = mountWith([sub('q', 'ooc'), sub('a', 'act'), sub('b', 'say')], 'down');
+      expect(wrapper.find('[data-testid="queue-block-q"]').exists()).toBe(false);
+      await wrapper.findAll('button').find(b => b.text() === 'Select all lines')!.trigger('click');
+      expect(wrapper.emitted('update:modelValue')![0]).toEqual([['b']]);
+    });
+
+    it('frees the line once the condition is cleared', async () => {
+      const wrapper = mountWith([sub('a', 'act')], 'down');
+      await wrapper.setProps({ snapshot: snapWith([sub('a', 'act')], undefined) });
+      expect(wrapper.find('[data-testid="queue-block-a"]').exists()).toBe(false);
+      expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeUndefined();
+    });
+  });
 });

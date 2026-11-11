@@ -61,6 +61,21 @@ function setCritical(contract: ActionContract, text: string) {
 function onCriticalInput(contract: ActionContract, event: Event) {
   setCritical(contract, (event.target as HTMLTextAreaElement).value);
 }
+function flagged(effect: Parameters<typeof strainChange>[0]) {
+  const change = strainChange(effect);
+  return Boolean(change?.over || change?.down);
+}
+function flagId(effect: Parameters<typeof strainChange>[0]) {
+  const change = strainChange(effect);
+  if (change?.down) return 'strain-down';
+  return change?.over ? 'strain-over' : undefined;
+}
+function removeEffect(contract: ActionContract, band: 'clean' | 'costly' | 'setback' | 'critical', index: number) {
+  const branch = contract.outcomes[band];
+  if (!branch) return;
+  branch.effects.splice(index, 1);
+  if (band === 'critical' && !branch.publicText.trim() && branch.effects.length === 0) delete contract.outcomes.critical;
+}
 function changeClassification(event: Event) {
   emit('update:classification', (event.target as HTMLSelectElement).value as 'ordinary' | 'action');
 }
@@ -80,7 +95,7 @@ function loadJson() {
 <template>
   <section class="stakes-cards" data-testid="stakes-cards">
     <h3>What's at risk</h3>
-    <p v-if="beat.phase === 'collecting'" class="notice">Planning failed. You can review manual stakes below, retry planning, or abandon this beat with a reason.</p>
+    <p v-if="beat.phase === 'collecting'" class="notice">The AI did not make a plan. Write what could happen for each line below, then approve and roll.</p>
     <p v-if="beat.classification === 'needs_action'" class="notice">This exchange has consequences. Review the action stakes before locking.</p>
     <div v-if="classification === 'ordinary'" class="stakes-ordinary">
       <p data-testid="stakes-ordinary-line">{{ ordinaryLine }}</p>
@@ -104,8 +119,8 @@ function loadJson() {
           <p v-if="contract.helperCharacterIds.length" class="muted"><small>Helpers: {{ contract.helperCharacterIds.map(nameOf).join(', ') }}</small></p>
           <p class="roll-words">{{ rollWords(contract) }}</p>
           <ul class="outcomes">
-            <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small></li>
-            <li v-if="contract.ruling === 'check' && contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small></li>
+            <li v-for="band in BANDS" :key="band"><strong>{{ BAND_LABELS[band] }}</strong> {{ contract.outcomes[band].publicText }}<small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block" :class="{ over: flagged(effect) }" :data-testid="flagId(effect)">{{ effectLabel(effect) }}</small></li>
+            <li v-if="contract.ruling === 'check' && contract.outcomes.critical" data-testid="outcome-critical-read"><strong>{{ CRITICAL_LABEL }}</strong> {{ contract.outcomes.critical.publicText }}<small v-for="(effect, index) in contract.outcomes.critical.effects" :key="index" style="display: block" :class="{ over: flagged(effect) }" :data-testid="flagId(effect)">{{ effectLabel(effect) }}</small></li>
           </ul>
         </template>
         <template v-else>
@@ -127,12 +142,18 @@ function loadJson() {
           <div v-for="band in BANDS" :key="band" class="branch">
             <label>{{ BAND_LABELS[band] }}<textarea v-model="contract.outcomes[band].publicText" :data-testid="`outcome-${band}`" rows="2" placeholder="Write the agreed outcome and consequences" /></label>
             <p v-if="overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS)" class="stage-length over" :data-testid="`stage-length-${band}`">{{ overLimit(contract.outcomes[band].publicText, STAGE_OUTCOME_CHARS) }}</p>
-            <small v-for="(effect, index) in contract.outcomes[band].effects" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small>
+            <div v-for="(effect, index) in contract.outcomes[band].effects" :key="index" class="effect-line">
+              <small :class="{ over: flagged(effect) }" :data-testid="flagId(effect)">{{ effectLabel(effect) }}</small>
+              <button class="quiet" :data-testid="`effect-remove-${band}-${index}`" :aria-label="`Remove: ${effectLabel(effect)}`" :disabled="busy" @click="removeEffect(contract, band, index)">Remove</button>
+            </div>
           </div>
           <div v-if="contract.ruling === 'check'" class="branch">
             <label>{{ CRITICAL_LABEL }}<textarea :value="contract.outcomes.critical?.publicText ?? ''" data-testid="outcome-critical" rows="2" placeholder="Write what happens on double 1s" @input="onCriticalInput(contract, $event)" /></label>
             <p v-if="overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS)" class="stage-length over" data-testid="stage-length-critical">{{ overLimit(contract.outcomes.critical?.publicText ?? '', STAGE_OUTCOME_CHARS) }}</p>
-            <small v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" style="display: block" :class="{ over: Boolean(strainChange(effect)?.over) }" :data-testid="strainChange(effect)?.over ? 'strain-over' : undefined">{{ effectLabel(effect) }}</small>
+            <div v-for="(effect, index) in contract.outcomes.critical?.effects ?? []" :key="index" class="effect-line">
+              <small :class="{ over: flagged(effect) }" :data-testid="flagId(effect)">{{ effectLabel(effect) }}</small>
+              <button class="quiet" :data-testid="`effect-remove-critical-${index}`" :aria-label="`Remove: ${effectLabel(effect)}`" :disabled="busy" @click="removeEffect(contract, 'critical', index)">Remove</button>
+            </div>
           </div>
         </template>
       </article>
@@ -152,6 +173,7 @@ function loadJson() {
 .stakes-ordinary p { margin: 0; }
 .stakes-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .stakes-card-head h4 { margin: 0; }
+.effect-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .outcomes { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 8px; }
 /* Jersey 20 has one weight, so a label stands apart from its text by colour instead of bold. */
 p > strong, .outcomes strong { color: var(--candle); }

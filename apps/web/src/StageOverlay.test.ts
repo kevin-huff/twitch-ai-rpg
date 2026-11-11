@@ -311,7 +311,7 @@ describe('StageOverlay', () => {
   it('shows the badge, cast chips with Needs help at strain 8, and at most two enabled tracks', () => {
     const wrapper = mount(StageOverlay, { props: { snapshot: snapshot(), connected: true } });
     expect(wrapper.text()).toContain('AI-generated narration and character voices');
-    expect(wrapper.text()).toContain('Live');
+    expect(wrapper.text()).toContain('Writing the story');
     const chips = wrapper.findAll('.chip');
     expect(chips).toHaveLength(2);
     expect(chips[0]!.text()).toContain('Needs help');

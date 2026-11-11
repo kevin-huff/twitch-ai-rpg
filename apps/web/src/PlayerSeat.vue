@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
+import { downNote } from './down-note';
 import { conditionLineRefusal, countWords, DOWNED_SAY_WORDS, STRAIN_MAX, type SessionSnapshot, type Submission } from '@rpg/contracts';
 import { identityPath } from './identity';
 import { displayedPicture, pictureUrl, portraitAlt, shownScenePicture } from './pictures';
 import { PAUSE_REQUEST_TEXT, useTable } from './table';
 import { playerStatus } from './player-status';
 import { clearDraft, loadDraft, saveDraft } from './drafts';
+import { UNREACHABLE } from './api';
 import LineAssist from './LineAssist.vue';
 import SeatItems from './SeatItems.vue';
-import SeatStory from './SeatStory.vue';
+import SeatStakes from './SeatStakes.vue';
+import SeatStory, { changedForYou, type SeatChangeState } from './SeatStory.vue';
 import SeatVoice from './SeatVoice.vue';
 import StrainMeter from './StrainMeter.vue';
 import SubmissionList from './SubmissionList.vue';
@@ -33,6 +36,9 @@ const recipient = ref('');
 const stageDirection = ref('');
 const receipt = ref('');
 const receiptFor = ref<string | null>(null);
+// The status the receipt's line had when the receipt was written; once it moves on, the receipt would contradict the banner.
+let receiptStatus: string | null = null;
+const PAUSE_RECEIPT = 'Pause requested. Say so on the voice call too.';
 const recipientTouched = ref(false);
 const editing = ref<Submission | null>(null);
 const formPanel = ref<HTMLElement | null>(null);
@@ -61,11 +67,12 @@ const sayWords = computed(() => countWords(sayText.value));
 // A downed character's Say line holds only a few words; the reason shows on that box and Send stays off until it fits.
 const wordRefusal = computed(() => {
   const own = player.value?.ownCharacter;
-  return isDown.value && own && kind.value === 'say' ? conditionLineRefusal(own, 'say', sayWords.value) : null;
+  return isDown.value && own && kind.value === 'say' && conditionLineRefusal(own, 'say', sayWords.value) ? `${own.displayName} is down, so they can say only a few words, up to ${DOWNED_SAY_WORDS}.` : null;
 });
 const refusal = computed(() => serverRefusal.value || wordRefusal.value || '');
 
 const name = computed(() => player.value?.ownCharacter?.displayName ?? 'your character');
+const downNoteText = computed(() => { const own = player.value?.ownCharacter; return own ? downNote({ name: own.displayName, characterId: own.id, beat: player.value?.activeBeat }) : ''; });
 const card = computed(() => {
   const own = player.value?.ownCharacter;
   if (!own) return [];
@@ -139,13 +146,17 @@ watch(ownCharacterId, id => {
 }, { immediate: true });
 watch([kind, sayText, actionText, noteText, stageDirection, recipient, draftContext], () => {
   const id = ownCharacterId.value;
-  if (!id || editing.value) return;
+  if (!id || editing.value || showEnded.value) return;
   if ([sayText.value, actionText.value, noteText.value, stageDirection.value].some(text => text.trim())) saveDraft(sessionId, id, { kind: kind.value, speech: sayText.value, intent: actionText.value, approach: '', note: noteText.value, stageDirection: stageDirection.value, recipient: recipient.value, context: draftContext.value });
   else clearDraft(sessionId, id);
 });
 watch([() => player.value?.activeBeat?.id, () => player.value?.activeBeat?.kind], () => {
   if (visibleBlank() && !editing.value && kind.value !== 'ooc') kind.value = turnDefault.value;
 }, { immediate: true });
+
+// Words kept for a show that has ended would only come back to confuse the next visit, so they go when the seat sees the end.
+const showEnded = computed(() => snapshot.value?.session.status === 'ended');
+watch([showEnded, ownCharacterId], () => { if (showEnded.value && ownCharacterId.value) clearDraft(sessionId, ownCharacterId.value); }, { immediate: true });
 
 const carrying = computed(() => (player.value?.ownCharacter?.possessions ?? []).map(item => item.trim()).filter(Boolean));
 const wearing = computed(() => (player.value?.ownCharacter?.wearing ?? []).map(item => item.trim()).filter(Boolean));
@@ -160,12 +171,14 @@ async function prefillAction(text: string) {
 }
 
 function beginInput() {
+  if ([sayText.value, actionText.value, noteText.value].some(text => text.trim())) published.value = null;
   const lineKind = kind.value;
   if (visibleBlank()) contexts.value[lineKind] = null;
   else if (!contexts.value[lineKind]) contexts.value[lineKind] = stampNow();
 }
 
-const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch, condition: condition.value }));
+watch(() => player.value?.activeBeat?.id, id => { if (id) published.value = null; });
+const status = computed(() => playerStatus({ sessionStatus: snapshot.value?.session.status ?? 'live', beat: player.value?.activeBeat ?? null, own: player.value?.submissions ?? [], name: player.value?.ownCharacter?.displayName, inputEpoch: snapshot.value?.session.inputEpoch, condition: condition.value, published: published.value }));
 const toneLabel = computed(() => ({ wait: 'Hold on', act: 'Your turn', done: 'Sent' })[status.value.tone]);
 const presentNpcs = computed(() => snapshot.value?.npcs.filter(npc => npc.status === 'present') ?? []);
 const changingRecipient = ref(false);
@@ -197,15 +210,37 @@ function defaultRecipient(next: SessionSnapshot) {
   if (recipient.value ? !present.some(npc => npc.id === recipient.value) : !recipientTouched.value) recipient.value = present[0]?.id ?? '';
 }
 if (snapshot.value) defaultRecipient(snapshot.value);
-const unregister = onSnapshot(defaultRecipient);
+// A publish is seen as a new newest part of the story between two snapshots. Both answers stay in memory only, so a reload clears them.
+const changed = ref<{ beatId: string; text: string } | null>(null);
+const published = ref<{ voiced: boolean } | null>(null);
+let lastSeen: { newestBeatId: string | null; own: SeatChangeState | null } | null = null;
+const ownState = (next: SessionSnapshot): SeatChangeState | null => next.role === 'player' && next.ownCharacter ? { strain: next.ownCharacter.strain, condition: next.ownCharacter.condition } : null;
+function watchPublish(next: SessionSnapshot) {
+  const newest = next.history.at(-1) ?? null;
+  const own = ownState(next);
+  const before = lastSeen;
+  lastSeen = { newestBeatId: newest?.id ?? null, own };
+  if (!before || !newest || before.newestBeatId === newest.id) return;
+  published.value = { voiced: !newest.textOnly };
+  const who = next.role === 'player' ? next.ownCharacter : undefined;
+  const text = who && before.own && own
+    ? changedForYou({ name: who.displayName, before: before.own, after: own, lastChanceRolled: newest.rolls.some(roll => roll.lastChance === true && roll.actorCharacterId === who.id) })
+    : null;
+  changed.value = text ? { beatId: newest.id, text } : null;
+}
+if (snapshot.value) watchPublish(snapshot.value);
+const unregister = onSnapshot(next => { defaultRecipient(next); watchPublish(next); });
 onUnmounted(unregister);
 
 function ownIds() { return new Set((player.value?.submissions ?? []).map(item => item.id)); }
 function newOwnId(before: Set<string>) { return (player.value?.submissions ?? []).find(item => !before.has(item.id))?.id ?? null; }
+const statusOfOwn = (id: string | null) => (id ? player.value?.submissions.find(own => own.id === id)?.status ?? null : null);
+watch(receiptFor, id => { receiptStatus = statusOfOwn(id); });
 watch(snapshot, () => {
   if (!receipt.value || !receiptFor.value) return;
   const item = player.value?.submissions.find(own => own.id === receiptFor.value);
-  if (!item || (item.status !== 'queued' && item.status !== 'selected')) { receipt.value = ''; receiptFor.value = null; }
+  receiptStatus ??= item?.status ?? null;
+  if (!item || (item.status !== 'queued' && item.status !== 'selected') || item.status !== receiptStatus) { receipt.value = ''; receiptFor.value = null; }
 });
 
 function linePayload(lineKind: LineKind) {
@@ -226,6 +261,10 @@ async function postLine(lineKind: LineKind, start: InputContext, tolerant: boole
     } catch (cause) {
       const status = (cause as { status?: number }).status;
       const reason = cause instanceof Error && cause.message ? cause.message : '';
+      if (status === 0) {
+        refusals.value[lineKind] = `${UNREACHABLE} Your words are still in the box.`;
+        return false;
+      }
       if (status !== 409) {
         if (!tolerant) throw cause;
         refusals.value[lineKind] = reason || 'This line could not be sent. Press Send it anyway to try again.';
@@ -239,12 +278,16 @@ async function postLine(lineKind: LineKind, start: InputContext, tolerant: boole
   }
 }
 
+function lineWaits() {
+  const round = player.value?.activeBeat;
+  return Boolean(round) && (round!.phase !== 'collecting' || Boolean(round!.planning));
+}
+
 function saveSubmission() { return work(async () => {
   receipt.value = ''; receiptFor.value = null;
   const lineKind = kind.value;
   const editedId = editing.value?.id ?? null;
   const before = ownIds();
-  const pastCollecting = Boolean(player.value?.activeBeat) && player.value?.activeBeat?.phase !== 'collecting';
   if (sendingBoth.value) {
     // The visible box follows the usual rules. Send both anyway (the visible box is stale) is the player's say-so for both boxes, so the other box takes a fresh stamp too.
     // Otherwise the other box only takes one for a quiet change, so a box whose story moved is refused with its words kept.
@@ -259,7 +302,8 @@ function saveSubmission() { return work(async () => {
     }
     if (kept.length && !kept.includes(kind.value)) kind.value = kept[0]!;
     if (sent.length) {
-      receipt.value = sent.length === 2 ? (pastCollecting ? 'Saved. Both lines wait for the next turn.' : 'Saved. The director has both lines.') : pastCollecting ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
+      const waits = lineWaits();
+      receipt.value = sent.length === 2 ? (waits ? 'Saved. Both lines wait for the next turn.' : 'Saved. The director has both lines.') : waits ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
       receiptFor.value = newOwnId(before);
     }
     return;
@@ -269,7 +313,7 @@ function saveSubmission() { return work(async () => {
   const start = stale.value || quietChange.value ? stampNow() : contexts.value[lineKind] ?? stampNow();
   if (!await postLine(lineKind, start, false)) return;
   finishLine(lineKind);
-  receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : pastCollecting ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
+  receipt.value = lineKind === 'ooc' ? 'Saved. Only the director sees your note.' : lineWaits() ? 'Saved. Your line waits for the next turn.' : 'Saved. The director has your line.';
   receiptFor.value = editedId ?? newOwnId(before);
 }); }
 
@@ -278,7 +322,7 @@ function pauseRequest() { return work(async () => {
   const captured = context();
   const before = ownIds();
   await send({ type: 'save_submission', commandId: crypto.randomUUID(), expectedSubmissionRevision: 0, contextBeatId: captured.beatId, expectedInputEpoch: captured.epoch, kind: 'ooc', text: PAUSE_REQUEST_TEXT, recipientNpcIds: [], intent: '', approach: '', stageDirection: '', alreadySpokenAloud: true });
-  receipt.value = 'Pause requested. Say so on the voice call too.';
+  receipt.value = PAUSE_RECEIPT;
   receiptFor.value = newOwnId(before);
 }); }
 
@@ -370,7 +414,7 @@ async function askPrivately() {
           <p class="playing">You are playing</p><div class="name-row"><h2>{{ player.ownCharacter.displayName }}</h2><span v-if="condition" class="seat-condition" :data-condition="condition" data-testid="seat-condition">{{ isDead ? 'Dead' : 'Down' }}</span></div>
           <StrainMeter v-if="!isDead" class="own-strain" words :value="player.ownCharacter.strain" :max="STRAIN_MAX" />
           <p v-if="isDead" class="condition-note" data-testid="seat-dead-note">{{ player.ownCharacter.displayName }} has died. You can keep watching the story here.</p>
-          <p v-else-if="isDown" class="condition-note" data-testid="seat-down-note">{{ player.ownCharacter.displayName }} is down. You can say a few words, up to {{ DOWNED_SAY_WORDS }}. Someone can still save {{ player.ownCharacter.displayName }} until the end of the next round.</p>
+          <p v-else-if="isDown" class="condition-note" data-testid="seat-down-note">{{ downNoteText }}</p>
           <p v-else-if="player.ownCharacter.strain >= STRAIN_MAX" class="spent-note" data-testid="seat-spent">Your Do lines will help someone else for now. What you say still rolls.</p>
           <details v-if="card.length || showable(ownPortraitSrc)" class="card"><summary>Who is {{ player.ownCharacter.displayName }}?</summary><img v-if="showable(ownPortraitSrc)" class="own-portrait" :src="ownPortraitSrc!" :alt="portraitAlt(name)" @error="pictureFailed(ownPortraitSrc)"><dl><template v-for="row in card" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl></details>
           <SeatVoice :snapshot="player" :busy="busy" @command="command => work(() => send(command))" />
@@ -378,7 +422,8 @@ async function askPrivately() {
         <template v-else><h2>Unassigned seat</h2><p class="notice">This seat has no character yet. Ask the director.</p></template>
       </section>
       <div v-if="!isDead" class="player-status" :data-tone="status.tone" aria-live="polite"><span class="tone">{{ toneLabel }}</span><strong>{{ status.headline }}</strong><span>{{ status.detail }}</span></div>
-      <SeatStory :history="snapshot.history" :characters="snapshot.characters" :session-id="sessionId" />
+      <SeatStakes v-if="!isDead && player.ownCharacter" :beat="player.activeBeat ?? null" :character-id="player.ownCharacter.id" :characters="snapshot.characters" />
+      <SeatStory :history="snapshot.history" :characters="snapshot.characters" :session-id="sessionId" :changed="changed" />
       <details v-if="!isDead" class="how"><summary>How this works</summary><ol><li>Follow the story on the stream.</li><li>Press Say something or Do something, then write in the box.</li><li>Press Send. The director picks lines, and the story goes on.</li></ol></details>
       <section v-if="!isDead" ref="formPanel" class="panel form-panel">
         <form data-testid="submission-form" @submit.prevent="saveSubmission">
@@ -392,7 +437,7 @@ async function askPrivately() {
             <div v-if="presentNpcs.length === 1 && !changingRecipient" class="talking"><span data-testid="talking-to">{{ talkingTo }}</span><button type="button" class="quiet" data-testid="talking-to-change" @click="changingRecipient = true">Change</button></div>
             <div v-else-if="presentNpcs.length"><label>Talking to<select :aria-describedby="helpId('recipient')" v-model="recipient" @change="recipientTouched = true; beginInput()"><option value="">Your group</option><option v-for="npc in presentNpcs" :key="npc.id" :value="npc.id">{{ npc.displayName }} · {{ npc.role }}</option></select></label><p :id="helpId('recipient')" class="field-help">Pick who {{ name }} is talking to. Your group means the other players' characters.</p></div>
           </template>
-          <div v-else-if="kind === 'act' && !isDown"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see these words on stream as you write them, and hear them read aloud, once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
+          <div v-else-if="kind === 'act' && !isDown"><label>What {{ name }} does<textarea :aria-describedby="helpId('act')" v-model="actionText" data-testid="action-input" rows="4" maxlength="2000" required placeholder="Climb the fire escape and look in the window" @input="beginInput" /></label><p :id="helpId('act')" class="field-help">Describe it in plain words. Viewers see and hear your exact words once the director puts them in the story. Sometimes dice decide how it goes.</p></div>
           <div v-else><label>Private note for the director<textarea :aria-describedby="helpId('note')" v-model="noteText" data-testid="note-input" rows="3" maxlength="4000" required @input="beginInput" /></label><p :id="helpId('note')" class="field-help">Only the director sees this. It never appears on stream.</p></div>
           <div class="actions"><button class="send" :disabled="busy || !player.ownCharacter || (kind !== 'ooc' && !playerReady) || Boolean(wordRefusal)">{{ submitLabel }}</button><button v-if="editing || kind === 'ooc'" type="button" class="quiet" @click="cancel">Cancel</button></div>
           <p v-if="refusal" class="notice" role="alert" data-testid="send-refused">{{ refusal }}</p>
@@ -403,8 +448,9 @@ async function askPrivately() {
           <div v-if="activeContext && moved && !quietChange" class="notice"><template v-if="turnLocked">This turn is locked. Your line will wait for the director to pick it.</template><template v-else>The story moved on while you were typing. Read your words again. Do they still fit?</template><button type="button" class="secondary" data-testid="review-current-input" @click="contexts[kind] = stampNow(); refusals[kind] = ''">Yes, they still fit</button></div>
         </form>
       </section>
-      <SubmissionList v-if="!isDead" :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" :beat="player.activeBeat" @edit="startEdit" @withdraw="withdraw" />
+      <SubmissionList v-if="!isDead" :submissions="player.submissions" :npcs="snapshot.npcs" :busy="busy" :beat="player.activeBeat" :condition="condition" :name="name" @edit="startEdit" @withdraw="withdraw" />
       <div class="extras"><button v-if="!isDead" type="button" class="quiet" :disabled="Boolean(editing)" @click="askPrivately">Ask the director privately</button><button type="button" class="quiet" :disabled="busy" @click="pauseRequest()">Ask for a pause</button><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a></div>
+      <p v-if="isDead && receipt === PAUSE_RECEIPT" class="notice" role="status" data-testid="pause-receipt">{{ receipt }}</p>
     </div>
   </template>
 </template>

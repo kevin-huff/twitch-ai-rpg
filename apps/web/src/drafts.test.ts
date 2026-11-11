@@ -4,7 +4,7 @@ import { clearDraft, loadDraft, saveDraft, type Draft } from './drafts';
 
 const draft = (over: Partial<Draft> = {}): Draft => ({ kind: 'say', speech: 'Hello there', intent: '', approach: '', note: '', stageDirection: '', recipient: 'npc-1', context: { epoch: 2, beatId: 'beat-1' }, ...over });
 
-afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); });
+afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); localStorage.clear(); });
 
 describe('drafts', () => {
   it('saves, loads and clears a draft with its input context', () => {
@@ -25,6 +25,7 @@ describe('drafts', () => {
 
   it('does not save a draft whose text fields are blank', () => {
     saveDraft('show', 'pc-1', draft({ speech: '  ', note: '  ', recipient: 'npc-1' }));
+    expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
     expect(loadDraft('show', 'pc-1')).toBeNull();
   });
@@ -60,6 +61,32 @@ describe('drafts', () => {
   it('survives storage that throws', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
+    expect(() => saveDraft('show', 'pc-1', draft())).not.toThrow();
+    expect(loadDraft('show', 'pc-1')).toBeNull();
+    expect(() => clearDraft('show', 'pc-1')).not.toThrow();
+  });
+
+  it('keeps a draft in localStorage so it outlives the tab', () => {
+    saveDraft('show', 'pc-1', draft());
+    expect(localStorage.getItem('rpg-draft:show:pc-1')).not.toBeNull();
+    expect(sessionStorage.getItem('rpg-draft:show:pc-1')).toBeNull();
+    sessionStorage.clear();
+    expect(loadDraft('show', 'pc-1')).toEqual(draft());
+  });
+
+  it('still loads a draft left in sessionStorage and clears both stores', () => {
+    sessionStorage.setItem('rpg-draft:show:pc-1', JSON.stringify(draft({ speech: 'Old tab' })));
+    expect(loadDraft('show', 'pc-1')?.speech).toBe('Old tab');
+    localStorage.setItem('rpg-draft:show:pc-1', JSON.stringify(draft()));
+    clearDraft('show', 'pc-1');
+    expect(localStorage.getItem('rpg-draft:show:pc-1')).toBeNull();
+    expect(sessionStorage.getItem('rpg-draft:show:pc-1')).toBeNull();
+  });
+
+  it('is harmless when storage throws', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('full'); });
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
     expect(() => saveDraft('show', 'pc-1', draft())).not.toThrow();
     expect(loadDraft('show', 'pc-1')).toBeNull();

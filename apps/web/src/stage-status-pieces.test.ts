@@ -94,9 +94,10 @@ describe('StageTracks piece', () => {
 
 describe('StageBadge piece', () => {
   it('shows the AI badge text and Live', () => {
-    const wrapper = mount(StageBadge, { props: { snapshot: snapshot(), connected: true } });
+    const wrapper = mount(StageBadge, { props: { snapshot: snapshot({ activeBeat: null }), connected: true } });
     expect(wrapper.find('.ai-badge').text()).toMatch(/AI/);
     expect(wrapper.find('.state-chip').text()).toBe('Live');
+    expect(wrapper.find('.chip-pulse').exists()).toBe(false);
     expect(wrapper.find('.state-chip').classes()).not.toContain('off');
   });
 
@@ -110,6 +111,28 @@ describe('StageBadge piece', () => {
     const away = mount(StageBadge, { props: { snapshot: snapshot(), connected: false } });
     expect(away.find('.state-chip').text()).toBe('Reconnecting');
     expect(away.find('.state-chip').classes()).toContain('off');
+  });
+
+  it('says the round stage and pulses only while waiting', () => {
+    const at = (beat: Record<string, unknown>) => mount(StageBadge, { props: { snapshot: snapshot({ activeBeat: { id: 'b', ...beat } }), connected: true } }).find('.state-chip');
+    const locked = at({ phase: 'locked' });
+    expect(locked.text()).toBe('Writing the story');
+    expect(locked.classes()).not.toContain('off');
+    expect(locked.find('.chip-pulse').attributes('aria-hidden')).toBe('true');
+    expect(locked.findAll('.chip-pulse i')).toHaveLength(2);
+    expect(at({ phase: 'collecting' }).text()).toBe('Taking lines');
+    expect(at({ phase: 'collecting', planning: true }).text()).toBe('Setting stakes');
+    expect(at({ phase: 'draft_review' }).text()).toBe('Story coming up');
+    const set = at({ phase: 'stakes_review', stakesApproved: true });
+    expect(set.text()).toBe('Stakes are set');
+    expect(set.find('.chip-pulse').exists()).toBe(false);
+  });
+
+  it('declares the pulse motion only without reduced motion, in steps', () => {
+    const outside = badgeSource.replace(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/, '');
+    expect(outside).not.toMatch(/animation:/);
+    expect(badgeSource).toMatch(/prefers-reduced-motion: no-preference\) \{[\s\S]*animation: chip-pulse 1s steps\(1, end\) infinite/);
+    expect(cssRule(badgeSource, '.chip-pulse i')).toContain('width: 8px');
   });
 
   it('always draws, even when paused, and ignores characterId', () => {

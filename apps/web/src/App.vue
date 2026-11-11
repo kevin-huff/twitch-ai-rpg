@@ -21,7 +21,7 @@ import { navigate } from './navigate';
 
 const table = createTable();
 provideTable(table);
-const { path, sessionId, view, stage, inviteToken, testCharacterId, snapshot, error, notice, loading, busy, connected, director, player, setup, latestHistory, work, send, restoreSession, dispose, requestPause, setStatus } = table;
+const { path, sessionId, view, stage, inviteToken, testCharacterId, snapshot, error, notice, loading, busy, connected, connectionLost, director, player, setup, latestHistory, work, send, restoreSession, dispose, requestPause, setStatus } = table;
 
 const seat = computed(() => view !== 'lobby' && !(setup.value && !setup.value.started) && !director.value && Boolean(player.value));
 const workspace = computed(() => view !== 'lobby' && !(setup.value && !setup.value.started) && Boolean(director.value));
@@ -73,7 +73,7 @@ onUnmounted(() => {
 <template>
   <StageView v-if="stage" />
   <template v-else>
-    <header class="app-header"><span v-if="path === '/build-character'" class="brand">The Story Table</span><a v-else class="brand" :href="identityPath('/')">The Story Table</a><div class="header-meta"><a :href="identityPath('/help')">Help</a><span v-if="roleLabel" class="role-label">{{ roleLabel }}</span><a v-if="sessionId && (director || player)" data-testid="stream-this-show" :href="identityPath(streamPath)">Stream this show</a><span v-if="sessionId" class="status" :class="{ offline: !connected }">{{ connected ? 'Connected' : 'Reconnecting' }}</span><a v-if="director" data-testid="stage-preview-link" :href="identityPath(`/sessions/${sessionId}/stage`)" target="_blank" rel="noopener">Preview (not for OBS) <span class="glyph-new-tab" aria-hidden="true"></span></a></div></header>
+    <header class="app-header"><span v-if="path === '/build-character'" class="brand">The Story Table</span><a v-else class="brand" :href="identityPath('/')">The Story Table</a><div class="header-meta"><a :href="identityPath('/help')">Help</a><span v-if="roleLabel" class="role-label">{{ roleLabel }}</span><a v-if="sessionId && (director || player)" data-testid="stream-this-show" :href="identityPath(streamPath)">Stream this show</a><span v-if="sessionId" class="status" :class="{ offline: connectionLost }">{{ connectionLost ? 'Reconnecting' : connected ? 'Connected' : 'Connecting' }}</span><a v-if="director" data-testid="stage-preview-link" :href="identityPath(`/sessions/${sessionId}/stage`)" target="_blank" rel="noopener">Preview (not for OBS) <span class="glyph-new-tab" aria-hidden="true"></span></a></div></header>
     <main v-if="producerRoute" class="welcome"><ProducerSignIn /></main><HelpPage v-else-if="helpRoute" />
     <PlayerBuilder v-else-if="path === '/build-character'" /><Library v-else-if="path === '/library'" /><MakeShow v-else-if="path === '/make'" /><HostHome v-else-if="!sessionId" />
     <main v-else class="shell" :data-view="view">
@@ -81,7 +81,7 @@ onUnmounted(() => {
       <div v-if="notice" class="notice" role="status">{{ notice }}</div>
       <div v-if="loading" class="loading">Loading the show…</div>
       <template v-if="snapshot">
-        <div v-if="!connected" class="notice">{{ !director && player ? 'Connection lost. Your unsent words stay in this browser. The page reconnects by itself and never sends anything for you.' : 'Connection interrupted. Unsaved words stay in this browser. Reconnect refreshes the show; it never sends them.' }}</div>
+        <div v-if="connectionLost" class="notice">{{ !director && player ? 'Connection lost. Your unsent words stay in this browser. The page reconnects by itself and never sends anything for you.' : 'Connection interrupted. Unsaved words stay in this browser. Reconnect refreshes the show; it never sends them.' }}</div>
         <div v-if="snapshot.session.status === 'paused' && !seat" class="notice">{{ player ? 'The show is paused. The director will start again soon.' : 'The show is paused. Check in with the cast before continuing.' }}</div>
         <section v-if="!seat && !workspace && !preShow" class="scene-heading"><div><p class="eyebrow">{{ snapshot.session.title }}<template v-if="!player"> · Beat {{ snapshot.session.beatNumber }} · Action round {{ snapshot.session.actionRoundNumber }}</template></p><h1>{{ snapshot.session.scene.title }}</h1><p>{{ snapshot.session.scene.description }}</p></div><div v-if="director" class="actions"><a :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a><button class="secondary" :disabled="busy || Boolean(setup && !setup.started)" @click="setStatus(snapshot.session.status === 'paused' ? 'live' : 'paused')">{{ snapshot.session.status === 'paused' ? 'Resume show' : 'Pause show' }}</button></div><a v-if="player" :href="identityPath(`/sessions/${sessionId}/lobby`)">Cast & lobby</a><button v-if="player" class="secondary" :disabled="busy" @click="requestPause">Ask for a pause</button></section>
         <section v-if="!seat && !workspace && !preShow && snapshot.facts.length" class="panel" data-testid="public-facts"><p class="eyebrow">Known to the party</p><p v-for="fact in snapshot.facts" :key="fact.id" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ fact.text }}</p></section>

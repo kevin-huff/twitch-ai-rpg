@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { io } from 'socket.io-client';
-import { api, subscribeToSession } from './api';
+import { api, subscribeToSession, ApiError, UNREACHABLE } from './api';
 import { navigate, clearIdentity } from './navigate';
 import { streamUrl, producerUrl, readHashToken, parseStreamLocation } from './stream';
 
@@ -551,5 +551,23 @@ describe('invitation preview and navigation', () => {
     }
     expect(replace).toHaveBeenCalledWith(`/sessions/s1/play?identity=${identity}`);
     expect(assign).toHaveBeenCalledWith(`/library?identity=${identity}`);
+  });
+});
+
+describe('request failures', () => {
+  it('turns a fetch that never reached the server into the plain sentence with status 0', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const error = await api.library().catch(e => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe(UNREACHABLE);
+    expect(error.message).toBe('Could not reach the show. Check your connection and try again.');
+    expect(error.status).toBe(0);
+  });
+
+  it('keeps the message and status of an HTTP error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ message: 'Server broke.' }) }));
+    const error = await api.library().catch(e => e);
+    expect(error.message).toBe('Server broke.');
+    expect(error.status).toBe(500);
   });
 });

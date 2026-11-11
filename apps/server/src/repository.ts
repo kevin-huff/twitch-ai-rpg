@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import {
   SessionStateSchema, SessionSnapshotSchema, PublicCorrectionSchema, GuidanceSchema, type Guidance, type SessionState, type Beat, type Submission,
-  type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection, type GalleryStatus,
+  type SessionSnapshot, type PublishedBeat, type Role, type PublicBeat, type PublicCorrection, type GalleryStatus, type PlanThrownAway,
 } from '@rpg/contracts';
 import { actionPictureView, lastBeatInScene, pinnedPictureView, portraitJobsView, scenePictureView } from './picture-views';
 import { pictureSettingsOf } from './picture-settings';
@@ -91,6 +91,15 @@ export async function corrections(client: PoolClient, sessionId: string): Promis
 }
 
 export interface GalleryStatusSource { status(client: PoolClient, sessionId: string, sessionStatus: string): Promise<GalleryStatus> }
+// The newest change a player made to a line that was in the plan, while the round still waits for the director to plan again.
+export async function planThrownAwayFor(client: PoolClient, sessionId: string, beat: Beat): Promise<PlanThrownAway | null> {
+  if (beat.phase !== 'collecting') return null;
+  const row = (await client.query("SELECT kind,data FROM audit_events WHERE session_id=$1 AND kind IN ('save_submission','cancel_submission') AND data->'planThrownAway'->>'beatId'=$2 ORDER BY sequence DESC LIMIT 1", [sessionId, beat.id])).rows[0];
+  const note = row?.data?.planThrownAway;
+  if (!note || note.beatRevision !== beat.revision || typeof note.characterId !== 'string') return null;
+  return { characterId: note.characterId, change: row.kind === 'save_submission' ? 'changed' : 'took_back' };
+}
+
 export async function project(client: PoolClient, sessionId: string, actor: Actor, requested?: Role, options: { picturesEnabled?: boolean; defaultPictureModel?: string; gallery?: GalleryStatusSource } = {}): Promise<SessionSnapshot> {
   await authorize(client, sessionId, actor);
   await client.query('SELECT id FROM sessions WHERE id=$1 FOR SHARE', [sessionId]);
@@ -100,8 +109,15 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
   const state = await readState(client, sessionId);
   const beat = await currentBeat(client, sessionId);
   const eventSeq = Number((await client.query('SELECT COALESCE(MAX(sequence),0) AS seq FROM audit_events WHERE session_id=$1', [sessionId])).rows[0].seq);
+  const planning = beat && role !== 'director' ? Boolean((await client.query("SELECT 1 FROM generation_jobs WHERE session_id=$1 AND beat_id=$2 AND task='plan' AND status IN ('queued','running') AND generation=$3 LIMIT 1", [sessionId, beat.id, beat.generation])).rows[0]) : false;
+  // Everyone who is down while a round with dice is open: before the dice they face a last chance unless someone saves them, and after
+  // the dice they stay listed whether a rescue landed or a last chance was rolled, so the list gives nothing away before the beat is
+  // published. A beat locked with no lines (Narrate the scene) rolls no dice and lists nobody.
+  const downIds = state.characters.filter((character) => character.condition === 'down').map((character) => character.id);
+  const lastChanceFor = !beat ? [] : ['collecting', 'stakes_review'].includes(beat.phase) ? downIds
+    : ['locked', 'draft_review'].includes(beat.phase) && beat.lockedSubmissions.length > 0 ? downIds : [];
   const publicBeat: PublicBeat | null = beat ? {
-    id: beat.id, kind: beat.kind, phase: beat.phase, revision: beat.revision, locked: ['locked', 'draft_review'].includes(beat.phase), stakesApproved: beat.stakesApproved,
+    id: beat.id, kind: beat.kind, phase: beat.phase, revision: beat.revision, locked: ['locked', 'draft_review'].includes(beat.phase), stakesApproved: beat.stakesApproved, planning, lastChanceFor,
     stakes: beat.stakesApproved ? beat.contracts.map((contract) => ({
       id: contract.id, version: contract.version, actorCharacterId: contract.actorCharacterId, helperCharacterIds: contract.helperCharacterIds,
       intent: contract.intent, approach: contract.approach, ruling: contract.ruling, trait: contract.trait,
@@ -127,7 +143,8 @@ export async function project(client: PoolClient, sessionId: string, actor: Acto
     submissions: all.filter((submission) => submission.characterId === actor.character_id), ...(state.setup ? { setup: { ...state.setup, boundaries: [] } } : {}),
   });
   const jobs = (await client.query('SELECT id,beat_id,task,generation,status,error FROM generation_jobs WHERE session_id=$1 ORDER BY created_at', [sessionId])).rows.map((row) => ({ id: row.id, beatId: row.beat_id, task: row.task, generation: row.generation, status: row.status, error: row.error }));
-  return SessionSnapshotSchema.parse({ ...base, role, activeBeat: beat, submissions: all, npcDetails: state.npcs, locations: state.locations, characterDetails: state.characters, jobs, directorNotes: state.directorNotes, ...(state.setup ? { setup: state.setup } : {}),
+  const planThrownAway = role === 'director' && beat ? await planThrownAwayFor(client, sessionId, beat) : null;
+  return SessionSnapshotSchema.parse({ ...base, role, activeBeat: beat, ...(planThrownAway ? { planThrownAway } : {}), submissions: all, npcDetails: state.npcs, locations: state.locations, characterDetails: state.characters, jobs, directorNotes: state.directorNotes, ...(state.setup ? { setup: state.setup } : {}),
     scenePictureStatus: scenePicture?.status ?? null,
     actionPicture: picturesEnabled && beat?.phase === 'draft_review' ? await actionPictureView(client, sessionId, beat.id) : null,
     portraitJobs: picturesEnabled ? await portraitJobsView(client, sessionId, state.npcs.map(npc => npc.id)) : [],
